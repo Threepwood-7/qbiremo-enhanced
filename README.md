@@ -66,10 +66,14 @@ export X_QB_PASS="your_password"
 ### Configuration File
 Edit `qbiremo_enhanced_config.toml`:
 ```toml
-host = "localhost"
-port = 8080
-username = "admin"
-password = "your_password"
+qb_host = "localhost"
+qb_port = 8080
+qb_username = "admin"
+qb_password = "your_password"
+
+# Optional HTTP Basic Auth (reverse proxy layer)
+http_basic_auth_username = ""
+http_basic_auth_password = ""
 
 auto_refresh = false
 refresh_interval = 60

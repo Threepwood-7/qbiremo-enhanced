@@ -5,22 +5,22 @@
 # These can also be set via environment variables:
 # X_LOCAL_IP, X_QB_PORT, X_QB_USER, X_QB_PASS
 #
-# Host can be a plain hostname/IP or a full URL with scheme:
-#   host = "127.0.0.1"
-#   host = "https://qb.example.com:443"
-#   host = "https://httpuser:httppass@qb.example.com:443"
+# qb_host can be a plain hostname/IP or a full URL with scheme:
+#   qb_host = "127.0.0.1"
+#   qb_host = "https://qb.example.com:443"
+#   qb_host = "https://httpuser:httppass@qb.example.com:443"
 #
 # HTTP Basic Auth (for HTTPS/reverse proxy layer, NOT qBittorrent API auth)
-# can be embedded in the host URL above, or set separately:
-# http_user = ""
-# http_password = ""
+# can be embedded in the qb_host URL above, or set separately:
+# http_basic_auth_username = ""
+# http_basic_auth_password = ""
 #
-# qBittorrent API auth (username/password below) is separate from HTTP basic auth.
+# qBittorrent API auth (qb_username/qb_password below) is separate from HTTP basic auth.
 
-host = "127.0.0.1"
-port = 8080
-username = "admin"
-password = "CHANGE_ME"
+qb_host = "127.0.0.1"
+qb_port = 8080
+qb_username = "admin"
+qb_password = "CHANGE_ME"
 
 # Auto-refresh Settings
 auto_refresh = false          # Enable auto-refresh on startup

@@ -975,10 +975,13 @@ class MainWindow(QMainWindow):
 
         Supports HTTP basic auth (separate from qBittorrent API auth) via the
         host URL (e.g. https://user:password@remote.host.com:12345) or via
-        explicit http_user / http_password config keys.
+        explicit http_basic_auth_username / http_basic_auth_password config keys.
         """
         # Host URL — may contain scheme, basic-auth credentials, and port
-        raw_host = config.get('host') or os.getenv("X_LOCAL_IP") or "localhost"
+        raw_host = (
+            config.get('qb_host')
+            or "localhost"
+        )
 
         extra_headers = {}
         host = raw_host
@@ -986,16 +989,26 @@ class MainWindow(QMainWindow):
         # Parse URL to extract HTTP basic auth if embedded
         if '://' in raw_host:
             parsed = urlparse(raw_host)
-            http_user = parsed.username or config.get('http_user', '')
-            http_pass = parsed.password or config.get('http_password', '')
+            http_user = (
+                parsed.username
+                or config.get('http_basic_auth_username', '')
+            )
+            http_pass = (
+                parsed.password
+                or config.get('http_basic_auth_password', '')
+            )
             # Rebuild host without credentials
             netloc_host = parsed.hostname or 'localhost'
             if parsed.port:
                 netloc_host = f"{netloc_host}:{parsed.port}"
             host = f"{parsed.scheme}://{netloc_host}"
         else:
-            http_user = config.get('http_user', '')
-            http_pass = config.get('http_password', '')
+            http_user = (
+                config.get('http_basic_auth_username', '')
+            )
+            http_pass = (
+                config.get('http_basic_auth_password', '')
+            )
 
         # Also allow standalone config keys
         if not http_user:
@@ -1011,15 +1024,23 @@ class MainWindow(QMainWindow):
 
         # Port (only used when host is a plain hostname without scheme)
         try:
-            port = int(config.get('port') or os.getenv("X_QB_PORT", "8080"))
+            port = int(
+                config.get('qb_port')
+            )
         except (ValueError, TypeError):
             port = 8080
 
         conn = {
             'host': host,
             'port': port,
-            'username': config.get('username') or os.getenv("X_QB_USER") or "admin",
-            'password': config.get('password') or os.getenv("X_QB_PASS") or "",
+            'username': (
+                config.get('qb_username')
+                or "admin"
+            ),
+            'password': (
+                config.get('qb_password')
+                or ""
+            ),
             'FORCE_SCHEME_FROM_HOST': True,
             'VERIFY_WEBUI_CERTIFICATE': False,
         }
