@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QLabel, QPushButton, QLineEdit, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QTextEdit, QFrame, QToolBar, QStatusBar,
-    QAbstractItemView, QHeaderView, QFormLayout, QSpinBox, QGroupBox,
+    QAbstractItemView, QHeaderView, QFormLayout, QSpinBox, QDoubleSpinBox, QGroupBox,
     QProgressBar, QMenu, QMessageBox, QTabWidget, QListWidget, QListWidgetItem,
     QInputDialog,
     QSizePolicy
@@ -216,7 +216,7 @@ class AddTorrentDialog(QDialog):
     def __init__(self, categories: List[str], tags: List[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Torrent")
-        self.resize(600, 500)
+        self.resize(780, 720)
 
         layout = QVBoxLayout(self)
 
@@ -227,7 +227,7 @@ class AddTorrentDialog(QDialog):
         # File/URL selection
         file_layout = QHBoxLayout()
         self.txt_source = QLineEdit()
-        self.txt_source.setPlaceholderText("Torrent file path or magnet link...")
+        self.txt_source.setPlaceholderText("Torrent file path, magnet link, or URL (one per line)...")
         btn_browse = QPushButton("Browse...")
         btn_browse.clicked.connect(self._browse_file)
         file_layout.addWidget(self.txt_source)
@@ -236,24 +236,42 @@ class AddTorrentDialog(QDialog):
 
         layout.addWidget(grp_source)
 
-        # Options group
-        grp_options = QGroupBox("Options")
-        opt_layout = QFormLayout(grp_options)
+        tabs = QTabWidget()
 
-        # Save path
+        # --------------------------------------------------------------------
+        # Basic Tab
+        # --------------------------------------------------------------------
+        tab_basic = QWidget()
+        basic_form = QFormLayout(tab_basic)
+
+        # Save path (main path)
         save_layout = QHBoxLayout()
         self.txt_save_path = QLineEdit()
+        self.txt_save_path.setPlaceholderText("Main save path (optional)")
         btn_save_browse = QPushButton("Browse...")
         btn_save_browse.clicked.connect(self._browse_save_path)
         save_layout.addWidget(self.txt_save_path)
         save_layout.addWidget(btn_save_browse)
-        opt_layout.addRow("Save Path:", save_layout)
+        basic_form.addRow("Save Path:", save_layout)
+
+        # Download path (optional secondary path in supported qB versions)
+        dl_path_layout = QHBoxLayout()
+        self.txt_download_path = QLineEdit()
+        self.txt_download_path.setPlaceholderText("Download path (optional)")
+        btn_download_browse = QPushButton("Browse...")
+        btn_download_browse.clicked.connect(self._browse_download_path)
+        dl_path_layout.addWidget(self.txt_download_path)
+        dl_path_layout.addWidget(btn_download_browse)
+        basic_form.addRow("Download Path:", dl_path_layout)
+
+        self.chk_use_download_path = QCheckBox("Use Download Path")
+        basic_form.addRow("", self.chk_use_download_path)
 
         # Category
         self.cmb_category = QComboBox()
         self.cmb_category.setEditable(True)
         self.cmb_category.addItems([""] + categories)
-        opt_layout.addRow("Category:", self.cmb_category)
+        basic_form.addRow("Category:", self.cmb_category)
 
         # Tags (multi-select checkable list)
         self.lst_tags = QListWidget()
@@ -263,29 +281,116 @@ class AddTorrentDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             self.lst_tags.addItem(item)
-        opt_layout.addRow("Tags:", self.lst_tags)
+        basic_form.addRow("Tags:", self.lst_tags)
+
+        self.txt_tags_extra = QLineEdit()
+        self.txt_tags_extra.setPlaceholderText("Additional tags (comma-separated)")
+        basic_form.addRow("Extra Tags:", self.txt_tags_extra)
+
+        self.txt_rename = QLineEdit()
+        self.txt_rename.setPlaceholderText("Rename torrent (optional)")
+        basic_form.addRow("Rename:", self.txt_rename)
+
+        self.txt_cookie = QLineEdit()
+        self.txt_cookie.setPlaceholderText("HTTP cookie(s) for URL-based torrents (optional)")
+        basic_form.addRow("Cookie:", self.txt_cookie)
+
+        tabs.addTab(tab_basic, "Basic")
+
+        # --------------------------------------------------------------------
+        # Behavior Tab
+        # --------------------------------------------------------------------
+        tab_behavior = QWidget()
+        behavior_form = QFormLayout(tab_behavior)
 
         # Auto TMM
         self.chk_auto_tmm = QCheckBox("Automatic Torrent Management")
-        opt_layout.addRow("", self.chk_auto_tmm)
+        behavior_form.addRow("", self.chk_auto_tmm)
 
         # Start torrent
         self.chk_paused = QCheckBox("Start torrent paused")
-        opt_layout.addRow("", self.chk_paused)
+        behavior_form.addRow("", self.chk_paused)
+
+        self.chk_stopped = QCheckBox("Add torrent stopped")
+        behavior_form.addRow("", self.chk_stopped)
+
+        self.chk_forced = QCheckBox("Force start")
+        behavior_form.addRow("", self.chk_forced)
+
+        self.chk_add_to_top = QCheckBox("Add to top of queue")
+        behavior_form.addRow("", self.chk_add_to_top)
 
         # Skip hash check
         self.chk_skip_check = QCheckBox("Skip hash check")
-        opt_layout.addRow("", self.chk_skip_check)
+        behavior_form.addRow("", self.chk_skip_check)
 
         # Sequential download
         self.chk_sequential = QCheckBox("Sequential download")
-        opt_layout.addRow("", self.chk_sequential)
+        behavior_form.addRow("", self.chk_sequential)
 
         # First/last piece priority
         self.chk_first_last = QCheckBox("First and last piece priority")
-        opt_layout.addRow("", self.chk_first_last)
+        behavior_form.addRow("", self.chk_first_last)
 
-        layout.addWidget(grp_options)
+        self.chk_root_folder = QCheckBox("Create root folder")
+        behavior_form.addRow("", self.chk_root_folder)
+
+        self.cmb_content_layout = QComboBox()
+        self.cmb_content_layout.addItems(["Default", "Original", "Subfolder", "NoSubfolder"])
+        behavior_form.addRow("Content Layout:", self.cmb_content_layout)
+
+        self.cmb_stop_condition = QComboBox()
+        self.cmb_stop_condition.addItems(["Default", "MetadataReceived", "FilesChecked"])
+        behavior_form.addRow("Stop Condition:", self.cmb_stop_condition)
+
+        tabs.addTab(tab_behavior, "Behavior")
+
+        # --------------------------------------------------------------------
+        # Limits Tab
+        # --------------------------------------------------------------------
+        tab_limits = QWidget()
+        limits_form = QFormLayout(tab_limits)
+
+        self.spn_upload_limit = QSpinBox()
+        self.spn_upload_limit.setRange(0, 10_000_000)
+        self.spn_upload_limit.setSpecialValueText("Unlimited")
+        self.spn_upload_limit.setSuffix(" KiB/s")
+        limits_form.addRow("Upload Limit:", self.spn_upload_limit)
+
+        self.spn_download_limit = QSpinBox()
+        self.spn_download_limit.setRange(0, 10_000_000)
+        self.spn_download_limit.setSpecialValueText("Unlimited")
+        self.spn_download_limit.setSuffix(" KiB/s")
+        limits_form.addRow("Download Limit:", self.spn_download_limit)
+
+        self.spn_ratio_limit = QDoubleSpinBox()
+        self.spn_ratio_limit.setRange(-1.0, 10_000.0)
+        self.spn_ratio_limit.setDecimals(2)
+        self.spn_ratio_limit.setSingleStep(0.1)
+        self.spn_ratio_limit.setValue(-1.0)
+        limits_form.addRow("Ratio Limit:", self.spn_ratio_limit)
+
+        self.spn_seeding_time_limit = QSpinBox()
+        self.spn_seeding_time_limit.setRange(-1, 10_000_000)
+        self.spn_seeding_time_limit.setValue(-1)
+        self.spn_seeding_time_limit.setSuffix(" min")
+        limits_form.addRow("Seeding Time Limit:", self.spn_seeding_time_limit)
+
+        self.spn_inactive_seeding_time_limit = QSpinBox()
+        self.spn_inactive_seeding_time_limit.setRange(-1, 10_000_000)
+        self.spn_inactive_seeding_time_limit.setValue(-1)
+        self.spn_inactive_seeding_time_limit.setSuffix(" min")
+        limits_form.addRow("Inactive Seeding Limit:", self.spn_inactive_seeding_time_limit)
+
+        self.cmb_share_limit_action = QComboBox()
+        self.cmb_share_limit_action.addItems(
+            ["Default", "Stop", "Remove", "RemoveWithContent", "EnableSuperSeeding"]
+        )
+        limits_form.addRow("Share Limit Action:", self.cmb_share_limit_action)
+
+        tabs.addTab(tab_limits, "Limits")
+
+        layout.addWidget(tabs)
 
         # Dialog buttons
         button_box = QDialogButtonBox(
@@ -311,6 +416,16 @@ class AddTorrentDialog(QDialog):
         if dir_path:
             self.txt_save_path.setText(dir_path)
 
+    def _browse_download_path(self):
+        """Browse for download directory"""
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Download Directory")
+        if dir_path:
+            self.txt_download_path.setText(dir_path)
+
+    @staticmethod
+    def _split_csv(text: str) -> List[str]:
+        return [p.strip() for p in (text or "").split(",") if p.strip()]
+
     def _get_selected_tags(self) -> str:
         """Return comma-separated string of checked tags."""
         selected = []
@@ -318,7 +433,25 @@ class AddTorrentDialog(QDialog):
             item = self.lst_tags.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 selected.append(item.text())
-        return ','.join(selected)
+        selected.extend(self._split_csv(self.txt_tags_extra.text()))
+        # preserve order but remove duplicates
+        deduped = list(dict.fromkeys(selected))
+        return ','.join(deduped)
+
+    @staticmethod
+    def _is_url_source(source: str) -> bool:
+        lower = source.lower()
+        return lower.startswith("magnet:") or lower.startswith("http://") or lower.startswith("https://") or lower.startswith("bc://")
+
+    @staticmethod
+    def _parse_url_source(source: str):
+        # Accept one URL per line for convenience.
+        lines = [line.strip() for line in source.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        if len(lines) == 1:
+            return lines[0]
+        return lines
 
     def get_torrent_data(self) -> Optional[Dict[str, Any]]:
         """Get the torrent data from the dialog"""
@@ -326,21 +459,88 @@ class AddTorrentDialog(QDialog):
         if not source:
             return None
 
-        data = {
-            'save_path': self.txt_save_path.text() or None,
-            'category': self.cmb_category.currentText() or None,
-            'tags': self._get_selected_tags() or None,
-            'paused': self.chk_paused.isChecked(),
-            'skip_checking': self.chk_skip_check.isChecked(),
-            'sequential_download': self.chk_sequential.isChecked(),
-            'first_last_piece_prio': self.chk_first_last.isChecked(),
-            'use_auto_tmm': self.chk_auto_tmm.isChecked(),
-        }
+        data: Dict[str, Any] = {}
 
-        # Check if source is a file or URL
-        if source.startswith('magnet:') or source.startswith('http'):
-            data['urls'] = source
+        save_path = self.txt_save_path.text().strip()
+        if save_path:
+            data['save_path'] = save_path
+
+        download_path = self.txt_download_path.text().strip()
+        if download_path:
+            data['download_path'] = download_path
+        if self.chk_use_download_path.isChecked():
+            if not download_path:
+                QMessageBox.warning(self, "Missing Download Path", "Use Download Path is enabled, but Download Path is empty.")
+                return None
+            data['use_download_path'] = True
+
+        category = self.cmb_category.currentText().strip()
+        if category:
+            data['category'] = category
+
+        tags = self._get_selected_tags().strip()
+        if tags:
+            data['tags'] = tags
+
+        rename = self.txt_rename.text().strip()
+        if rename:
+            data['rename'] = rename
+
+        cookie = self.txt_cookie.text().strip()
+        if cookie:
+            data['cookie'] = cookie
+
+        # Behavior
+        data['is_paused'] = self.chk_paused.isChecked()
+        data['is_stopped'] = self.chk_stopped.isChecked()
+        data['forced'] = self.chk_forced.isChecked()
+        data['add_to_top_of_queue'] = self.chk_add_to_top.isChecked()
+        data['is_skip_checking'] = self.chk_skip_check.isChecked()
+        data['is_sequential_download'] = self.chk_sequential.isChecked()
+        data['is_first_last_piece_priority'] = self.chk_first_last.isChecked()
+        data['use_auto_torrent_management'] = self.chk_auto_tmm.isChecked()
+        data['is_root_folder'] = self.chk_root_folder.isChecked()
+
+        content_layout = self.cmb_content_layout.currentText()
+        if content_layout != "Default":
+            data['content_layout'] = content_layout
+
+        stop_condition = self.cmb_stop_condition.currentText()
+        if stop_condition != "Default":
+            data['stop_condition'] = stop_condition
+
+        # Limits
+        up_limit_kib = self.spn_upload_limit.value()
+        if up_limit_kib > 0:
+            data['upload_limit'] = up_limit_kib * 1024
+
+        down_limit_kib = self.spn_download_limit.value()
+        if down_limit_kib > 0:
+            data['download_limit'] = down_limit_kib * 1024
+
+        ratio_limit = float(self.spn_ratio_limit.value())
+        if ratio_limit >= 0:
+            data['ratio_limit'] = ratio_limit
+
+        seeding_time_limit = int(self.spn_seeding_time_limit.value())
+        if seeding_time_limit >= 0:
+            data['seeding_time_limit'] = seeding_time_limit
+
+        inactive_seeding_limit = int(self.spn_inactive_seeding_time_limit.value())
+        if inactive_seeding_limit >= 0:
+            data['inactive_seeding_time_limit'] = inactive_seeding_limit
+
+        share_limit_action = self.cmb_share_limit_action.currentText()
+        if share_limit_action != "Default":
+            data['share_limit_action'] = share_limit_action
+
+        # Source
+        if self._is_url_source(source):
+            data['urls'] = self._parse_url_source(source)
         else:
+            if not os.path.exists(source):
+                QMessageBox.warning(self, "Torrent File Not Found", f"File does not exist:\n{source}")
+                return None
             data['torrent_files'] = source
 
         return data
@@ -492,7 +692,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.config = config
-        self.setWindowTitle(f"0")
+        self.base_window_title = "qBiremo Enhanced"
+        self.setWindowTitle(self.base_window_title)
 
         # Connection info from config (TOML), falling back to env vars
         self.qb_conn_info = self._build_connection_info(config)
@@ -505,8 +706,20 @@ class MainWindow(QMainWindow):
         self.trackers = []
         self.size_buckets = []
 
+        # Defaults from config (used by Reset View and first launch)
+        cfg_default_status = str(config.get('default_status_filter', DEFAULT_STATUS_FILTER)).strip().lower()
+        self.default_status_filter = cfg_default_status if cfg_default_status in STATUS_FILTERS else DEFAULT_STATUS_FILTER
+        self.default_auto_refresh_enabled = self._to_bool(
+            config.get('auto_refresh', DEFAULT_AUTO_REFRESH),
+            DEFAULT_AUTO_REFRESH
+        )
+        self.default_refresh_interval = max(
+            1,
+            self._safe_int(config.get('refresh_interval', DEFAULT_REFRESH_INTERVAL), DEFAULT_REFRESH_INTERVAL)
+        )
+
         # Filters
-        self.current_status_filter = DEFAULT_STATUS_FILTER
+        self.current_status_filter = self.default_status_filter
         self.current_category_filter = None
         self.current_tag_filter = None
         self.current_size_bucket = None
@@ -534,8 +747,8 @@ class MainWindow(QMainWindow):
         self.log_file_path = config.get('_log_file_path', 'qbiremo_enhanced.log')
 
         # Auto-refresh settings
-        self.auto_refresh_enabled = config.get('auto_refresh', DEFAULT_AUTO_REFRESH)
-        self.refresh_interval = config.get('refresh_interval', DEFAULT_REFRESH_INTERVAL)
+        self.auto_refresh_enabled = self.default_auto_refresh_enabled
+        self.refresh_interval = self.default_refresh_interval
         self.display_size_mode = _normalize_display_mode(
             config.get('display_size_mode', DEFAULT_DISPLAY_SIZE_MODE),
             DEFAULT_DISPLAY_SIZE_MODE
@@ -550,6 +763,7 @@ class MainWindow(QMainWindow):
         self._create_menus()
         self._create_toolbar()
         self._create_statusbar()
+        self._capture_default_view_state()
 
         # Timers
         self.refresh_timer = QTimer()
@@ -908,6 +1122,11 @@ class MainWindow(QMainWindow):
         action_set_refresh_interval.triggered.connect(self._set_auto_refresh_interval)
         view_menu.addAction(action_set_refresh_interval)
 
+        view_menu.addSeparator()
+        action_reset_view = QAction("&Reset View", self)
+        action_reset_view.triggered.connect(self._reset_view_defaults)
+        view_menu.addAction(action_reset_view)
+
         # Torrent menu
         torrent_menu = menubar.addMenu("&Torrent")
 
@@ -1187,6 +1406,85 @@ class MainWindow(QMainWindow):
     # Settings Management
     # ========================================================================
 
+    def _capture_default_view_state(self):
+        """Capture baseline splitter/header states for Reset View."""
+        self._default_main_splitter_state = self.main_splitter.saveState()
+        self._default_right_splitter_state = self.right_splitter.saveState()
+        self._default_torrent_header_state = self.tbl_torrents.horizontalHeader().saveState()
+
+    def _apply_default_torrent_header_layout(self):
+        """Apply default torrent-table column order/widths/sort indicator."""
+        header = self.tbl_torrents.horizontalHeader()
+
+        # Restore natural logical->visual order.
+        for logical in range(self.tbl_torrents.columnCount()):
+            visual = header.visualIndex(logical)
+            if visual != logical:
+                header.moveSection(visual, logical)
+
+        self.tbl_torrents.setColumnWidth(1, 360)
+        self.tbl_torrents.setColumnWidth(2, 100)
+        self.tbl_torrents.setColumnWidth(3, 80)
+        self.tbl_torrents.setColumnWidth(4, 100)
+        self.tbl_torrents.setColumnWidth(5, 100)
+        self.tbl_torrents.setColumnWidth(6, 100)
+        self.tbl_torrents.setColumnWidth(7, 70)
+        self.tbl_torrents.setColumnWidth(8, 60)
+        self.tbl_torrents.setColumnWidth(9, 60)
+        self.tbl_torrents.setColumnWidth(10, 150)
+        self.tbl_torrents.setColumnWidth(11, 120)
+        self.tbl_torrents.setColumnWidth(12, 150)
+        header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+
+    def _restore_default_view_state(self):
+        """Restore baseline splitter/header states for Reset View."""
+        try:
+            if getattr(self, "_default_main_splitter_state", None):
+                self.main_splitter.restoreState(self._default_main_splitter_state)
+            else:
+                self.main_splitter.setSizes([250, 1000])
+        except Exception:
+            self.main_splitter.setSizes([250, 1000])
+
+        try:
+            if getattr(self, "_default_right_splitter_state", None):
+                self.right_splitter.restoreState(self._default_right_splitter_state)
+            else:
+                self.right_splitter.setSizes([600, 200])
+        except Exception:
+            self.right_splitter.setSizes([600, 200])
+
+        try:
+            if getattr(self, "_default_torrent_header_state", None):
+                self.tbl_torrents.horizontalHeader().restoreState(self._default_torrent_header_state)
+            else:
+                self._apply_default_torrent_header_layout()
+        except Exception:
+            # Fall back to explicit defaults.
+            self._apply_default_torrent_header_layout()
+
+    @staticmethod
+    def _to_bool(value, default: bool = False) -> bool:
+        """Convert QSettings-like values to bool."""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return default
+
+    def _save_refresh_settings(self):
+        """Persist only auto-refresh runtime settings."""
+        settings = QSettings(G_ORG_NAME, G_APP_NAME)
+        settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
+        settings.setValue("refreshIntervalSec", int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)))
+
     def _load_settings(self):
         """Load window geometry, splitter sizes, column widths, sort order,
         and filter selection from QSettings."""
@@ -1226,6 +1524,23 @@ class MainWindow(QMainWindow):
             self.current_status_filter = status
         self._refresh_filter_tree_highlights()
 
+        # Auto-refresh settings
+        self.auto_refresh_enabled = self._to_bool(
+            settings.value("autoRefreshEnabled"),
+            self.auto_refresh_enabled
+        )
+        loaded_interval = self._safe_int(
+            settings.value("refreshIntervalSec"),
+            self.refresh_interval
+        )
+        self.refresh_interval = max(1, loaded_interval)
+        if hasattr(self, "action_auto_refresh"):
+            self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
+        if self.auto_refresh_enabled:
+            self.refresh_timer.start(self.refresh_interval * 1000)
+        else:
+            self.refresh_timer.stop()
+
     def _save_settings(self):
         """Save window geometry, splitter sizes, column widths, sort order,
         and filter selection to QSettings."""
@@ -1245,6 +1560,8 @@ class MainWindow(QMainWindow):
 
         # Filter selection
         settings.setValue("filterStatus", self.current_status_filter)
+        settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
+        settings.setValue("refreshIntervalSec", int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)))
 
     # ========================================================================
     # Initial Data Loading
@@ -2377,6 +2694,74 @@ Content Path:   {content_path}
 
         self._refresh_torrents()
 
+    def _reset_view_defaults(self):
+        """Reset view/layout/filter/refresh options back to startup defaults."""
+        try:
+            # Reset splitter positions, table columns, order and sort indicator.
+            self._restore_default_view_state()
+
+            # Reset quick filters (UI + cached values).
+            private_signals = self.cmb_private.blockSignals(True)
+            self.cmb_private.setCurrentIndex(0)
+            self.cmb_private.blockSignals(private_signals)
+
+            name_signals = self.txt_name_filter.blockSignals(True)
+            self.txt_name_filter.clear()
+            self.txt_name_filter.blockSignals(name_signals)
+
+            file_signals = self.txt_file_filter.blockSignals(True)
+            self.txt_file_filter.clear()
+            self.txt_file_filter.blockSignals(file_signals)
+
+            content_signals = self.txt_content_filter.blockSignals(True)
+            self.txt_content_filter.clear()
+            self.txt_content_filter.blockSignals(content_signals)
+
+            self.current_private_filter = None
+            self.current_text_filter = ""
+            self.current_file_filter = ""
+            self.current_content_filter = ""
+            self._apply_content_filter()
+
+            # Reset API-backed filters.
+            self.current_status_filter = self.default_status_filter
+            self.current_category_filter = None
+            self.current_tag_filter = None
+            self.current_size_bucket = None
+            self.current_tracker_filter = None
+            self.tree_filters.clearSelection()
+            self._refresh_filter_tree_highlights()
+
+            # Reset refresh behavior.
+            self.refresh_interval = max(1, int(self.default_refresh_interval))
+            self.auto_refresh_enabled = bool(self.default_auto_refresh_enabled)
+
+            if hasattr(self, "action_auto_refresh"):
+                action_signals = self.action_auto_refresh.blockSignals(True)
+                self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
+                self.action_auto_refresh.blockSignals(action_signals)
+
+            if self.auto_refresh_enabled:
+                self.refresh_timer.start(self.refresh_interval * 1000)
+            else:
+                self.refresh_timer.stop()
+
+            # Persist and refresh data using default status/category/tag filters.
+            self._save_settings()
+            self._save_refresh_settings()
+            self._log(
+                "INFO",
+                "View reset to defaults "
+                f"(status={self.current_status_filter}, "
+                f"auto_refresh={self.auto_refresh_enabled}, "
+                f"interval={self.refresh_interval}s)"
+            )
+            self._set_status("View reset to defaults")
+            self._refresh_torrents()
+        except Exception as e:
+            self._log("ERROR", f"Failed to reset view defaults: {e}")
+            self._set_status(f"Failed to reset view: {e}")
+
     def _open_log_file(self):
         """Open the log file in the OS default application."""
         import subprocess
@@ -2417,6 +2802,7 @@ Content Path:   {content_path}
 
             self._log("INFO", f"Auto-refresh interval set to {self.refresh_interval}s")
             self._set_status(f"Auto-refresh interval: {self.refresh_interval}s")
+            self._save_refresh_settings()
         except Exception as e:
             self._log("ERROR", f"Failed to set auto-refresh interval: {e}")
             self._set_status(f"Failed to set auto-refresh interval: {e}")
@@ -2430,6 +2816,7 @@ Content Path:   {content_path}
         else:
             self.refresh_timer.stop()
             self._log("INFO", "Auto-refresh disabled")
+        self._save_refresh_settings()
 
     def _show_about(self):
         """Show about dialog"""
