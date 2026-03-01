@@ -14,7 +14,7 @@ import traceback
 import base64
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 from urllib.parse import urlparse
 import time
 import fnmatch
@@ -778,6 +778,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, self._initial_load)
 
         self._update_window_title_speeds()
+        # Force startup as maximized regardless of previously persisted geometry.
+        self.setWindowState(
+            (self.windowState() & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowMaximized
+        )
         self.show()
 
     def _create_ui(self):
@@ -2696,6 +2701,19 @@ Content Path:   {content_path}
 
     def _reset_view_defaults(self):
         """Reset view/layout/filter/refresh options back to startup defaults."""
+        reply = QMessageBox.question(
+            self,
+            "Reset View",
+            "Reset view to defaults?\n\n"
+            "This resets column widths, splitter positions, refresh interval, "
+            "auto-refresh, status/category/tag filters, and sort order.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            self._set_status("Reset view cancelled")
+            return
+
         try:
             # Reset splitter positions, table columns, order and sort indicator.
             self._restore_default_view_state()
@@ -2901,17 +2919,261 @@ def load_config(config_file: str) -> Dict[str, Any]:
     return {}
 
 
+def load_config_with_issues(config_file: str) -> Tuple[Dict[str, Any], List[str]]:
+    """Load TOML config and collect load-time issues without requiring logging."""
+    issues: List[str] = []
+    if not os.path.exists(config_file):
+        issues.append(
+            f"Config file not found: {config_file}. Using built-in defaults and environment fallbacks."
+        )
+        return {}, issues
+
+    try:
+        import tomllib
+        with open(config_file, 'rb') as f:
+            data = tomllib.load(f)
+    except Exception as e:
+        issues.append(f"Failed to parse config file {config_file}: {e}. Using defaults.")
+        return {}, issues
+
+    if not isinstance(data, dict):
+        issues.append(
+            f"Config file {config_file} did not parse to a TOML table/object. Using defaults."
+        )
+        return {}, issues
+
+    return data, issues
+
+
+def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> Dict[str, Any]:
+    """Validate config values, log issues, and return a sanitized config dict."""
+    if not isinstance(config, dict):
+        logger.warning(
+            "Config validation: root config from %s is not a TOML table/object. Using defaults.",
+            config_file
+        )
+        config = {}
+
+    normalized = dict(config)
+    known_keys = {
+        "qb_host", "qb_port", "qb_username", "qb_password",
+        "http_basic_auth_username", "http_basic_auth_password",
+        "auto_refresh", "refresh_interval",
+        "default_window_width", "default_window_height",
+        "display_size_mode", "display_speed_mode",
+        "default_status_filter", "log_file",
+        "_log_file_path",
+    }
+
+    legacy_map = {
+        "host": "qb_host",
+        "port": "qb_port",
+        "username": "qb_username",
+        "password": "qb_password",
+        "http_user": "http_basic_auth_username",
+        "http_password": "http_basic_auth_password",
+    }
+
+    def _warn(msg: str):
+        logger.warning("Config validation: %s", msg)
+
+    def _coerce_bool(value: Any, default: bool) -> Tuple[bool, bool]:
+        if isinstance(value, bool):
+            return value, True
+        if isinstance(value, (int, float)):
+            if value in {0, 1}:
+                return bool(value), True
+            return bool(value), False
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True, True
+            if text in {"0", "false", "no", "off"}:
+                return False, True
+        return default, False
+
+    def _coerce_int(value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return default
+
+    for old_key, new_key in legacy_map.items():
+        if new_key not in normalized and old_key in normalized:
+            normalized[new_key] = normalized.get(old_key)
+            _warn(
+                f"'{old_key}' is deprecated; use '{new_key}'. "
+                f"Using '{old_key}' value for now."
+            )
+
+    # qb_host
+    host_val = normalized.get("qb_host", "localhost")
+    if not isinstance(host_val, str) or not host_val.strip():
+        _warn(f"'qb_host' invalid ({host_val!r}); using 'localhost'.")
+        normalized["qb_host"] = "localhost"
+    else:
+        normalized["qb_host"] = host_val.strip()
+
+    # qb_port
+    raw_port = normalized.get("qb_port", 8080)
+    port = _coerce_int(raw_port, 8080)
+    if port < 1 or port > 65535:
+        _warn(f"'qb_port' out of range ({raw_port!r}); using 8080.")
+        port = 8080
+    normalized["qb_port"] = port
+
+    # Credentials
+    for key, default_value in [
+        ("qb_username", "admin"),
+        ("qb_password", ""),
+        ("http_basic_auth_username", ""),
+        ("http_basic_auth_password", ""),
+    ]:
+        val = normalized.get(key, default_value)
+        if val is None:
+            val = default_value
+        if not isinstance(val, str):
+            _warn(f"'{key}' should be a string; using default.")
+            val = str(default_value)
+        normalized[key] = val
+
+    # auto_refresh
+    raw_auto_refresh = normalized.get("auto_refresh", DEFAULT_AUTO_REFRESH)
+    auto_refresh, auto_refresh_valid = _coerce_bool(
+        raw_auto_refresh,
+        DEFAULT_AUTO_REFRESH
+    )
+    if not auto_refresh_valid:
+        _warn(
+            f"'auto_refresh' invalid ({raw_auto_refresh!r}); using {DEFAULT_AUTO_REFRESH}."
+        )
+    normalized["auto_refresh"] = auto_refresh
+
+    # refresh_interval
+    raw_interval = normalized.get("refresh_interval", DEFAULT_REFRESH_INTERVAL)
+    interval = _coerce_int(raw_interval, DEFAULT_REFRESH_INTERVAL)
+    if interval < 1:
+        _warn(
+            f"'refresh_interval' must be >= 1 ({raw_interval!r}); using {DEFAULT_REFRESH_INTERVAL}."
+        )
+        interval = DEFAULT_REFRESH_INTERVAL
+    normalized["refresh_interval"] = interval
+
+    # window dimensions
+    raw_width = normalized.get("default_window_width", 1400)
+    width = _coerce_int(raw_width, 1400)
+    if width < 600:
+        _warn(f"'default_window_width' too small ({raw_width!r}); using 1400.")
+        width = 1400
+    normalized["default_window_width"] = width
+
+    raw_height = normalized.get("default_window_height", 800)
+    height = _coerce_int(raw_height, 800)
+    if height < 400:
+        _warn(f"'default_window_height' too small ({raw_height!r}); using 800.")
+        height = 800
+    normalized["default_window_height"] = height
+
+    # display modes
+    raw_size_mode = normalized.get("display_size_mode", DEFAULT_DISPLAY_SIZE_MODE)
+    size_mode = _normalize_display_mode(raw_size_mode, DEFAULT_DISPLAY_SIZE_MODE)
+    if size_mode != str(raw_size_mode).strip().lower():
+        _warn(
+            f"'display_size_mode' invalid ({raw_size_mode!r}); "
+            f"using '{DEFAULT_DISPLAY_SIZE_MODE}'."
+        )
+    normalized["display_size_mode"] = size_mode
+
+    raw_speed_mode = normalized.get("display_speed_mode", DEFAULT_DISPLAY_SPEED_MODE)
+    speed_mode = _normalize_display_mode(raw_speed_mode, DEFAULT_DISPLAY_SPEED_MODE)
+    if speed_mode != str(raw_speed_mode).strip().lower():
+        _warn(
+            f"'display_speed_mode' invalid ({raw_speed_mode!r}); "
+            f"using '{DEFAULT_DISPLAY_SPEED_MODE}'."
+        )
+    normalized["display_speed_mode"] = speed_mode
+
+    # default status filter
+    raw_status = normalized.get("default_status_filter", DEFAULT_STATUS_FILTER)
+    status = str(raw_status or "").strip().lower()
+    if status not in STATUS_FILTERS:
+        _warn(
+            f"'default_status_filter' invalid ({raw_status!r}); using '{DEFAULT_STATUS_FILTER}'."
+        )
+        status = DEFAULT_STATUS_FILTER
+    normalized["default_status_filter"] = status
+
+    # log_file
+    raw_log_file = normalized.get("log_file", "qbiremo_enhanced.log")
+    if not isinstance(raw_log_file, str) or not raw_log_file.strip():
+        _warn(
+            f"'log_file' invalid ({raw_log_file!r}); using 'qbiremo_enhanced.log'."
+        )
+        normalized["log_file"] = "qbiremo_enhanced.log"
+    else:
+        normalized["log_file"] = raw_log_file.strip()
+
+    # Unknown keys warning (except explicit internal keys)
+    unknown_keys = sorted(
+        key for key in normalized.keys()
+        if key not in known_keys and key not in legacy_map
+    )
+    for key in unknown_keys:
+        _warn(f"Unknown config key '{key}' will be ignored.")
+
+    logger.info("Configuration validated from %s", config_file)
+    return normalized
+
+
 def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
     """Configure file logging and return the handler so it can be flushed."""
     log_file = config.get('log_file', 'qbiremo_enhanced.log')
+    if not isinstance(log_file, str) or not log_file.strip():
+        log_file = 'qbiremo_enhanced.log'
+    log_file = log_file.strip()
     config['_log_file_path'] = log_file
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+
+    try:
+        log_dir = os.path.dirname(os.path.abspath(log_file))
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+    except Exception:
+        # Directory creation failure will be handled by FileHandler fallback.
+        pass
+
+    try:
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    except Exception:
+        # Fallback to local path if configured log path is not writable.
+        fallback_log_file = 'qbiremo_enhanced.log'
+        config['_log_file_path'] = fallback_log_file
+        file_handler = logging.FileHandler(fallback_log_file, encoding='utf-8')
+
     file_handler.setFormatter(logging.Formatter(
         '%(asctime)s %(levelname)-7s %(message)s', datefmt='%Y-%m-%d %H:%M:%S'
     ))
+    logger.handlers.clear()
     logger.addHandler(file_handler)
     logger.setLevel(logging.DEBUG)
     return file_handler
+
+
+def _open_file_in_default_app(path: str):
+    """Open a file in the platform default application."""
+    if not path:
+        return
+
+    import subprocess
+
+    try:
+        if sys.platform == 'win32':
+            os.startfile(path)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', path])
+        else:
+            subprocess.Popen(['xdg-open', path])
+    except Exception:
+        logger.exception("Failed to open file in default app: %s", path)
 
 
 def _install_exception_hooks(file_handler: logging.FileHandler):
@@ -2949,12 +3211,17 @@ def main():
 
     args = parser.parse_args()
 
-    # Load configuration
-    config = load_config(args.config_file)
+    # Load configuration (collect load-time issues before logging is configured)
+    config, load_issues = load_config_with_issues(args.config_file)
 
     # Set up logging *first*, then install the global exception hook
     file_handler = _setup_logging(config)
     _install_exception_hooks(file_handler)
+    for issue in load_issues:
+        logger.warning("%s", issue)
+
+    # Validate and normalize config values now that file logging is active.
+    config = validate_and_normalize_config(config, args.config_file)
 
     try:
         # Create application
@@ -2973,6 +3240,7 @@ def main():
     except Exception:
         logger.critical("Fatal error during startup", exc_info=True)
         file_handler.flush()
+        _open_file_in_default_app(config.get('_log_file_path', 'qbiremo_enhanced.log'))
         raise
 
 
