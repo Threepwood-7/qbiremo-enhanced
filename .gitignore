@@ -1,0 +1,48 @@
+# Project
+qbiremo_enhanced_config.toml
+
+config.toml
+*.log
+.everything_sdk/
+*.cache
+
+# Python
+__pycache__/*
+__pycache__/
+__pycache__
+.pytest_cache/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+.venv/
+venv/
+env/
+.env
+pip-log.txt
+pip-delete-this-directory.txt
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Claude
+.claude/
+
+# IDE / OS
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+src/workers/__pycache__/everything_worker.cpython-313.pyc
+src/ui/__pycache__/log_window.cpython-313.pyc
+src/ui/__pycache__/log_window.cpython-313.pyc
+src/api/__pycache__/prowlarr_client.cpython-313.pyc

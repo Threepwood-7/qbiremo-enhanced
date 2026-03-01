@@ -1,0 +1,43 @@
+# qBiremo Enhanced Configuration Example
+# Copy/rename to: qbiremo_enhanced_config.toml
+
+# qBittorrent Connection Settings
+# These can also be set via environment variables:
+# X_LOCAL_IP, X_QB_PORT, X_QB_USER, X_QB_PASS
+#
+# Host can be a plain hostname/IP or a full URL with scheme:
+#   host = "127.0.0.1"
+#   host = "https://qb.example.com:443"
+#   host = "https://httpuser:httppass@qb.example.com:443"
+#
+# HTTP Basic Auth (for HTTPS/reverse proxy layer, NOT qBittorrent API auth)
+# can be embedded in the host URL above, or set separately:
+# http_user = ""
+# http_password = ""
+#
+# qBittorrent API auth (username/password below) is separate from HTTP basic auth.
+
+host = "127.0.0.1"
+port = 8080
+username = "admin"
+password = "CHANGE_ME"
+
+# Auto-refresh Settings
+auto_refresh = false          # Enable auto-refresh on startup
+refresh_interval = 60         # Refresh interval in seconds
+
+# UI Settings
+default_window_width = 1400
+default_window_height = 800
+
+# Display modes:
+# - human_readable: keeps UI style like 635.91 MB and 2.11 MB/s
+# - bytes: raw bytes with thousand separators, e.g. 666,777,332 and 2,114,551
+display_size_mode = "human_readable"   # options: "bytes" | "human_readable"
+display_speed_mode = "human_readable"  # options: "bytes" | "human_readable"
+
+# Filter Settings
+default_status_filter = "active"  # Default status filter on startup
+
+# Optional logging target
+# log_file = "qbiremo_enhanced.log"
