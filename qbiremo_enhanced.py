@@ -492,7 +492,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.config = config
-        self.setWindowTitle("qBiremo Enhanced - qBittorrent Manager")
+        self.setWindowTitle(f"0")
 
         # Connection info from config (TOML), falling back to env vars
         self.qb_conn_info = self._build_connection_info(config)
@@ -563,6 +563,7 @@ class MainWindow(QMainWindow):
         # Initial data load
         QTimer.singleShot(100, self._initial_load)
 
+        self._update_window_title_speeds()
         self.show()
 
     def _create_ui(self):
@@ -1523,11 +1524,13 @@ class MainWindow(QMainWindow):
                 # Show empty table
                 self.all_torrents = []
                 self.filtered_torrents = []
+                self._update_window_title_speeds()
                 self._update_torrents_table()
                 return
 
             self.all_torrents = result.get('data', [])
             self._log("INFO", f"Loaded {len(self.all_torrents)} torrents", result.get('elapsed', 0))
+            self._update_window_title_speeds()
 
             # Calculate size buckets
             self._calculate_size_buckets()
@@ -1564,6 +1567,7 @@ class MainWindow(QMainWindow):
             # Show empty table
             self.all_torrents = []
             self.filtered_torrents = []
+            self._update_window_title_speeds()
             self._update_torrents_table()
 
     def _on_content_cache_refreshed(self, result: Dict):
@@ -2456,6 +2460,24 @@ Content Path:   {content_path}
     def _set_status(self, message: str):
         """Set status bar message"""
         self.lbl_status.setText(message)
+
+    def _update_window_title_speeds(self):
+        """Show aggregate up/down speeds in the window title."""
+        try:
+            total_down = 0
+            total_up = 0
+            for torrent in self.all_torrents:
+                total_down += self._safe_int(getattr(torrent, 'dlspeed', 0), 0)
+                total_up += self._safe_int(getattr(torrent, 'upspeed', 0), 0)
+
+            up_text = format_speed_mode(total_up, self.display_speed_mode) or "0"
+            down_text = format_speed_mode(total_down, self.display_speed_mode) or "0"
+            self.setWindowTitle(
+                f"U:{up_text} D:{down_text}"
+            )
+        except Exception:
+            # Keep title stable even if malformed data appears.
+            self.setWindowTitle(f"0")
 
     def _log(self, level: str, message: str, elapsed: Optional[float] = None):
         """Write to Python file logger."""
