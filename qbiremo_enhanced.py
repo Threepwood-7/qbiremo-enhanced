@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QFileDialog, QTextEdit, QFrame, QToolBar, QStatusBar,
     QAbstractItemView, QHeaderView, QFormLayout, QSpinBox, QGroupBox,
     QProgressBar, QMenu, QMessageBox, QTabWidget, QListWidget, QListWidgetItem,
+    QInputDialog,
     QSizePolicy
 )
 from PySide6.QtCore import (
@@ -516,6 +517,7 @@ class MainWindow(QMainWindow):
         self.current_content_filter = ""
         self.current_content_files: List[Dict[str, Any]] = []
         self._selected_torrent = None
+        self._suppress_next_cache_save = False
 
         # Persistent per-torrent content cache (JSON file)
         self.cache_file_path = Path(CACHE_FILE_NAME)
@@ -834,9 +836,15 @@ class MainWindow(QMainWindow):
         # Hide hash column
         table.setColumnHidden(0, True)
 
-        # Set column widths
+        # Make columns user-resizable and movable.
         header = table.horizontalHeader()
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(True)
+        header.setMinimumSectionSize(40)
+
+        # Default widths (used on first run before QSettings restore)
+        table.setColumnWidth(1, 360)
         table.setColumnWidth(2, 100)
         table.setColumnWidth(3, 80)
         table.setColumnWidth(4, 100)
@@ -863,6 +871,11 @@ class MainWindow(QMainWindow):
         add_action.triggered.connect(self._show_add_torrent_dialog)
         file_menu.addAction(add_action)
 
+        clear_cache_action = QAction("Clear Cache && &Refresh", self)
+        clear_cache_action.setShortcut("Ctrl+F5")
+        clear_cache_action.triggered.connect(self._clear_cache_and_refresh)
+        file_menu.addAction(clear_cache_action)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)
@@ -877,6 +890,11 @@ class MainWindow(QMainWindow):
         action_open_log.triggered.connect(self._open_log_file)
         view_menu.addAction(action_open_log)
 
+        action_refresh = QAction("&Refresh", self)
+        action_refresh.setShortcut("F5")
+        action_refresh.triggered.connect(self._refresh_torrents)
+        view_menu.addAction(action_refresh)
+
         view_menu.addSeparator()
 
         self.action_auto_refresh = QAction("Enable &Auto-Refresh", self)
@@ -884,6 +902,10 @@ class MainWindow(QMainWindow):
         self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
         self.action_auto_refresh.triggered.connect(self._toggle_auto_refresh)
         view_menu.addAction(self.action_auto_refresh)
+
+        action_set_refresh_interval = QAction("Set Auto-Refresh &Interval...", self)
+        action_set_refresh_interval.triggered.connect(self._set_auto_refresh_interval)
+        view_menu.addAction(action_set_refresh_interval)
 
         # Torrent menu
         torrent_menu = menubar.addMenu("&Torrent")
@@ -1153,7 +1175,11 @@ class MainWindow(QMainWindow):
         if geometry:
             self.restoreGeometry(geometry)
         else:
-            self.resize(1400, 800)
+            default_width = self._safe_int(self.config.get('default_window_width', 1400), 1400)
+            default_height = self._safe_int(self.config.get('default_window_height', 800), 800)
+            default_width = max(600, default_width)
+            default_height = max(400, default_height)
+            self.resize(default_width, default_height)
 
         state = settings.value("windowState")
         if state:
@@ -1503,6 +1529,9 @@ class MainWindow(QMainWindow):
                     self._on_content_cache_refreshed,
                     refresh_candidates
                 )
+            elif self._suppress_next_cache_save:
+                # Nothing to refresh (e.g., zero torrents) - clear one-shot flag.
+                self._suppress_next_cache_save = False
 
             # Apply filters and update table
             self._apply_filters()
@@ -1529,7 +1558,11 @@ class MainWindow(QMainWindow):
                 updates = {}
             if updates:
                 self.content_cache.update(updates)
-                self._save_content_cache()
+                if self._suppress_next_cache_save:
+                    self._suppress_next_cache_save = False
+                    self._log("INFO", "Cache save skipped once after Clear Cache & Refresh")
+                else:
+                    self._save_content_cache()
                 self._log(
                     "INFO",
                     f"Content cache refreshed for {len(updates)} torrents",
@@ -2296,6 +2329,29 @@ Content Path:   {content_path}
     # Menu Actions
     # ========================================================================
 
+    def _clear_cache_and_refresh(self):
+        """Clear local content cache and refresh torrents."""
+        try:
+            self._suppress_next_cache_save = True
+            self.content_cache = {}
+            self.current_content_files = []
+            self.tree_files.clear()
+
+            if self.cache_file_path.exists():
+                self.cache_file_path.unlink()
+
+            cache_tmp = Path(f"{self.cache_file_path}.tmp")
+            if cache_tmp.exists():
+                cache_tmp.unlink()
+
+            self._log("INFO", "Content cache cleared")
+            self._set_status("Content cache cleared")
+        except Exception as e:
+            self._log("ERROR", f"Failed to clear cache: {e}")
+            self._set_status(f"Failed to clear cache: {e}")
+
+        self._refresh_torrents()
+
     def _open_log_file(self):
         """Open the log file in the OS default application."""
         import subprocess
@@ -2310,6 +2366,35 @@ Content Path:   {content_path}
         except Exception as e:
             self._log("ERROR", f"Failed to open log file: {e}")
             self._set_status(f"Failed to open log file: {e}")
+
+    def _set_auto_refresh_interval(self):
+        """Prompt user to set auto-refresh frequency in seconds."""
+        try:
+            current = self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)
+            if current < 1:
+                current = DEFAULT_REFRESH_INTERVAL
+
+            seconds, ok = QInputDialog.getInt(
+                self,
+                "Auto-Refresh Interval",
+                "Refresh every (seconds):",
+                value=current,
+                minValue=1,
+                maxValue=86400,
+                step=1,
+            )
+            if not ok:
+                return
+
+            self.refresh_interval = int(seconds)
+            if self.auto_refresh_enabled:
+                self.refresh_timer.start(self.refresh_interval * 1000)
+
+            self._log("INFO", f"Auto-refresh interval set to {self.refresh_interval}s")
+            self._set_status(f"Auto-refresh interval: {self.refresh_interval}s")
+        except Exception as e:
+            self._log("ERROR", f"Failed to set auto-refresh interval: {e}")
+            self._set_status(f"Failed to set auto-refresh interval: {e}")
 
     def _toggle_auto_refresh(self, checked: bool):
         """Toggle auto-refresh"""
