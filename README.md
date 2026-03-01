@@ -54,15 +54,6 @@ pip install PySide6 qbittorrent-api
 
 ## Configuration
 
-### Environment Variables
-Set these environment variables for connection (takes precedence over config file):
-```bash
-export X_LOCAL_IP="192.168.1.100"
-export X_QB_PORT="8080"
-export X_QB_USER="admin"
-export X_QB_PASS="your_password"
-```
-
 ### Configuration File
 Edit `qbiremo_enhanced_config.toml`:
 ```toml
