@@ -16,6 +16,7 @@ import base64
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional, Dict, List, Any, Tuple
 from urllib.parse import urlparse
 import time
@@ -581,6 +582,334 @@ class AddTorrentDialog(QDialog):
 
 
 # ============================================================================
+# Taxonomy Manager Dialog
+# ============================================================================
+
+class TaxonomyManagerDialog(QDialog):
+    """Dialog to manage categories and tags in one place."""
+
+    create_category_requested = Signal(str, str)
+    edit_category_requested = Signal(str, str)
+    delete_category_requested = Signal(str)
+    create_tags_requested = Signal(list)
+    delete_tags_requested = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Manage Tags and Categories")
+        self.resize(760, 520)
+
+        self._category_paths: Dict[str, str] = {}
+        self._build_ui()
+        self._set_category_create_mode()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs, 1)
+
+        # Categories tab
+        category_widget = QWidget()
+        category_layout = QHBoxLayout(category_widget)
+        category_layout.setContentsMargins(4, 4, 4, 4)
+
+        self.lst_categories = QListWidget()
+        self.lst_categories.currentItemChanged.connect(self._on_category_selection_changed)
+        category_layout.addWidget(self.lst_categories, 1)
+
+        category_editor = QWidget()
+        editor_layout = QVBoxLayout(category_editor)
+        form = QFormLayout()
+
+        self.txt_category_name = QLineEdit()
+        form.addRow("Name:", self.txt_category_name)
+
+        path_row = QHBoxLayout()
+        self.txt_category_save_path = QLineEdit()
+        btn_browse_path = QPushButton("Browse")
+        btn_browse_path.clicked.connect(self._browse_category_save_path)
+        path_row.addWidget(self.txt_category_save_path, 1)
+        path_row.addWidget(btn_browse_path)
+        form.addRow("Save Path:", path_row)
+        editor_layout.addLayout(form)
+
+        category_actions = QHBoxLayout()
+        self.btn_category_new = QPushButton("New")
+        self.btn_category_new.clicked.connect(self._set_category_create_mode)
+        category_actions.addWidget(self.btn_category_new)
+
+        self.btn_category_apply = QPushButton("Create Category")
+        self.btn_category_apply.clicked.connect(self._apply_category_changes)
+        category_actions.addWidget(self.btn_category_apply)
+
+        self.btn_category_delete = QPushButton("Delete Category")
+        self.btn_category_delete.clicked.connect(self._delete_selected_category)
+        category_actions.addWidget(self.btn_category_delete)
+        editor_layout.addLayout(category_actions)
+        editor_layout.addStretch(1)
+        category_layout.addWidget(category_editor, 2)
+
+        self.tabs.addTab(category_widget, "Categories")
+
+        # Tags tab
+        tags_widget = QWidget()
+        tags_layout = QVBoxLayout(tags_widget)
+        tags_layout.setContentsMargins(4, 4, 4, 4)
+
+        self.lst_tags_manage = QListWidget()
+        self.lst_tags_manage.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        tags_layout.addWidget(self.lst_tags_manage, 1)
+
+        add_tags_row = QHBoxLayout()
+        self.txt_new_tags = QLineEdit()
+        self.txt_new_tags.setPlaceholderText("Enter tag(s), comma-separated")
+        add_tags_row.addWidget(self.txt_new_tags, 1)
+        btn_add_tags = QPushButton("Add")
+        btn_add_tags.clicked.connect(self._add_tags)
+        add_tags_row.addWidget(btn_add_tags)
+        tags_layout.addLayout(add_tags_row)
+
+        btn_delete_tags = QPushButton("Delete Selected")
+        btn_delete_tags.clicked.connect(self._delete_selected_tags)
+        tags_layout.addWidget(btn_delete_tags)
+        self.btn_add_tags = btn_add_tags
+        self.btn_delete_tags = btn_delete_tags
+
+        self.tabs.addTab(tags_widget, "Tags")
+
+        self.lbl_message = QLabel("")
+        layout.addWidget(self.lbl_message)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.close)
+        layout.addWidget(buttons)
+
+    def _browse_category_save_path(self):
+        """Browse for category default save path."""
+        initial = self.txt_category_save_path.text().strip()
+        selected = QFileDialog.getExistingDirectory(
+            self, "Select Category Save Path", initial
+        )
+        if selected:
+            self.txt_category_save_path.setText(selected)
+
+    def set_busy(self, busy: bool, message: str = ""):
+        """Enable/disable editor controls while an API operation runs."""
+        enabled = not bool(busy)
+        self.tabs.setEnabled(enabled)
+        self.btn_category_new.setEnabled(enabled)
+        self.btn_category_apply.setEnabled(enabled)
+        self.btn_category_delete.setEnabled(enabled and self.lst_categories.currentItem() is not None)
+        self.btn_add_tags.setEnabled(enabled)
+        self.btn_delete_tags.setEnabled(enabled)
+        self.lbl_message.setText(str(message or ""))
+
+    def set_taxonomy_data(self, category_paths: Dict[str, str], tags: List[str]):
+        """Refresh dialog contents from latest category/tag lists."""
+        current_category = self.selected_category_name()
+        selected_tags = {
+            item.text() for item in self.lst_tags_manage.selectedItems()
+        }
+
+        self._category_paths = dict(category_paths or {})
+        self.lst_categories.clear()
+        for name in sorted(self._category_paths.keys()):
+            self.lst_categories.addItem(name)
+
+        if current_category:
+            matches = self.lst_categories.findItems(current_category, Qt.MatchFlag.MatchExactly)
+            if matches:
+                self.lst_categories.setCurrentItem(matches[0])
+            else:
+                self._set_category_create_mode()
+        elif self.lst_categories.currentItem() is None:
+            self._set_category_create_mode()
+
+        self.lst_tags_manage.clear()
+        for tag in sorted(str(t) for t in tags):
+            item = QListWidgetItem(tag)
+            item.setSelected(tag in selected_tags)
+            self.lst_tags_manage.addItem(item)
+
+    def selected_category_name(self) -> str:
+        """Return selected category name, or empty string."""
+        item = self.lst_categories.currentItem()
+        return item.text().strip() if item else ""
+
+    def _on_category_selection_changed(self, current: Optional[QListWidgetItem], _previous):
+        """Load selected category into the editor."""
+        if current is None:
+            self._set_category_create_mode()
+            return
+
+        name = current.text().strip()
+        self.txt_category_name.setReadOnly(True)
+        self.txt_category_name.setText(name)
+        self.txt_category_save_path.setText(self._category_paths.get(name, ""))
+        self.btn_category_apply.setText("Update Category")
+        self.btn_category_delete.setEnabled(True)
+
+    def _set_category_create_mode(self):
+        """Prepare editor for creating a new category."""
+        if self.lst_categories.currentItem() is not None:
+            prev = self.lst_categories.blockSignals(True)
+            self.lst_categories.clearSelection()
+            self.lst_categories.setCurrentItem(None)
+            self.lst_categories.blockSignals(prev)
+        self.txt_category_name.setReadOnly(False)
+        self.txt_category_name.clear()
+        self.txt_category_save_path.clear()
+        self.btn_category_apply.setText("Create Category")
+        self.btn_category_delete.setEnabled(False)
+
+    def _apply_category_changes(self):
+        """Emit create/update category request."""
+        name = self.txt_category_name.text().strip()
+        save_path = self.txt_category_save_path.text().strip()
+        if not name:
+            self.lbl_message.setText("Category name cannot be empty.")
+            return
+
+        selected_name = self.selected_category_name()
+        if selected_name:
+            self.edit_category_requested.emit(selected_name, save_path)
+        else:
+            self.create_category_requested.emit(name, save_path)
+
+    def _delete_selected_category(self):
+        """Emit delete request for selected category."""
+        name = self.selected_category_name()
+        if not name:
+            self.lbl_message.setText("Select a category to delete.")
+            return
+        self.delete_category_requested.emit(name)
+
+    @staticmethod
+    def _parse_csv_entries(raw_text: str) -> List[str]:
+        values: List[str] = []
+        seen = set()
+        for part in str(raw_text or "").split(","):
+            value = part.strip()
+            if value and value not in seen:
+                seen.add(value)
+                values.append(value)
+        return values
+
+    def _add_tags(self):
+        """Emit create-tags request from entry field."""
+        tags = self._parse_csv_entries(self.txt_new_tags.text())
+        if not tags:
+            self.lbl_message.setText("Enter at least one tag.")
+            return
+        self.create_tags_requested.emit(tags)
+        self.txt_new_tags.clear()
+
+    def _delete_selected_tags(self):
+        """Emit delete-tags request for selected tags."""
+        tags = [item.text().strip() for item in self.lst_tags_manage.selectedItems() if item.text().strip()]
+        if not tags:
+            self.lbl_message.setText("Select at least one tag to delete.")
+            return
+        self.delete_tags_requested.emit(tags)
+
+
+# ============================================================================
+# Speed Limits Manager Dialog
+# ============================================================================
+
+class SpeedLimitsDialog(QDialog):
+    """Dialog to manage global and alternative speed limits."""
+
+    refresh_requested = Signal()
+    apply_requested = Signal(int, int, int, int, bool)  # normal_dl_kib, normal_ul_kib, alt_dl_kib, alt_ul_kib, alt_enabled
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Manage Speed Limits")
+        self.resize(520, 320)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        normal_group = QGroupBox("Normal Speed Limits (KiB/s)")
+        normal_form = QFormLayout(normal_group)
+        self.spn_normal_dl = QSpinBox()
+        self.spn_normal_ul = QSpinBox()
+        for spin in (self.spn_normal_dl, self.spn_normal_ul):
+            spin.setRange(0, 10_000_000)
+            spin.setSingleStep(10)
+        normal_form.addRow("Download:", self.spn_normal_dl)
+        normal_form.addRow("Upload:", self.spn_normal_ul)
+        layout.addWidget(normal_group)
+
+        alt_group = QGroupBox("Alternative Speed Limits (KiB/s)")
+        alt_form = QFormLayout(alt_group)
+        self.spn_alt_dl = QSpinBox()
+        self.spn_alt_ul = QSpinBox()
+        for spin in (self.spn_alt_dl, self.spn_alt_ul):
+            spin.setRange(0, 10_000_000)
+            spin.setSingleStep(10)
+        alt_form.addRow("Download:", self.spn_alt_dl)
+        alt_form.addRow("Upload:", self.spn_alt_ul)
+        layout.addWidget(alt_group)
+
+        self.chk_alt_enabled = QCheckBox("Alternative speed mode enabled")
+        layout.addWidget(self.chk_alt_enabled)
+
+        self.lbl_message = QLabel("")
+        layout.addWidget(self.lbl_message)
+
+        buttons_row = QHBoxLayout()
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_apply = QPushButton("Apply")
+        self.btn_close = QPushButton("Close")
+        self.btn_refresh.clicked.connect(self.refresh_requested.emit)
+        self.btn_apply.clicked.connect(self._emit_apply)
+        self.btn_close.clicked.connect(self.close)
+        buttons_row.addWidget(self.btn_refresh)
+        buttons_row.addStretch(1)
+        buttons_row.addWidget(self.btn_apply)
+        buttons_row.addWidget(self.btn_close)
+        layout.addLayout(buttons_row)
+
+    def _emit_apply(self):
+        """Emit apply signal with current dialog values."""
+        self.apply_requested.emit(
+            int(self.spn_normal_dl.value()),
+            int(self.spn_normal_ul.value()),
+            int(self.spn_alt_dl.value()),
+            int(self.spn_alt_ul.value()),
+            bool(self.chk_alt_enabled.isChecked()),
+        )
+
+    def set_values(self, normal_dl_bytes: int, normal_ul_bytes: int,
+                   alt_dl_bytes: int, alt_ul_bytes: int, alt_enabled: bool):
+        """Update dialog controls from bytes/sec values."""
+        self.spn_normal_dl.setValue(max(0, int(normal_dl_bytes)) // 1024)
+        self.spn_normal_ul.setValue(max(0, int(normal_ul_bytes)) // 1024)
+        self.spn_alt_dl.setValue(max(0, int(alt_dl_bytes)) // 1024)
+        self.spn_alt_ul.setValue(max(0, int(alt_ul_bytes)) // 1024)
+        self.chk_alt_enabled.setChecked(bool(alt_enabled))
+
+    def set_busy(self, busy: bool, message: str = ""):
+        """Enable/disable controls while async operation runs."""
+        enabled = not bool(busy)
+        for widget in (
+            self.spn_normal_dl,
+            self.spn_normal_ul,
+            self.spn_alt_dl,
+            self.spn_alt_ul,
+            self.chk_alt_enabled,
+            self.btn_refresh,
+            self.btn_apply,
+        ):
+            widget.setEnabled(enabled)
+        self.lbl_message.setText(str(message or ""))
+
+
+# ============================================================================
 # Utility Functions
 # ============================================================================
 
@@ -767,6 +1096,7 @@ class MainWindow(QMainWindow):
         self.all_torrents = []
         self.filtered_torrents = []
         self.categories = []
+        self.category_details: Dict[str, Dict[str, Any]] = {}
         self.tags = []
         self.trackers = []
         self.size_buckets = []
@@ -801,6 +1131,10 @@ class MainWindow(QMainWindow):
         self.current_content_files: List[Dict[str, Any]] = []
         self._selected_torrent = None
         self._suppress_next_cache_save = False
+        self._sync_rid = 0
+        self._sync_torrent_map: Dict[str, Dict[str, Any]] = {}
+        self._taxonomy_dialog: Optional[TaxonomyManagerDialog] = None
+        self._speed_limits_dialog: Optional[SpeedLimitsDialog] = None
 
         # Persistent per-torrent content cache (JSON file)
         self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME)
@@ -1309,6 +1643,18 @@ class MainWindow(QMainWindow):
 
         edit_menu.addSeparator()
 
+        action_set_torrent_dl_limit = QAction("Set Torrent &Download Limit...", self)
+        action_set_torrent_dl_limit.setShortcut("Ctrl+Alt+D")
+        action_set_torrent_dl_limit.triggered.connect(self._set_torrent_download_limit)
+        edit_menu.addAction(action_set_torrent_dl_limit)
+
+        action_set_torrent_ul_limit = QAction("Set Torrent &Upload Limit...", self)
+        action_set_torrent_ul_limit.setShortcut("Ctrl+Alt+U")
+        action_set_torrent_ul_limit.triggered.connect(self._set_torrent_upload_limit)
+        edit_menu.addAction(action_set_torrent_ul_limit)
+
+        edit_menu.addSeparator()
+
         action_remove = QAction("Remo&ve", self)
         action_remove.setShortcut("Del")
         action_remove.triggered.connect(self._remove_torrent)
@@ -1330,6 +1676,30 @@ class MainWindow(QMainWindow):
         action_resume_session.setShortcut("Ctrl+Shift+S")
         action_resume_session.triggered.connect(self._resume_session)
         edit_menu.addAction(action_resume_session)
+
+        edit_menu.addSeparator()
+        content_menu = edit_menu.addMenu("Con&tent")
+
+        action_content_skip = QAction("&Skip", self)
+        action_content_skip.triggered.connect(lambda: self._set_selected_content_priority(0))
+        content_menu.addAction(action_content_skip)
+
+        action_content_normal = QAction("&Normal Priority", self)
+        action_content_normal.triggered.connect(lambda: self._set_selected_content_priority(1))
+        content_menu.addAction(action_content_normal)
+
+        action_content_high = QAction("&High Priority", self)
+        action_content_high.triggered.connect(lambda: self._set_selected_content_priority(6))
+        content_menu.addAction(action_content_high)
+
+        action_content_max = QAction("&Maximum Priority", self)
+        action_content_max.triggered.connect(lambda: self._set_selected_content_priority(7))
+        content_menu.addAction(action_content_max)
+
+        content_menu.addSeparator()
+        action_content_rename = QAction("&Rename...", self)
+        action_content_rename.triggered.connect(self._rename_selected_content_item)
+        content_menu.addAction(action_content_rename)
 
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -1386,6 +1756,16 @@ class MainWindow(QMainWindow):
         action_edit_ini = QAction("&Edit .ini file", self)
         action_edit_ini.triggered.connect(self._edit_settings_ini_file)
         tools_menu.addAction(action_edit_ini)
+
+        tools_menu.addSeparator()
+
+        action_manage_speed_limits = QAction("Manage &Speed Limits...", self)
+        action_manage_speed_limits.triggered.connect(self._show_speed_limits_manager)
+        tools_menu.addAction(action_manage_speed_limits)
+
+        action_manage_taxonomy = QAction("Manage Tags and Categories", self)
+        action_manage_taxonomy.triggered.connect(self._show_taxonomy_manager)
+        tools_menu.addAction(action_manage_taxonomy)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -2038,36 +2418,61 @@ class MainWindow(QMainWindow):
             return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
     def _fetch_torrents(self, **_kw) -> List:
-        """Fetch torrents from qBittorrent with current filters"""
+        """Fetch torrents via incremental sync/maindata and return current full list."""
         start_time = time.time()
 
         try:
-            # Build API filter parameters
-            params = {
-                'sort': 'added_on',
-                'reverse': True
-            }
-
-            # Apply status filter
-            if self.current_status_filter and self.current_status_filter != 'all':
-                params['status_filter'] = self.current_status_filter
-
-            # Apply category filter
-            if self.current_category_filter is not None:
-                params['category'] = self.current_category_filter
-
-            # Apply tag filter
-            if self.current_tag_filter is not None:
-                params['tag'] = self.current_tag_filter
-
             with self._create_client() as qb:
-                result = qb.torrents_info(**params)
+                maindata = qb.sync_maindata(rid=int(self._sync_rid))
+            result = self._merge_sync_maindata(maindata)
 
             elapsed = time.time() - start_time
-            return {'data': list(result), 'elapsed': elapsed, 'success': True}
+            return {'data': result, 'elapsed': elapsed, 'success': True}
         except Exception as e:
             elapsed = time.time() - start_time
             return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _merge_sync_maindata(self, maindata: Any) -> List[Any]:
+        """Merge one sync/maindata payload into local torrent map and return ordered list."""
+        payload = self._entry_to_dict(maindata)
+        full_update = bool(payload.get("full_update", False))
+        rid = self._safe_int(payload.get("rid", self._sync_rid), self._sync_rid)
+        torrents_update = payload.get("torrents", {}) or {}
+        removed_hashes = payload.get("torrents_removed", []) or []
+
+        if full_update:
+            self._sync_torrent_map = {}
+
+        if hasattr(torrents_update, "items"):
+            for raw_hash, entry in torrents_update.items():
+                entry_dict = self._entry_to_dict(entry)
+                torrent_hash = str(entry_dict.get("hash") or raw_hash or "").strip()
+                if not torrent_hash:
+                    continue
+
+                merged = dict(self._sync_torrent_map.get(torrent_hash, {}))
+                merged.update(entry_dict)
+                merged["hash"] = torrent_hash
+                self._sync_torrent_map[torrent_hash] = merged
+
+        if isinstance(removed_hashes, (list, tuple, set)):
+            for raw_hash in removed_hashes:
+                torrent_hash = str(raw_hash or "").strip()
+                if torrent_hash:
+                    self._sync_torrent_map.pop(torrent_hash, None)
+
+        self._sync_rid = rid
+
+        torrents = [
+            SimpleNamespace(**entry)
+            for entry in self._sync_torrent_map.values()
+            if isinstance(entry, dict)
+        ]
+        torrents.sort(
+            key=lambda t: self._safe_int(getattr(t, "added_on", 0), 0),
+            reverse=True
+        )
+        return torrents
 
     @staticmethod
     def _entry_to_dict(entry: Any) -> Dict[str, Any]:
@@ -2278,6 +2683,291 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
+    def _api_set_torrent_download_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw) -> Dict:
+        """Set per-torrent download limit (bytes/sec) for selected torrents."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_set_download_limit(
+                    torrent_hashes=list(torrent_hashes),
+                    limit=max(0, int(limit_bytes))
+                )
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_set_torrent_upload_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw) -> Dict:
+        """Set per-torrent upload limit (bytes/sec) for selected torrents."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_set_upload_limit(
+                    torrent_hashes=list(torrent_hashes),
+                    limit=max(0, int(limit_bytes))
+                )
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_set_global_download_limit(self, limit_bytes: int, **_kw) -> Dict:
+        """Set global download limit (bytes/sec)."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.transfer_set_download_limit(limit=max(0, int(limit_bytes)))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_set_global_upload_limit(self, limit_bytes: int, **_kw) -> Dict:
+        """Set global upload limit (bytes/sec)."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.transfer_set_upload_limit(limit=max(0, int(limit_bytes)))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_toggle_alt_speed_mode(self, **_kw) -> Dict:
+        """Toggle alternative/global speed-limit mode."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.transfer_toggle_speed_limits_mode()
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_fetch_speed_limits_profile(self, **_kw) -> Dict:
+        """Fetch normal/alternative speed limits and current alt-speed mode."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                normal_dl = self._safe_int(qb.transfer_download_limit(), 0)
+                normal_ul = self._safe_int(qb.transfer_upload_limit(), 0)
+                mode = self._safe_int(qb.transfer_speed_limits_mode(), 0)
+                prefs_raw = qb.app_preferences()
+
+            prefs = self._entry_to_dict(prefs_raw)
+            alt_dl = 0
+            alt_ul = 0
+            for key in ("alt_dl_limit", "alt_dl", "alt_download_limit"):
+                if key in prefs:
+                    alt_dl = self._safe_int(prefs.get(key), 0)
+                    break
+            for key in ("alt_up_limit", "alt_up", "alt_upload_limit"):
+                if key in prefs:
+                    alt_ul = self._safe_int(prefs.get(key), 0)
+                    break
+
+            elapsed = time.time() - start_time
+            return {
+                'data': {
+                    'normal_dl': max(0, normal_dl),
+                    'normal_ul': max(0, normal_ul),
+                    'alt_dl': max(0, alt_dl),
+                    'alt_ul': max(0, alt_ul),
+                    'alt_enabled': bool(mode == 1),
+                },
+                'elapsed': elapsed,
+                'success': True,
+            }
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_apply_speed_limits_profile(
+        self,
+        normal_dl: int,
+        normal_ul: int,
+        alt_dl: int,
+        alt_ul: int,
+        alt_enabled: bool,
+        **_kw,
+    ) -> Dict:
+        """Apply normal/alternative speed limits and desired alt-speed mode."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.transfer_set_download_limit(limit=max(0, int(normal_dl)))
+                qb.transfer_set_upload_limit(limit=max(0, int(normal_ul)))
+
+                prefs_raw = qb.app_preferences()
+                prefs_current = self._entry_to_dict(prefs_raw)
+                alt_dl_key = "alt_dl_limit" if "alt_dl_limit" in prefs_current else "alt_dl"
+                alt_ul_key = "alt_up_limit" if "alt_up_limit" in prefs_current else "alt_up"
+                qb.app_set_preferences({
+                    alt_dl_key: max(0, int(alt_dl)),
+                    alt_ul_key: max(0, int(alt_ul)),
+                })
+
+                current_mode = self._safe_int(qb.transfer_speed_limits_mode(), 0)
+                desired_mode = 1 if bool(alt_enabled) else 0
+                if current_mode != desired_mode:
+                    qb.transfer_toggle_speed_limits_mode()
+
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_set_content_priority(
+        self,
+        torrent_hash: str,
+        relative_path: str,
+        is_file: bool,
+        priority: int,
+        **_kw,
+    ) -> Dict:
+        """Set file priority for one file or a whole folder subtree."""
+        start_time = time.time()
+        try:
+            normalized = str(relative_path or "").replace("\\", "/").strip("/")
+            if not torrent_hash or not normalized:
+                raise ValueError("Missing torrent hash or content path")
+
+            with self._create_client() as qb:
+                files = list(qb.torrents_files(torrent_hash=torrent_hash) or [])
+                file_ids: List[int] = []
+                folder_prefix = f"{normalized}/"
+                for file_obj in files:
+                    file_name = str(getattr(file_obj, "name", "") or "").replace("\\", "/").strip("/")
+                    file_id = self._safe_int(getattr(file_obj, "index", -1), -1)
+                    if file_id < 0:
+                        continue
+                    if is_file:
+                        if file_name == normalized:
+                            file_ids.append(file_id)
+                            break
+                    elif file_name == normalized or file_name.startswith(folder_prefix):
+                        file_ids.append(file_id)
+
+                if not file_ids:
+                    raise ValueError("No matching files found for selected content path")
+
+                qb.torrents_file_priority(
+                    torrent_hash=torrent_hash,
+                    file_ids=file_ids,
+                    priority=int(priority),
+                )
+
+            elapsed = time.time() - start_time
+            return {
+                'data': {'updated_file_count': len(file_ids)},
+                'elapsed': elapsed,
+                'success': True
+            }
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_rename_content_path(
+        self,
+        torrent_hash: str,
+        old_relative_path: str,
+        new_relative_path: str,
+        is_file: bool,
+        **_kw,
+    ) -> Dict:
+        """Rename one file or folder inside a torrent."""
+        start_time = time.time()
+        try:
+            old_path = str(old_relative_path or "").replace("\\", "/").strip("/")
+            new_path = str(new_relative_path or "").replace("\\", "/").strip("/")
+            if not torrent_hash or not old_path or not new_path:
+                raise ValueError("Missing torrent hash or rename paths")
+
+            with self._create_client() as qb:
+                if is_file:
+                    qb.torrents_rename_file(
+                        torrent_hash=torrent_hash,
+                        old_path=old_path,
+                        new_path=new_path,
+                    )
+                else:
+                    qb.torrents_rename_folder(
+                        torrent_hash=torrent_hash,
+                        old_path=old_path,
+                        new_path=new_path,
+                    )
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_create_category(self, name: str, save_path: str, **_kw) -> Dict:
+        """Create a new category."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_create_category(name=name, save_path=save_path)
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_edit_category(self, name: str, save_path: str, **_kw) -> Dict:
+        """Edit one existing category."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_edit_category(name=name, save_path=save_path)
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_delete_category(self, name: str, **_kw) -> Dict:
+        """Delete one category."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_remove_categories(categories=[name])
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_create_tags(self, tags: List[str], **_kw) -> Dict:
+        """Create one or more tags."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_create_tags(tags=list(tags))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_delete_tags(self, tags: List[str], **_kw) -> Dict:
+        """Delete one or more tags."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_delete_tags(tags=list(tags))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
     def _api_pause_session(self, **_kw) -> Dict:
         """Pause all torrents in current qBittorrent session."""
         start_time = time.time()
@@ -2341,6 +3031,49 @@ class MainWindow(QMainWindow):
     # API Callbacks
     # ========================================================================
 
+    def _set_categories_from_payload(self, payload: Any):
+        """Normalize categories payload and update category state/tree."""
+        category_details: Dict[str, Dict[str, Any]] = {}
+        if isinstance(payload, dict):
+            for raw_name, raw_entry in payload.items():
+                name = str(raw_name or "").strip()
+                if not name:
+                    continue
+                entry = self._entry_to_dict(raw_entry)
+                category_details[name] = entry
+
+        self.category_details = category_details
+        self.categories = sorted(category_details.keys())
+        self._update_category_tree()
+        self._sync_taxonomy_dialog_data()
+
+    def _category_save_path_by_name(self, category_name: str) -> str:
+        """Resolve default save path for one category from cached details."""
+        details = self.category_details.get(str(category_name or ""), {})
+        if not isinstance(details, dict):
+            return ""
+        for key in ("save_path", "savePath", "download_path", "downloadPath"):
+            value = str(details.get(key, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _taxonomy_category_paths(self) -> Dict[str, str]:
+        """Build category -> save-path mapping for manager dialog."""
+        return {
+            name: self._category_save_path_by_name(name)
+            for name in self.categories
+        }
+
+    def _sync_taxonomy_dialog_data(self):
+        """Refresh taxonomy dialog data when open."""
+        dialog = self._taxonomy_dialog
+        if dialog is None:
+            return
+        if not dialog.isVisible():
+            return
+        dialog.set_taxonomy_data(self._taxonomy_category_paths(), list(self.tags))
+
     def _on_categories_loaded(self, result: Dict):
         """Handle categories loaded"""
         try:
@@ -2354,8 +3087,10 @@ class MainWindow(QMainWindow):
                     f"Check your configuration and ensure qBittorrent WebUI is accessible."
                 )
                 # Continue anyway - load tags with empty categories
+                self.category_details = {}
                 self.categories = []
                 self._update_category_tree()
+                self._sync_taxonomy_dialog_data()
                 # Load tags next
                 self._show_progress("Loading tags...")
                 self.api_queue.add_task(
@@ -2365,8 +3100,7 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            self.categories = list(result.get('data', {}).keys()) if result.get('data') else []
-            self._update_category_tree()
+            self._set_categories_from_payload(result.get('data', {}))
             self._log("INFO", f"Loaded {len(self.categories)} categories", result.get('elapsed', 0))
 
             # Load tags next
@@ -2390,6 +3124,7 @@ class MainWindow(QMainWindow):
                 # Continue anyway - load torrents with empty tags
                 self.tags = []
                 self._update_tag_tree()
+                self._sync_taxonomy_dialog_data()
                 # Load torrents next
                 self._show_progress("Loading torrents...")
                 self.api_queue.add_task(
@@ -2401,6 +3136,7 @@ class MainWindow(QMainWindow):
 
             self.tags = result.get('data', [])
             self._update_tag_tree()
+            self._sync_taxonomy_dialog_data()
             self._log("INFO", f"Loaded {len(self.tags)} tags", result.get('elapsed', 0))
 
             # Load torrents next
@@ -2833,6 +3569,24 @@ class MainWindow(QMainWindow):
 
             filtered = self.all_torrents[:]  # Make a copy
 
+            # Apply API-equivalent filters locally when using sync/maindata.
+            if self._sync_torrent_map:
+                if self.current_status_filter and self.current_status_filter != "all":
+                    filtered = [
+                        t for t in filtered
+                        if self._torrent_matches_status_filter(t, self.current_status_filter)
+                    ]
+                if self.current_category_filter is not None:
+                    filtered = [
+                        t for t in filtered
+                        if self._torrent_matches_category_filter(t, self.current_category_filter)
+                    ]
+                if self.current_tag_filter is not None:
+                    filtered = [
+                        t for t in filtered
+                        if self._torrent_matches_tag_filter(t, self.current_tag_filter)
+                    ]
+
             # Apply text filter
             if self.current_text_filter:
                 try:
@@ -2888,6 +3642,67 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Error applying filters: {e}")
             self.filtered_torrents = []
             self._update_torrents_table()
+
+    def _torrent_matches_status_filter(self, torrent, status_filter: str) -> bool:
+        """Approximate qBittorrent status filters from torrent state/speeds."""
+        state = str(getattr(torrent, "state", "") or "").strip().lower()
+        status = str(status_filter or "").strip().lower()
+
+        is_paused = state.startswith("paused")
+        is_active = (
+            self._safe_int(getattr(torrent, "dlspeed", 0), 0) > 0
+            or self._safe_int(getattr(torrent, "upspeed", 0), 0) > 0
+        )
+        is_complete = self._safe_float(getattr(torrent, "progress", 0.0), 0.0) >= 1.0
+
+        if status == "all":
+            return True
+        if status == "downloading":
+            return state in {
+                "downloading", "metadl", "forcedmetadl", "queueddl", "stalleddl",
+                "checkingdl", "forceddl", "allocating"
+            }
+        if status == "seeding":
+            return state in {
+                "uploading", "stalledup", "queuedup", "checkingup", "forcedup"
+            }
+        if status == "completed":
+            return is_complete
+        if status in {"paused", "stopped"}:
+            return is_paused
+        if status == "active":
+            return is_active
+        if status == "inactive":
+            return not is_active
+        if status in {"resumed", "running"}:
+            return not is_paused
+        if status == "stalled":
+            return "stalled" in state
+        if status == "stalled_uploading":
+            return state == "stalledup"
+        if status == "stalled_downloading":
+            return state == "stalleddl"
+        if status == "checking":
+            return "checking" in state
+        if status == "moving":
+            return "moving" in state
+        if status == "errored":
+            return state in {"error", "missingfiles", "unknown"}
+        return True
+
+    @staticmethod
+    def _torrent_matches_category_filter(torrent, category_filter: Any) -> bool:
+        """Match one torrent against selected category filter."""
+        torrent_category = str(getattr(torrent, "category", "") or "")
+        return torrent_category == str(category_filter or "")
+
+    def _torrent_matches_tag_filter(self, torrent, tag_filter: Any) -> bool:
+        """Match one torrent against selected tag filter."""
+        tag = str(tag_filter or "")
+        tags = parse_tags(getattr(torrent, "tags", None))
+        if tag == "":
+            return len(tags) == 0
+        return tag in tags
 
     def _clear_filters(self):
         """Clear all filters"""
@@ -3701,6 +4516,524 @@ Content Path:   {content_path}
             "Minimum Priority",
             "Setting minimum queue priority...",
             "Setting minimum queue priority for {count} torrents...",
+        )
+
+    @staticmethod
+    def _kib_to_bytes(limit_kib: int) -> int:
+        """Convert KiB/s to bytes/s for API calls."""
+        return max(0, int(limit_kib)) * 1024
+
+    def _prompt_limit_kib(self, title: str, label: str) -> Optional[int]:
+        """Prompt for a speed limit in KiB/s (0 means unlimited)."""
+        value, ok = QInputDialog.getInt(
+            self,
+            title,
+            label,
+            value=0,
+            minValue=0,
+            maxValue=10_000_000,
+            step=1,
+        )
+        if not ok:
+            return None
+        return int(value)
+
+    def _set_torrent_download_limit(self):
+        """Prompt and set download limit for selected torrents."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
+            return
+        limit_kib = self._prompt_limit_kib(
+            "Set Torrent Download Limit",
+            "Download limit (KiB/s, 0 = unlimited):",
+        )
+        if limit_kib is None:
+            return
+
+        limit_bytes = self._kib_to_bytes(limit_kib)
+        count = len(torrent_hashes)
+        self._show_progress("Setting torrent download limit...")
+        self.api_queue.add_task(
+            "set_torrent_download_limit",
+            self._api_set_torrent_download_limit,
+            lambda r: self._on_torrent_action_done("Set Torrent Download Limit", r),
+            torrent_hashes,
+            limit_bytes,
+        )
+        self._log(
+            "INFO",
+            f"Setting download limit for {count} torrent(s) to {limit_kib} KiB/s"
+        )
+
+    def _set_torrent_upload_limit(self):
+        """Prompt and set upload limit for selected torrents."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
+            return
+        limit_kib = self._prompt_limit_kib(
+            "Set Torrent Upload Limit",
+            "Upload limit (KiB/s, 0 = unlimited):",
+        )
+        if limit_kib is None:
+            return
+
+        limit_bytes = self._kib_to_bytes(limit_kib)
+        count = len(torrent_hashes)
+        self._show_progress("Setting torrent upload limit...")
+        self.api_queue.add_task(
+            "set_torrent_upload_limit",
+            self._api_set_torrent_upload_limit,
+            lambda r: self._on_torrent_action_done("Set Torrent Upload Limit", r),
+            torrent_hashes,
+            limit_bytes,
+        )
+        self._log(
+            "INFO",
+            f"Setting upload limit for {count} torrent(s) to {limit_kib} KiB/s"
+        )
+
+    def _on_global_bandwidth_action_done(self, action_name: str, result: Dict):
+        """Handle global bandwidth action completion."""
+        if result.get("success"):
+            self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
+            self._set_status(f"{action_name} applied")
+            QTimer.singleShot(500, self._refresh_torrents)
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0))
+            self._set_status(f"{action_name} failed: {error}")
+        self._hide_progress()
+
+    def _show_speed_limits_manager(self):
+        """Open speed limits manager dialog."""
+        if self._speed_limits_dialog is not None and self._speed_limits_dialog.isVisible():
+            self._speed_limits_dialog.raise_()
+            self._speed_limits_dialog.activateWindow()
+            self._request_speed_limits_profile()
+            return
+
+        dialog = SpeedLimitsDialog(self)
+        dialog.refresh_requested.connect(self._request_speed_limits_profile)
+        dialog.apply_requested.connect(self._on_speed_limits_apply_requested)
+        dialog.finished.connect(self._on_speed_limits_dialog_closed)
+        self._speed_limits_dialog = dialog
+        dialog.show()
+        self._request_speed_limits_profile()
+
+    def _on_speed_limits_dialog_closed(self, _result: int):
+        """Clear cached speed limits dialog reference."""
+        self._speed_limits_dialog = None
+
+    def _set_speed_limits_dialog_busy(self, busy: bool, message: str = ""):
+        """Set speed dialog controls busy state when dialog is open."""
+        dialog = self._speed_limits_dialog
+        if dialog is None:
+            return
+        if not dialog.isVisible():
+            return
+        dialog.set_busy(bool(busy), message)
+
+    def _request_speed_limits_profile(self):
+        """Load current speed limits into manager dialog."""
+        self._show_progress("Loading speed limits...")
+        self._set_speed_limits_dialog_busy(True, "Loading speed limits...")
+        self.api_queue.add_task(
+            "fetch_speed_limits_profile",
+            self._api_fetch_speed_limits_profile,
+            self._on_speed_limits_profile_loaded,
+        )
+
+    def _on_speed_limits_profile_loaded(self, result: Dict):
+        """Populate speed limits dialog from API response."""
+        if result.get("success"):
+            data = result.get("data", {}) or {}
+            dialog = self._speed_limits_dialog
+            if dialog is not None and dialog.isVisible():
+                dialog.set_values(
+                    self._safe_int(data.get("normal_dl", 0), 0),
+                    self._safe_int(data.get("normal_ul", 0), 0),
+                    self._safe_int(data.get("alt_dl", 0), 0),
+                    self._safe_int(data.get("alt_ul", 0), 0),
+                    bool(data.get("alt_enabled", False)),
+                )
+            self._set_status("Speed limits loaded")
+            self._set_speed_limits_dialog_busy(False, "Loaded")
+        else:
+            error = result.get("error", "Unknown error")
+            self._set_status(f"Failed to load speed limits: {error}")
+            self._set_speed_limits_dialog_busy(False, f"Failed: {error}")
+        self._hide_progress()
+
+    def _on_speed_limits_apply_requested(
+        self,
+        normal_dl_kib: int,
+        normal_ul_kib: int,
+        alt_dl_kib: int,
+        alt_ul_kib: int,
+        alt_enabled: bool,
+    ):
+        """Queue apply operation from speed limits dialog values."""
+        self._show_progress("Applying speed limits...")
+        self._set_speed_limits_dialog_busy(True, "Applying speed limits...")
+        self.api_queue.add_task(
+            "apply_speed_limits_profile",
+            self._api_apply_speed_limits_profile,
+            self._on_speed_limits_profile_applied,
+            self._kib_to_bytes(normal_dl_kib),
+            self._kib_to_bytes(normal_ul_kib),
+            self._kib_to_bytes(alt_dl_kib),
+            self._kib_to_bytes(alt_ul_kib),
+            bool(alt_enabled),
+        )
+
+    def _on_speed_limits_profile_applied(self, result: Dict):
+        """Handle completion of speed limits apply."""
+        if result.get("success"):
+            self._set_status("Speed limits applied")
+            self._set_speed_limits_dialog_busy(False, "Applied")
+            self._request_speed_limits_profile()
+            return
+        error = result.get("error", "Unknown error")
+        self._set_status(f"Failed to apply speed limits: {error}")
+        self._set_speed_limits_dialog_busy(False, f"Failed: {error}")
+        self._hide_progress()
+
+    def _set_global_download_limit(self):
+        """Prompt and set global download limit."""
+        limit_kib = self._prompt_limit_kib(
+            "Set Global Download Limit",
+            "Global download limit (KiB/s, 0 = unlimited):",
+        )
+        if limit_kib is None:
+            return
+        limit_bytes = self._kib_to_bytes(limit_kib)
+        self._show_progress("Setting global download limit...")
+        self.api_queue.add_task(
+            "set_global_download_limit",
+            self._api_set_global_download_limit,
+            lambda r: self._on_global_bandwidth_action_done("Set Global Download Limit", r),
+            limit_bytes,
+        )
+
+    def _set_global_upload_limit(self):
+        """Prompt and set global upload limit."""
+        limit_kib = self._prompt_limit_kib(
+            "Set Global Upload Limit",
+            "Global upload limit (KiB/s, 0 = unlimited):",
+        )
+        if limit_kib is None:
+            return
+        limit_bytes = self._kib_to_bytes(limit_kib)
+        self._show_progress("Setting global upload limit...")
+        self.api_queue.add_task(
+            "set_global_upload_limit",
+            self._api_set_global_upload_limit,
+            lambda r: self._on_global_bandwidth_action_done("Set Global Upload Limit", r),
+            limit_bytes,
+        )
+
+    def _toggle_alt_speed_mode(self):
+        """Toggle alternative speed mode."""
+        self._show_progress("Toggling alternative speed mode...")
+        self.api_queue.add_task(
+            "toggle_alt_speed_mode",
+            self._api_toggle_alt_speed_mode,
+            lambda r: self._on_global_bandwidth_action_done("Toggle Alternative Speed Mode", r),
+        )
+
+    def _get_selected_content_item_info(self) -> Optional[Dict[str, Any]]:
+        """Return selected content tree item metadata."""
+        item = self.tree_files.currentItem()
+        if item is None:
+            selected = self.tree_files.selectedItems()
+            if selected:
+                item = selected[0]
+        if item is None:
+            self._set_status("No content item selected")
+            return None
+
+        item_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(item_data, dict):
+            self._set_status("No content item selected")
+            return None
+
+        relative_path = str(item_data.get("relative_path", "") or "").replace("\\", "/").strip("/")
+        if not relative_path:
+            self._set_status("No content item selected")
+            return None
+
+        return {
+            "item": item,
+            "relative_path": relative_path,
+            "is_file": bool(item_data.get("is_file", False)),
+        }
+
+    def _selected_torrent_hash_for_content_action(self) -> Optional[str]:
+        """Return currently selected torrent hash for content actions."""
+        torrent = getattr(self, "_selected_torrent", None)
+        torrent_hash = str(getattr(torrent, "hash", "") or "").strip() if torrent else ""
+        if not torrent_hash:
+            self._set_status("Select exactly one torrent first")
+            return None
+        return torrent_hash
+
+    def _on_content_action_done(self, action_name: str, result: Dict):
+        """Callback for content actions (priority/rename)."""
+        if result.get("success"):
+            self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
+            QTimer.singleShot(500, self._refresh_torrents)
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0))
+            self._set_status(f"{action_name} failed: {error}")
+        self._hide_progress()
+
+    def _set_selected_content_priority(self, priority: int):
+        """Set priority for selected content item (file/folder)."""
+        torrent_hash = self._selected_torrent_hash_for_content_action()
+        if not torrent_hash:
+            return
+        info = self._get_selected_content_item_info()
+        if not info:
+            return
+
+        priority_name = {0: "Skip", 1: "Normal", 6: "High", 7: "Maximum"}.get(priority, str(priority))
+        self._show_progress(f"Setting content priority: {priority_name}...")
+        self.api_queue.add_task(
+            "set_content_priority",
+            self._api_set_content_priority,
+            lambda r: self._on_content_action_done("Set Content Priority", r),
+            torrent_hash,
+            info["relative_path"],
+            info["is_file"],
+            int(priority),
+        )
+
+    def _rename_selected_content_item(self):
+        """Rename selected file/folder in content tree via API."""
+        torrent_hash = self._selected_torrent_hash_for_content_action()
+        if not torrent_hash:
+            return
+        info = self._get_selected_content_item_info()
+        if not info:
+            return
+
+        old_rel = str(info["relative_path"])
+        old_name = old_rel.rsplit("/", 1)[-1]
+        label = "file" if info["is_file"] else "folder"
+        new_name, ok = QInputDialog.getText(
+            self,
+            f"Rename {label.title()}",
+            f"New {label} name:",
+            text=old_name,
+        )
+        if not ok:
+            return
+
+        new_name = str(new_name or "").strip()
+        if not new_name:
+            self._set_status("New name cannot be empty")
+            return
+        if "/" in new_name or "\\" in new_name:
+            self._set_status("New name cannot contain path separators")
+            return
+        if new_name == old_name:
+            return
+
+        parent = old_rel.rsplit("/", 1)[0] if "/" in old_rel else ""
+        new_rel = f"{parent}/{new_name}" if parent else new_name
+
+        self._show_progress(f"Renaming {label}...")
+        self.api_queue.add_task(
+            "rename_content_path",
+            self._api_rename_content_path,
+            lambda r: self._on_content_action_done("Rename Content", r),
+            torrent_hash,
+            old_rel,
+            new_rel,
+            bool(info["is_file"]),
+        )
+
+    def _on_taxonomy_action_done(self, action_name: str, result: Dict):
+        """Callback for create/edit/delete category/tag actions."""
+        if result.get("success"):
+            self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
+            self._reload_taxonomy_data(action_name)
+            return
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0))
+            self._set_status(f"{action_name} failed: {error}")
+            self._set_taxonomy_dialog_busy(False, f"{action_name} failed: {error}")
+        self._hide_progress()
+
+    def _set_taxonomy_dialog_busy(self, busy: bool, message: str = ""):
+        """Set taxonomy dialog busy state when open."""
+        dialog = self._taxonomy_dialog
+        if dialog is None:
+            return
+        if not dialog.isVisible():
+            return
+        dialog.set_busy(bool(busy), message)
+
+    def _reload_taxonomy_data(self, action_name: str):
+        """Reload categories+tags after taxonomy mutation."""
+        self.api_queue.add_task(
+            "reload_categories_for_taxonomy",
+            self._fetch_categories,
+            lambda r: self._on_taxonomy_categories_reloaded(action_name, r),
+        )
+
+    def _on_taxonomy_categories_reloaded(self, action_name: str, result: Dict):
+        """Handle category reload in taxonomy post-action chain."""
+        if result.get("success"):
+            self._set_categories_from_payload(result.get("data", {}))
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"Reload categories failed after {action_name}: {error}")
+
+        self.api_queue.add_task(
+            "reload_tags_for_taxonomy",
+            self._fetch_tags,
+            lambda r: self._on_taxonomy_tags_reloaded(action_name, r),
+        )
+
+    def _on_taxonomy_tags_reloaded(self, action_name: str, result: Dict):
+        """Finalize taxonomy reload and update UI/dialog."""
+        if result.get("success"):
+            self.tags = result.get("data", [])
+            self._update_tag_tree()
+            self._sync_taxonomy_dialog_data()
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"Reload tags failed after {action_name}: {error}")
+
+        self._set_taxonomy_dialog_busy(False, f"{action_name} succeeded")
+        self._hide_progress()
+        self._set_status(f"{action_name} succeeded")
+
+    def _queue_taxonomy_action(self, task_name: str, api_method, action_name: str, *args):
+        """Queue taxonomy mutation from manager dialog."""
+        self._show_progress(f"{action_name}...")
+        self._set_taxonomy_dialog_busy(True, f"{action_name}...")
+        self.api_queue.add_task(
+            task_name,
+            api_method,
+            lambda r: self._on_taxonomy_action_done(action_name, r),
+            *args,
+        )
+
+    def _show_taxonomy_manager(self):
+        """Open taxonomy manager dialog (categories + tags)."""
+        if self._taxonomy_dialog is not None and self._taxonomy_dialog.isVisible():
+            self._sync_taxonomy_dialog_data()
+            self._taxonomy_dialog.raise_()
+            self._taxonomy_dialog.activateWindow()
+            return
+
+        dialog = TaxonomyManagerDialog(self)
+        dialog.set_taxonomy_data(self._taxonomy_category_paths(), list(self.tags))
+        dialog.create_category_requested.connect(self._on_taxonomy_create_category_requested)
+        dialog.edit_category_requested.connect(self._on_taxonomy_edit_category_requested)
+        dialog.delete_category_requested.connect(self._on_taxonomy_delete_category_requested)
+        dialog.create_tags_requested.connect(self._on_taxonomy_create_tags_requested)
+        dialog.delete_tags_requested.connect(self._on_taxonomy_delete_tags_requested)
+        dialog.finished.connect(self._on_taxonomy_dialog_closed)
+        self._taxonomy_dialog = dialog
+        dialog.show()
+
+    def _on_taxonomy_dialog_closed(self, _result: int):
+        """Clear dialog reference when closed."""
+        self._taxonomy_dialog = None
+
+    def _on_taxonomy_create_category_requested(self, name: str, save_path: str):
+        """Handle create-category request from manager dialog."""
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            self._set_taxonomy_dialog_busy(False, "Category name cannot be empty.")
+            return
+        self._queue_taxonomy_action(
+            "create_category",
+            self._api_create_category,
+            "Create Category",
+            normalized_name,
+            str(save_path or "").strip(),
+        )
+
+    def _on_taxonomy_edit_category_requested(self, name: str, save_path: str):
+        """Handle edit-category request from manager dialog."""
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            self._set_taxonomy_dialog_busy(False, "Select a category to update.")
+            return
+        self._queue_taxonomy_action(
+            "edit_category",
+            self._api_edit_category,
+            "Edit Category",
+            normalized_name,
+            str(save_path or "").strip(),
+        )
+
+    def _on_taxonomy_delete_category_requested(self, name: str):
+        """Handle delete-category request from manager dialog."""
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            self._set_taxonomy_dialog_busy(False, "Select a category to delete.")
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Delete Category",
+            f"Delete category '{normalized_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        self._queue_taxonomy_action(
+            "delete_category",
+            self._api_delete_category,
+            "Delete Category",
+            normalized_name,
+        )
+
+    def _on_taxonomy_create_tags_requested(self, tags: List[str]):
+        """Handle create-tags request from manager dialog."""
+        normalized = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
+        if not normalized:
+            self._set_taxonomy_dialog_busy(False, "Enter at least one tag.")
+            return
+        self._queue_taxonomy_action(
+            "create_tags",
+            self._api_create_tags,
+            "Create Tag",
+            normalized,
+        )
+
+    def _on_taxonomy_delete_tags_requested(self, tags: List[str]):
+        """Handle delete-tags request from manager dialog."""
+        normalized = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
+        if not normalized:
+            self._set_taxonomy_dialog_busy(False, "Select at least one tag to delete.")
+            return
+
+        tag_text = ", ".join(normalized)
+        confirm = QMessageBox.question(
+            self,
+            "Delete Tag(s)",
+            f"Delete selected tag(s): {tag_text} ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        self._queue_taxonomy_action(
+            "delete_tags",
+            self._api_delete_tags,
+            "Delete Tag",
+            normalized,
         )
 
     def _pause_session(self):
