@@ -24,15 +24,14 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QLabel, QPushButton, QLineEdit, QCheckBox, QComboBox, QDialog,
-    QDialogButtonBox, QFileDialog, QTextEdit, QFrame, QToolBar, QStatusBar,
+    QDialogButtonBox, QFileDialog, QTextEdit, QFrame, QStatusBar,
     QAbstractItemView, QHeaderView, QFormLayout, QSpinBox, QDoubleSpinBox, QGroupBox,
     QProgressBar, QMenu, QMessageBox, QTabWidget, QListWidget, QListWidgetItem,
     QInputDialog,
     QSizePolicy
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QRunnable, Slot, Signal, QObject, QThreadPool, QSettings,
-    QSize
+    Qt, QTimer, QRunnable, Slot, Signal, QObject, QThreadPool, QSettings
 )
 from PySide6.QtGui import QAction, QFont, QIcon, QColor, QBrush
 
@@ -63,6 +62,35 @@ STATUS_FILTERS = [
 
 # Size buckets in bytes (will be dynamically calculated)
 SIZE_BUCKET_COUNT = 5
+
+TORRENT_COLUMNS = [
+    {"key": "hash", "label": "Hash", "width": 240, "default_visible": False},
+    {"key": "name", "label": "Name", "width": 360, "default_visible": True},
+    {"key": "size", "label": "Size", "width": 110, "default_visible": True},
+    {"key": "total_size", "label": "Total Size", "width": 110, "default_visible": True},
+    {"key": "progress", "label": "Progress", "width": 80, "default_visible": True},
+    {"key": "state", "label": "Status", "width": 110, "default_visible": True},
+    {"key": "dlspeed", "label": "DL Speed", "width": 100, "default_visible": True},
+    {"key": "upspeed", "label": "UP Speed", "width": 100, "default_visible": True},
+    {"key": "downloaded", "label": "Downloaded", "width": 110, "default_visible": True},
+    {"key": "uploaded", "label": "Uploaded", "width": 110, "default_visible": True},
+    {"key": "ratio", "label": "Ratio", "width": 70, "default_visible": True},
+    {"key": "num_seeds", "label": "Seeds", "width": 70, "default_visible": True},
+    {"key": "num_leechs", "label": "Peers", "width": 70, "default_visible": True},
+    {"key": "num_complete", "label": "Complete", "width": 80, "default_visible": True},
+    {"key": "num_incomplete", "label": "Incomplete", "width": 90, "default_visible": True},
+    {"key": "eta", "label": "ETA", "width": 90, "default_visible": True},
+    {"key": "added_on", "label": "Added On", "width": 150, "default_visible": True},
+    {"key": "completion_on", "label": "Completed On", "width": 150, "default_visible": True},
+    {"key": "last_activity", "label": "Last Activity", "width": 150, "default_visible": True},
+    {"key": "category", "label": "Category", "width": 120, "default_visible": True},
+    {"key": "tags", "label": "Tags", "width": 150, "default_visible": True},
+    {"key": "tracker", "label": "Tracker", "width": 170, "default_visible": True},
+    {"key": "is_private", "label": "Private", "width": 80, "default_visible": True},
+    {"key": "num_files", "label": "Files", "width": 70, "default_visible": True},
+    {"key": "save_path", "label": "Save Path", "width": 220, "default_visible": True},
+    {"key": "content_path", "label": "Content Path", "width": 260, "default_visible": True},
+]
 
 
 # ============================================================================
@@ -621,6 +649,29 @@ def format_speed_mode(bytes_per_sec: int, mode: str = 'human_readable') -> str:
     return f"{format_size_mode(speed_val, mode='human_readable')}/s"
 
 
+def format_eta(seconds: int) -> str:
+    """Format ETA seconds to compact human-readable duration."""
+    try:
+        eta = int(seconds)
+    except Exception:
+        return ""
+
+    if eta <= 0:
+        return ""
+
+    days, remainder = divmod(eta, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    if days > 0:
+        return f"{days}d {hours:02d}h"
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m"
+    if minutes > 0:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
 def parse_tags(tags) -> List[str]:
     """Parse tags from qBittorrentAPI into a list of strings.
 
@@ -705,6 +756,11 @@ class MainWindow(QMainWindow):
         self.tags = []
         self.trackers = []
         self.size_buckets = []
+        self.torrent_columns = list(TORRENT_COLUMNS)
+        self.torrent_column_index = {
+            col["key"]: idx for idx, col in enumerate(self.torrent_columns)
+        }
+        self.column_visibility_actions: Dict[str, QAction] = {}
 
         # Defaults from config (used by Reset View and first launch)
         cfg_default_status = str(config.get('default_status_filter', DEFAULT_STATUS_FILTER)).strip().lower()
@@ -743,6 +799,10 @@ class MainWindow(QMainWindow):
         self.api_queue.task_failed.connect(self._on_task_failed)
         self.api_queue.task_cancelled.connect(self._on_task_cancelled)
 
+        # Separate queue for selected-torrent details (trackers/peers), so
+        # table refresh/actions are not interrupted by tab-level lookups.
+        self.details_api_queue = APITaskQueue(self)
+
         # Log file path (set by main() before constructing MainWindow)
         self.log_file_path = config.get('_log_file_path', 'qbiremo_enhanced.log')
 
@@ -761,7 +821,6 @@ class MainWindow(QMainWindow):
         # UI Setup
         self._create_ui()
         self._create_menus()
-        self._create_toolbar()
         self._create_statusbar()
         self._capture_default_view_state()
 
@@ -815,15 +874,22 @@ class MainWindow(QMainWindow):
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setTabPosition(QTabWidget.TabPosition.South)
 
-        # -- Info tab --
-        info_widget = QWidget()
-        info_layout = QVBoxLayout(info_widget)
-        info_layout.setContentsMargins(4, 4, 4, 4)
+        # -- General tab --
+        general_widget = QWidget()
+        general_layout = QVBoxLayout(general_widget)
+        general_layout.setContentsMargins(4, 4, 4, 4)
 
-        self.txt_details = QTextEdit()
-        self.txt_details.setReadOnly(True)
-        self.txt_details.setFont(QFont("Courier", 9))
-        info_layout.addWidget(self.txt_details)
+        general_actions_layout = QHBoxLayout()
+        general_actions_layout.addStretch(1)
+        btn_copy_general = QPushButton("Copy")
+        btn_copy_general.clicked.connect(self._copy_general_details)
+        general_actions_layout.addWidget(btn_copy_general)
+        general_layout.addLayout(general_actions_layout)
+
+        self.txt_general_details = QTextEdit()
+        self.txt_general_details.setReadOnly(True)
+        self.txt_general_details.setFont(QFont("Courier", 9))
+        general_layout.addWidget(self.txt_general_details)
 
         # Editable fields
         edit_group = QGroupBox("Edit Properties")
@@ -847,8 +913,41 @@ class MainWindow(QMainWindow):
         btn_save_props.clicked.connect(self._save_torrent_properties)
         edit_form.addRow("", btn_save_props)
 
-        info_layout.addWidget(edit_group)
-        self.detail_tabs.addTab(info_widget, "Info")
+        general_layout.addWidget(edit_group)
+        self.detail_tabs.addTab(general_widget, "General")
+
+        # -- Trackers tab --
+        trackers_widget = QWidget()
+        trackers_layout = QVBoxLayout(trackers_widget)
+        trackers_layout.setContentsMargins(4, 4, 4, 4)
+        self.tbl_trackers = QTableWidget()
+        self.tbl_trackers.setAlternatingRowColors(True)
+        self.tbl_trackers.setSortingEnabled(True)
+        self.tbl_trackers.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tbl_trackers.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tbl_trackers.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_trackers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tbl_trackers.horizontalHeader().setStretchLastSection(True)
+        trackers_layout.addWidget(self.tbl_trackers)
+        self.detail_tabs.addTab(trackers_widget, "Trackers")
+
+        # -- Peers tab --
+        peers_widget = QWidget()
+        peers_layout = QVBoxLayout(peers_widget)
+        peers_layout.setContentsMargins(4, 4, 4, 4)
+        self.tbl_peers = QTableWidget()
+        self.tbl_peers.setAlternatingRowColors(True)
+        self.tbl_peers.setSortingEnabled(True)
+        self.tbl_peers.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tbl_peers.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tbl_peers.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_peers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.tbl_peers.horizontalHeader().setStretchLastSection(True)
+        peers_layout.addWidget(self.tbl_peers)
+        self.detail_tabs.addTab(peers_widget, "Peers")
+
+        self._set_details_table_message(self.tbl_trackers, "No torrent selected.")
+        self._set_details_table_message(self.tbl_peers, "No torrent selected.")
 
         # -- Content tab --
         content_widget = QWidget()
@@ -1046,15 +1145,9 @@ class MainWindow(QMainWindow):
         table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         table.customContextMenuRequested.connect(self._show_torrent_context_menu)
 
-        headers = [
-            "Hash", "Name", "Size", "Progress", "Status", "DL Speed", "UP Speed",
-            "Ratio", "Seeds", "Peers", "Added On", "Category", "Tags"
-        ]
+        headers = [col["label"] for col in self.torrent_columns]
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
-
-        # Hide hash column
-        table.setColumnHidden(0, True)
 
         # Make columns user-resizable and movable.
         header = table.horizontalHeader()
@@ -1063,21 +1156,69 @@ class MainWindow(QMainWindow):
         header.setSectionsMovable(True)
         header.setMinimumSectionSize(40)
 
-        # Default widths (used on first run before QSettings restore)
-        table.setColumnWidth(1, 360)
-        table.setColumnWidth(2, 100)
-        table.setColumnWidth(3, 80)
-        table.setColumnWidth(4, 100)
-        table.setColumnWidth(5, 100)
-        table.setColumnWidth(6, 100)
-        table.setColumnWidth(7, 70)
-        table.setColumnWidth(8, 60)
-        table.setColumnWidth(9, 60)
-        table.setColumnWidth(10, 150)
-        table.setColumnWidth(11, 120)
-        table.setColumnWidth(12, 150)
+        # Default widths and visibility (used on first run before QSettings restore)
+        for idx, column in enumerate(self.torrent_columns):
+            table.setColumnWidth(idx, int(column.get("width", 100)))
+            table.setColumnHidden(idx, not bool(column.get("default_visible", True)))
 
         return table
+
+    def _create_torrent_columns_menu(self, parent_menu: QMenu):
+        """Create View -> Torrent Columns submenu with per-column visibility toggles."""
+        columns_menu = parent_menu.addMenu("Torrent &Columns")
+        self.column_visibility_actions = {}
+
+        for idx, column in enumerate(self.torrent_columns):
+            key = column["key"]
+            action = QAction(column["label"], self)
+            action.setCheckable(True)
+            action.setChecked(not self.tbl_torrents.isColumnHidden(idx))
+            action.toggled.connect(
+                lambda checked, column_key=key: self._set_torrent_column_visible(column_key, checked)
+            )
+            columns_menu.addAction(action)
+            self.column_visibility_actions[key] = action
+
+        columns_menu.addSeparator()
+        action_show_all = QAction("&Show All Columns", self)
+        action_show_all.triggered.connect(self._show_all_torrent_columns)
+        columns_menu.addAction(action_show_all)
+
+    def _set_torrent_column_visible(self, column_key: str, visible: bool):
+        """Show or hide one torrent-table column by stable column key."""
+        idx = self.torrent_column_index.get(column_key)
+        if idx is None:
+            return
+        self.tbl_torrents.setColumnHidden(idx, not bool(visible))
+        self._sync_torrent_column_actions()
+        self._save_settings()
+
+    def _show_all_torrent_columns(self):
+        """Make every torrent-table column visible."""
+        for idx in range(self.tbl_torrents.columnCount()):
+            self.tbl_torrents.setColumnHidden(idx, False)
+        self._sync_torrent_column_actions()
+        self._save_settings()
+
+    def _sync_torrent_column_actions(self):
+        """Refresh column visibility action checked states from current table state."""
+        if not getattr(self, "column_visibility_actions", None):
+            return
+        for key, action in self.column_visibility_actions.items():
+            idx = self.torrent_column_index.get(key)
+            if idx is None:
+                continue
+            state = not self.tbl_torrents.isColumnHidden(idx)
+            prev = action.blockSignals(True)
+            action.setChecked(state)
+            action.blockSignals(prev)
+
+    def _apply_hidden_columns_by_keys(self, hidden_keys: List[str]):
+        """Apply hidden column state from stable key list."""
+        hidden = {str(k) for k in hidden_keys}
+        for idx, col in enumerate(self.torrent_columns):
+            self.tbl_torrents.setColumnHidden(idx, col["key"] in hidden)
+        self._sync_torrent_column_actions()
 
     def _create_menus(self):
         """Create menu bar"""
@@ -1091,17 +1232,47 @@ class MainWindow(QMainWindow):
         add_action.triggered.connect(self._show_add_torrent_dialog)
         file_menu.addAction(add_action)
 
-        clear_cache_action = QAction("Clear Cache && &Refresh", self)
-        clear_cache_action.setShortcut("Ctrl+F5")
-        clear_cache_action.triggered.connect(self._clear_cache_and_refresh)
-        file_menu.addAction(clear_cache_action)
-
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        # Edit menu
+        edit_menu = menubar.addMenu("&Edit")
+
+        action_start = QAction("&Start", self)
+        action_start.setShortcut("Ctrl+S")
+        action_start.triggered.connect(self._resume_torrent)
+        edit_menu.addAction(action_start)
+
+        action_stop = QAction("Sto&p", self)
+        action_stop.setShortcut("Ctrl+P")
+        action_stop.triggered.connect(self._pause_torrent)
+        edit_menu.addAction(action_stop)
+
+        action_remove = QAction("Remo&ve", self)
+        action_remove.setShortcut("Del")
+        action_remove.triggered.connect(self._remove_torrent)
+        edit_menu.addAction(action_remove)
+
+        action_remove_delete = QAction("Remove and De&lete Data", self)
+        action_remove_delete.setShortcut("Shift+Del")
+        action_remove_delete.triggered.connect(self._remove_torrent_and_delete_data)
+        edit_menu.addAction(action_remove_delete)
+
+        edit_menu.addSeparator()
+
+        action_pause_session = QAction("Pause Sessio&n", self)
+        action_pause_session.setShortcut("Ctrl+Shift+P")
+        action_pause_session.triggered.connect(self._pause_session)
+        edit_menu.addAction(action_pause_session)
+
+        action_resume_session = QAction("Resu&me Session", self)
+        action_resume_session.setShortcut("Ctrl+Shift+S")
+        action_resume_session.triggered.connect(self._resume_session)
+        edit_menu.addAction(action_resume_session)
 
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -1114,6 +1285,14 @@ class MainWindow(QMainWindow):
         action_refresh.setShortcut("F5")
         action_refresh.triggered.connect(self._refresh_torrents)
         view_menu.addAction(action_refresh)
+
+        clear_cache_action = QAction("Clear Cache && &Refresh", self)
+        clear_cache_action.setShortcut("Ctrl+F5")
+        clear_cache_action.triggered.connect(self._clear_cache_and_refresh)
+        view_menu.addAction(clear_cache_action)
+
+        view_menu.addSeparator()
+        self._create_torrent_columns_menu(view_menu)
 
         view_menu.addSeparator()
 
@@ -1132,45 +1311,12 @@ class MainWindow(QMainWindow):
         action_reset_view.triggered.connect(self._reset_view_defaults)
         view_menu.addAction(action_reset_view)
 
-        # Torrent menu
-        torrent_menu = menubar.addMenu("&Torrent")
-
-        pause_action = QAction("&Pause", self)
-        pause_action.triggered.connect(self._pause_torrent)
-        torrent_menu.addAction(pause_action)
-
-        resume_action = QAction("&Resume", self)
-        resume_action.triggered.connect(self._resume_torrent)
-        torrent_menu.addAction(resume_action)
-
-        torrent_menu.addSeparator()
-
-        delete_action = QAction("&Delete", self)
-        delete_action.triggered.connect(self._delete_torrent)
-        torrent_menu.addAction(delete_action)
-
         # Help menu
         help_menu = menubar.addMenu("&Help")
 
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
-
-    def _create_toolbar(self):
-        """Create toolbar"""
-        toolbar = self.addToolBar("Main")
-        toolbar.setFloatable(False)
-        toolbar.setMovable(False)
-
-        refresh_action = QAction("Refresh", self)
-        refresh_action.triggered.connect(self._refresh_torrents)
-        toolbar.addAction(refresh_action)
-
-        toolbar.addSeparator()
-
-        add_action = QAction("Add Torrent", self)
-        add_action.triggered.connect(self._show_add_torrent_dialog)
-        toolbar.addAction(add_action)
 
     def _create_statusbar(self):
         """Create status bar"""
@@ -1427,19 +1573,13 @@ class MainWindow(QMainWindow):
             if visual != logical:
                 header.moveSection(visual, logical)
 
-        self.tbl_torrents.setColumnWidth(1, 360)
-        self.tbl_torrents.setColumnWidth(2, 100)
-        self.tbl_torrents.setColumnWidth(3, 80)
-        self.tbl_torrents.setColumnWidth(4, 100)
-        self.tbl_torrents.setColumnWidth(5, 100)
-        self.tbl_torrents.setColumnWidth(6, 100)
-        self.tbl_torrents.setColumnWidth(7, 70)
-        self.tbl_torrents.setColumnWidth(8, 60)
-        self.tbl_torrents.setColumnWidth(9, 60)
-        self.tbl_torrents.setColumnWidth(10, 150)
-        self.tbl_torrents.setColumnWidth(11, 120)
-        self.tbl_torrents.setColumnWidth(12, 150)
+        for idx, column in enumerate(self.torrent_columns):
+            self.tbl_torrents.setColumnWidth(idx, int(column.get("width", 100)))
+            self.tbl_torrents.setColumnHidden(
+                idx, not bool(column.get("default_visible", True))
+            )
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self._sync_torrent_column_actions()
 
     def _restore_default_view_state(self):
         """Restore baseline splitter/header states for Reset View."""
@@ -1467,6 +1607,7 @@ class MainWindow(QMainWindow):
         except Exception:
             # Fall back to explicit defaults.
             self._apply_default_torrent_header_layout()
+        self._sync_torrent_column_actions()
 
     @staticmethod
     def _to_bool(value, default: bool = False) -> bool:
@@ -1522,6 +1663,17 @@ class MainWindow(QMainWindow):
         header_state = settings.value("torrentTableHeader")
         if header_state:
             self.tbl_torrents.horizontalHeader().restoreState(header_state)
+        hidden_columns = settings.value("torrentTableHiddenColumns")
+        if hidden_columns:
+            if isinstance(hidden_columns, str):
+                hidden_list = [hidden_columns]
+            elif isinstance(hidden_columns, (list, tuple, set)):
+                hidden_list = [str(v) for v in hidden_columns]
+            else:
+                hidden_list = []
+            self._apply_hidden_columns_by_keys(hidden_list)
+        else:
+            self._sync_torrent_column_actions()
 
         # Filter selection
         status = settings.value("filterStatus")
@@ -1562,6 +1714,12 @@ class MainWindow(QMainWindow):
         # Torrent table header (column widths, order, sort)
         settings.setValue("torrentTableHeader",
                           self.tbl_torrents.horizontalHeader().saveState())
+        hidden_columns = [
+            col["key"]
+            for idx, col in enumerate(self.torrent_columns)
+            if self.tbl_torrents.isColumnHidden(idx)
+        ]
+        settings.setValue("torrentTableHiddenColumns", hidden_columns)
 
         # Filter selection
         settings.setValue("filterStatus", self.current_status_filter)
@@ -1650,6 +1808,71 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
+    @staticmethod
+    def _entry_to_dict(entry: Any) -> Dict[str, Any]:
+        """Convert qBittorrent API list/dict entry objects to plain dict."""
+        if isinstance(entry, dict):
+            return dict(entry)
+        if hasattr(entry, "items"):
+            try:
+                return {str(k): v for k, v in entry.items()}
+            except Exception:
+                pass
+        result: Dict[str, Any] = {}
+        for key in dir(entry):
+            if key.startswith("_"):
+                continue
+            try:
+                value = getattr(entry, key)
+            except Exception:
+                continue
+            if callable(value):
+                continue
+            result[str(key)] = value
+        return result
+
+    def _fetch_selected_torrent_trackers(self, torrent_hash: str, **_kw) -> Dict:
+        """Fetch all tracker rows for one torrent."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                trackers = qb.torrents_trackers(torrent_hash=torrent_hash)
+
+            rows = [self._entry_to_dict(entry) for entry in list(trackers or [])]
+            elapsed = time.time() - start_time
+            return {'data': rows, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _fetch_selected_torrent_peers(self, torrent_hash: str, **_kw) -> Dict:
+        """Fetch all peer rows for one torrent."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                peers_info = qb.sync_torrent_peers(torrent_hash=torrent_hash, rid=0)
+
+            peers_map = {}
+            if isinstance(peers_info, dict):
+                peers_map = peers_info.get('peers', {}) or {}
+            elif hasattr(peers_info, "get"):
+                peers_map = peers_info.get('peers', {}) or {}
+            else:
+                peers_map = getattr(peers_info, 'peers', {}) or {}
+
+            rows: List[Dict[str, Any]] = []
+            if hasattr(peers_map, "items"):
+                for peer_id, peer_entry in peers_map.items():
+                    row = {'peer_id': str(peer_id)}
+                    row.update(self._entry_to_dict(peer_entry))
+                    rows.append(row)
+
+            elapsed = time.time() - start_time
+            return {'data': rows, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
     def _refresh_content_cache_for_torrents(self, torrent_states: Dict[str, str], **_kw) -> Dict:
         """Refresh cached file trees for provided torrent hashes."""
         start_time = time.time()
@@ -1722,6 +1945,30 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
+    def _api_pause_session(self, **_kw) -> Dict:
+        """Pause all torrents in current qBittorrent session."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_pause(torrent_hashes="all")
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_resume_session(self, **_kw) -> Dict:
+        """Resume all torrents in current qBittorrent session."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_resume(torrent_hashes="all")
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
     def _api_delete_torrent(self, torrent_hash: str, delete_files: bool, **_kw) -> Dict:
         """Delete a torrent via API."""
         start_time = time.time()
@@ -1768,7 +2015,7 @@ class MainWindow(QMainWindow):
                 error = result.get('error', 'Unknown error')
                 self._log("ERROR", f"Failed to load categories: {error}", result.get('elapsed', 0))
                 self._set_status(f"Connection error: {error}")
-                self.txt_details.setPlainText(
+                self.txt_general_details.setPlainText(
                     f"Failed to connect to qBittorrent:\n\n{error}\n\n"
                     f"Host: {self.qb_conn_info.get('host')}:{self.qb_conn_info.get('port')}\n"
                     f"Check your configuration and ensure qBittorrent WebUI is accessible."
@@ -2362,6 +2609,72 @@ class MainWindow(QMainWindow):
     # Table Updates
     # ========================================================================
 
+    def _tracker_display_text(self, tracker_url: str) -> str:
+        """Render tracker URL as hostname where possible."""
+        text = str(tracker_url or "")
+        if not text:
+            return ""
+        try:
+            parsed = urlparse(text)
+            return parsed.hostname or text
+        except Exception:
+            return text
+
+    def _format_torrent_table_cell(self, torrent, column_key: str) -> Tuple[str, Qt.AlignmentFlag, Optional[float]]:
+        """Return display text, alignment, and optional numeric sort value."""
+        align_left = Qt.AlignmentFlag.AlignLeft
+        align_right = Qt.AlignmentFlag.AlignRight
+        align_center = Qt.AlignmentFlag.AlignCenter
+
+        if column_key == "hash":
+            return str(getattr(torrent, "hash", "") or ""), align_left, None
+        if column_key == "name":
+            return str(getattr(torrent, "name", "") or ""), align_left, None
+        if column_key in {"size", "total_size", "downloaded", "uploaded"}:
+            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+            return format_size_mode(raw, self.display_size_mode), align_right, float(raw)
+        if column_key == "progress":
+            raw = self._safe_float(getattr(torrent, "progress", 0), 0.0)
+            return f"{raw * 100:.1f}%", align_right, float(raw)
+        if column_key == "state":
+            return str(getattr(torrent, "state", "") or ""), align_left, None
+        if column_key in {"dlspeed", "upspeed"}:
+            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+            return format_speed_mode(raw, self.display_speed_mode), align_right, float(raw)
+        if column_key == "ratio":
+            raw = self._safe_float(getattr(torrent, "ratio", 0), 0.0)
+            return format_float(raw), align_right, float(raw)
+        if column_key in {"num_seeds", "num_leechs", "num_complete", "num_incomplete", "num_files"}:
+            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+            return format_int(raw), align_right, float(raw)
+        if column_key == "eta":
+            raw = self._safe_int(getattr(torrent, "eta", 0), 0)
+            return format_eta(raw), align_right, float(raw)
+        if column_key in {"added_on", "completion_on", "last_activity"}:
+            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+            return format_datetime(raw), align_left, float(raw)
+        if column_key == "category":
+            return str(getattr(torrent, "category", "") or ""), align_left, None
+        if column_key == "tags":
+            tags_text = ", ".join(parse_tags(getattr(torrent, "tags", None)))
+            return tags_text, align_left, None
+        if column_key == "tracker":
+            tracker_text = self._tracker_display_text(getattr(torrent, "tracker", ""))
+            return tracker_text, align_left, None
+        if column_key == "is_private":
+            private = getattr(torrent, "is_private", None)
+            if private is True:
+                return "Yes", align_center, 1.0
+            if private is False:
+                return "No", align_center, 0.0
+            return "", align_center, -1.0
+        if column_key == "save_path":
+            return str(getattr(torrent, "save_path", "") or ""), align_left, None
+        if column_key == "content_path":
+            return str(getattr(torrent, "content_path", "") or ""), align_left, None
+
+        return str(getattr(torrent, column_key, "") or ""), align_left, None
+
     def _update_torrents_table(self):
         """Update the torrents table with filtered data"""
         try:
@@ -2370,39 +2683,13 @@ class MainWindow(QMainWindow):
 
             for row, torrent in enumerate(self.filtered_torrents):
                 try:
-                    size = getattr(torrent, 'size', 0)
-                    progress = getattr(torrent, 'progress', 0)
-                    dlspeed = getattr(torrent, 'dlspeed', 0)
-                    upspeed = getattr(torrent, 'upspeed', 0)
-                    ratio = getattr(torrent, 'ratio', 0)
-                    seeds = getattr(torrent, 'num_seeds', 0)
-                    peers = getattr(torrent, 'num_leechs', 0)
-                    added_on = getattr(torrent, 'added_on', 0)
-
-                    self._set_table_item(row, 0, getattr(torrent, 'hash', ''))
-                    self._set_table_item(row, 1, getattr(torrent, 'name', ''))
-                    self._set_table_item(
-                        row, 2, format_size_mode(size, self.display_size_mode),
-                        align=Qt.AlignmentFlag.AlignRight, sort_value=float(size)
-                    )
-                    self._set_table_item(row, 3, f"{progress * 100:.1f}%", align=Qt.AlignmentFlag.AlignRight, sort_value=float(progress))
-                    self._set_table_item(row, 4, getattr(torrent, 'state', ''))
-                    self._set_table_item(
-                        row, 5, format_speed_mode(dlspeed, self.display_speed_mode),
-                        align=Qt.AlignmentFlag.AlignRight, sort_value=float(dlspeed)
-                    )
-                    self._set_table_item(
-                        row, 6, format_speed_mode(upspeed, self.display_speed_mode),
-                        align=Qt.AlignmentFlag.AlignRight, sort_value=float(upspeed)
-                    )
-                    self._set_table_item(row, 7, format_float(ratio), align=Qt.AlignmentFlag.AlignRight, sort_value=float(ratio))
-                    self._set_table_item(row, 8, format_int(seeds), align=Qt.AlignmentFlag.AlignRight, sort_value=float(seeds))
-                    self._set_table_item(row, 9, format_int(peers), align=Qt.AlignmentFlag.AlignRight, sort_value=float(peers))
-                    self._set_table_item(row, 10, format_datetime(added_on), sort_value=float(added_on))
-                    self._set_table_item(row, 11, getattr(torrent, 'category', ''))
-
-                    tags_str = ", ".join(parse_tags(getattr(torrent, 'tags', None)))
-                    self._set_table_item(row, 12, tags_str, align=Qt.AlignmentFlag.AlignLeft)
+                    for col_idx, column in enumerate(self.torrent_columns):
+                        text, align, sort_value = self._format_torrent_table_cell(
+                            torrent, column["key"]
+                        )
+                        self._set_table_item(
+                            row, col_idx, text, align=align, sort_value=sort_value
+                        )
                 except Exception as e:
                     self._log("ERROR", f"Error updating row {row}: {e}")
                     continue
@@ -2424,12 +2711,167 @@ class MainWindow(QMainWindow):
         item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
         self.tbl_torrents.setItem(row, col, item)
 
+    def _copy_general_details(self):
+        """Copy general details panel content to clipboard."""
+        text = self.txt_general_details.toPlainText().strip()
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self._set_status("General details copied to clipboard")
+
+    @staticmethod
+    def _detail_cell_text(value: Any) -> str:
+        """Render one trackers/peers cell value to text."""
+        if value is None:
+            return ""
+        if isinstance(value, (dict, list, tuple, set)):
+            try:
+                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    @staticmethod
+    def _detail_sort_value(value: Any) -> Optional[float]:
+        """Return numeric sort value when possible."""
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            text = value.strip().replace(",", "")
+            if not text:
+                return None
+            try:
+                return float(text)
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
+    def _build_details_columns(rows: List[Dict[str, Any]], preferred: List[str]) -> List[str]:
+        """Build ordered column list with preferred first, then remaining keys."""
+        key_set = set()
+        for row in rows:
+            key_set.update(str(k) for k in row.keys())
+
+        ordered = [k for k in preferred if k in key_set]
+        remainder = sorted(k for k in key_set if k not in ordered)
+        return ordered + remainder
+
+    def _set_details_table_message(self, table: QTableWidget, message: str):
+        """Show one-line status message inside details table."""
+        table.setSortingEnabled(False)
+        table.clearContents()
+        table.setRowCount(1)
+        table.setColumnCount(1)
+        table.setHorizontalHeaderLabels(["Info"])
+        item = QTableWidgetItem(message)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        table.setItem(0, 0, item)
+        table.horizontalHeader().setStretchLastSection(True)
+
+    def _populate_details_table(self, table: QTableWidget, rows: List[Dict[str, Any]],
+                                preferred_columns: List[str]):
+        """Populate one details table (trackers/peers) with dynamic columns."""
+        if not rows:
+            self._set_details_table_message(table, "No data available.")
+            return
+
+        columns = self._build_details_columns(rows, preferred_columns)
+
+        table.setSortingEnabled(False)
+        table.clearContents()
+        table.setRowCount(len(rows))
+        table.setColumnCount(len(columns))
+        table.setHorizontalHeaderLabels(columns)
+
+        for row_idx, row in enumerate(rows):
+            for col_idx, key in enumerate(columns):
+                raw_value = row.get(key)
+                text = self._detail_cell_text(raw_value)
+                sort_value = self._detail_sort_value(raw_value)
+                if sort_value is not None:
+                    item = NumericTableWidgetItem(text, sort_value)
+                    align = Qt.AlignmentFlag.AlignRight
+                else:
+                    item = QTableWidgetItem(text)
+                    align = Qt.AlignmentFlag.AlignLeft
+                item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row_idx, col_idx, item)
+
+        table.setSortingEnabled(True)
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+
+    def _selected_torrent_hash(self) -> str:
+        selected = getattr(self, "_selected_torrent", None)
+        return str(getattr(selected, "hash", "") or "")
+
+    def _load_selected_torrent_network_details(self, torrent_hash: str):
+        """Load full trackers and peers information for selected torrent."""
+        self._set_details_table_message(self.tbl_trackers, "Loading trackers...")
+        self._set_details_table_message(self.tbl_peers, "Loading peers...")
+
+        self.details_api_queue.add_task(
+            "load_selected_trackers",
+            self._fetch_selected_torrent_trackers,
+            lambda r, h=torrent_hash: self._on_selected_trackers_loaded(h, r),
+            torrent_hash
+        )
+
+    def _on_selected_trackers_loaded(self, torrent_hash: str, result: Dict):
+        """Populate Trackers table and then load Peers for same selection."""
+        if self._selected_torrent_hash() != torrent_hash:
+            return
+
+        if result.get('success'):
+            rows = result.get('data', []) or []
+            self._populate_details_table(
+                self.tbl_trackers,
+                rows,
+                ["url", "status", "tier", "num_peers", "num_seeds", "num_leeches", "num_downloaded", "msg"]
+            )
+        else:
+            error = result.get('error', 'Unknown error')
+            self._set_details_table_message(self.tbl_trackers, f"Failed to load trackers: {error}")
+
+        self.details_api_queue.add_task(
+            "load_selected_peers",
+            self._fetch_selected_torrent_peers,
+            lambda r, h=torrent_hash: self._on_selected_peers_loaded(h, r),
+            torrent_hash
+        )
+
+    def _on_selected_peers_loaded(self, torrent_hash: str, result: Dict):
+        """Populate Peers table for currently selected torrent."""
+        if self._selected_torrent_hash() != torrent_hash:
+            return
+
+        if result.get('success'):
+            rows = result.get('data', []) or []
+            self._populate_details_table(
+                self.tbl_peers,
+                rows,
+                [
+                    "peer_id", "ip", "port", "client", "connection",
+                    "country", "country_code", "flags", "flags_desc",
+                    "progress", "dl_speed", "up_speed",
+                    "downloaded", "uploaded", "relevance", "files"
+                ]
+            )
+        else:
+            error = result.get('error', 'Unknown error')
+            self._set_details_table_message(self.tbl_peers, f"Failed to load peers: {error}")
+
     def _on_torrent_selected(self):
         """Handle torrent selection in table"""
         selected = self.tbl_torrents.selectedItems()
         if not selected:
             self._selected_torrent = None
-            self.txt_details.clear()
+            self.txt_general_details.clear()
+            self._set_details_table_message(self.tbl_trackers, "No torrent selected.")
+            self._set_details_table_message(self.tbl_peers, "No torrent selected.")
             self.current_content_files = []
             self.tree_files.clear()
             return
@@ -2460,8 +2902,12 @@ class MainWindow(QMainWindow):
             private_str = 'Yes' if is_private else ('No' if is_private is False else 'N/A')
             num_files = getattr(torrent, 'num_files', 'N/A')
             content_path = getattr(torrent, 'content_path', 'N/A')
+            tracker_url = getattr(torrent, 'tracker', '') or ''
+            tracker_host = self._tracker_display_text(tracker_url) or 'N/A'
+            eta = self._safe_int(getattr(torrent, 'eta', 0), 0)
+            eta_str = format_eta(eta) if eta > 0 else 'N/A'
 
-            details = f"""TORRENT DETAILS
+            details = f"""GENERAL
 {'=' * 80}
 
 Name:           {getattr(torrent, 'name', 'N/A')}
@@ -2481,6 +2927,7 @@ Uploaded:       {format_size_mode(getattr(torrent, 'uploaded', 0), self.display_
 Download Speed: {format_speed_mode(getattr(torrent, 'dlspeed', 0), self.display_speed_mode)}
 Upload Speed:   {format_speed_mode(getattr(torrent, 'upspeed', 0), self.display_speed_mode)}
 Ratio:          {format_float(getattr(torrent, 'ratio', 0), 3)}
+ETA:            {eta_str}
 
 PEERS
 {'=' * 80}
@@ -2491,6 +2938,8 @@ Peers:          {getattr(torrent, 'num_leechs', 0)} ({getattr(torrent, 'num_inco
 METADATA
 {'=' * 80}
 
+Tracker Host:   {tracker_host}
+Tracker URL:    {tracker_url or 'N/A'}
 Category:       {getattr(torrent, 'category', 'None')}
 Tags:           {tags_str}
 Added On:       {format_datetime(getattr(torrent, 'added_on', 0))}
@@ -2499,7 +2948,8 @@ Last Activity:  {format_datetime(last_activity) if last_activity > 0 else 'N/A'}
 Save Path:      {getattr(torrent, 'save_path', 'N/A')}
 Content Path:   {content_path}
 """
-            self.txt_details.setPlainText(details.strip())
+            self.txt_general_details.setPlainText(details.strip())
+            self._load_selected_torrent_network_details(str(torrent.hash))
 
             # Populate editable fields
             self.edit_name.setText(getattr(torrent, 'name', ''))
@@ -2518,7 +2968,9 @@ Content Path:   {content_path}
             self._show_cached_torrent_content(torrent.hash)
         except Exception as e:
             self._log("ERROR", f"Error displaying torrent details: {e}")
-            self.txt_details.setPlainText(f"Error displaying details: {e}")
+            self.txt_general_details.setPlainText(f"Error displaying details: {e}")
+            self._set_details_table_message(self.tbl_trackers, "Failed to render trackers.")
+            self._set_details_table_message(self.tbl_peers, "Failed to render peers.")
 
     # ========================================================================
     # Actions
@@ -2649,6 +3101,81 @@ Content Path:   {content_path}
                 torrent_hash
             )
 
+    def _pause_session(self):
+        """Pause all torrents in current session."""
+        self._log("INFO", "Pausing session")
+        self._show_progress("Pausing session...")
+        self.api_queue.add_task(
+            "pause_session",
+            self._api_pause_session,
+            lambda r: self._on_torrent_action_done("Pause Session", r),
+        )
+
+    def _resume_session(self):
+        """Resume all torrents in current session."""
+        self._log("INFO", "Resuming session")
+        self._show_progress("Resuming session...")
+        self.api_queue.add_task(
+            "resume_session",
+            self._api_resume_session,
+            lambda r: self._on_torrent_action_done("Resume Session", r),
+        )
+
+    def _queue_delete_torrent(self, torrent_hash: str, delete_files: bool,
+                              action_name: str, progress_text: str):
+        """Queue deletion for selected torrent with explicit delete-files mode."""
+        self._log("INFO", f"{action_name}: {torrent_hash} (files={delete_files})")
+        self._show_progress(progress_text)
+        task_name = "delete_torrent_with_data" if delete_files else "delete_torrent"
+        self.api_queue.add_task(
+            task_name,
+            self._api_delete_torrent,
+            lambda r: self._on_torrent_action_done(action_name, r),
+            torrent_hash, delete_files
+        )
+
+    def _remove_torrent(self):
+        """Remove selected torrent and keep data on disk."""
+        torrent_hash = self._get_selected_torrent_hash()
+        if not torrent_hash:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Remove Torrent",
+            "Remove selected torrent from qBittorrent and keep data on disk?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._queue_delete_torrent(
+            torrent_hash,
+            delete_files=False,
+            action_name="Remove",
+            progress_text="Removing torrent..."
+        )
+
+    def _remove_torrent_and_delete_data(self):
+        """Remove selected torrent and delete data from disk."""
+        torrent_hash = self._get_selected_torrent_hash()
+        if not torrent_hash:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Remove And Delete Data",
+            "Remove selected torrent and delete its data from disk?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._queue_delete_torrent(
+            torrent_hash,
+            delete_files=True,
+            action_name="Remove + Delete Data",
+            progress_text="Removing torrent and deleting data..."
+        )
+
     def _delete_torrent(self):
         """Delete selected torrent with confirmation"""
         torrent_hash = self._get_selected_torrent_hash()
@@ -2663,13 +3190,11 @@ Content Path:   {content_path}
         if reply == QMessageBox.StandardButton.Cancel:
             return
         delete_files = (reply == QMessageBox.StandardButton.Yes)
-        self._log("INFO", f"Deleting torrent: {torrent_hash} (files={delete_files})")
-        self._show_progress("Deleting torrent...")
-        self.api_queue.add_task(
-            "delete_torrent",
-            self._api_delete_torrent,
-            lambda r: self._on_torrent_action_done("Delete", r),
-            torrent_hash, delete_files
+        self._queue_delete_torrent(
+            torrent_hash,
+            delete_files=delete_files,
+            action_name="Delete",
+            progress_text="Deleting torrent..."
         )
 
     # ========================================================================
