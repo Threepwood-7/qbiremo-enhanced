@@ -13,6 +13,7 @@ import logging
 import traceback
 import tempfile
 import base64
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple
@@ -32,9 +33,9 @@ from PySide6.QtWidgets import (
     QSizePolicy
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QRunnable, Slot, Signal, QObject, QThreadPool, QSettings
+    Qt, QTimer, QRunnable, Slot, Signal, QObject, QThreadPool, QSettings, QEvent
 )
-from PySide6.QtGui import QAction, QFont, QIcon, QColor, QBrush
+from PySide6.QtGui import QAction, QFont, QIcon, QColor, QBrush, QShortcut, QKeySequence
 
 import qbittorrentapi
 
@@ -48,10 +49,13 @@ G_APP_NAME = "qBiremoEnhanced"
 DEFAULT_REFRESH_INTERVAL = 60  # seconds
 DEFAULT_AUTO_REFRESH = False
 DEFAULT_STATUS_FILTER = 'active'
-DEFAULT_DISPLAY_SIZE_MODE = 'human_readable'
-DEFAULT_DISPLAY_SPEED_MODE = 'human_readable'
+DEFAULT_WINDOW_WIDTH = 1400
+DEFAULT_WINDOW_HEIGHT = 800
+DEFAULT_DISPLAY_SIZE_MODE = 'bytes'
+DEFAULT_DISPLAY_SPEED_MODE = 'bytes'
 CACHE_TEMP_SUBDIR = "qbiremo_enhanced_temp"
 CACHE_FILE_NAME = "qbiremo_enhanced.cache"
+CLIPBOARD_SEEN_LIMIT = 256
 
 logger = logging.getLogger(G_APP_NAME)
 
@@ -771,18 +775,18 @@ class MainWindow(QMainWindow):
             col["key"]: idx for idx, col in enumerate(self.torrent_columns)
         }
         self.column_visibility_actions: Dict[str, QAction] = {}
+        self._torrent_open_shortcuts: List[QShortcut] = []
+        self._content_open_shortcuts: List[QShortcut] = []
+        self.clipboard_monitor_enabled = False
+        self._last_clipboard_text = ""
+        self._clipboard_seen_keys = set()
+        self._clipboard_seen_order = deque()
+        self._clipboard = None
 
-        # Defaults from config (used by Reset View and first launch)
-        cfg_default_status = str(config.get('default_status_filter', DEFAULT_STATUS_FILTER)).strip().lower()
-        self.default_status_filter = cfg_default_status if cfg_default_status in STATUS_FILTERS else DEFAULT_STATUS_FILTER
-        self.default_auto_refresh_enabled = self._to_bool(
-            config.get('auto_refresh', DEFAULT_AUTO_REFRESH),
-            DEFAULT_AUTO_REFRESH
-        )
-        self.default_refresh_interval = max(
-            1,
-            self._safe_int(config.get('refresh_interval', DEFAULT_REFRESH_INTERVAL), DEFAULT_REFRESH_INTERVAL)
-        )
+        # Defaults are managed by code/QSettings (not TOML).
+        self.default_status_filter = DEFAULT_STATUS_FILTER
+        self.default_auto_refresh_enabled = DEFAULT_AUTO_REFRESH
+        self.default_refresh_interval = DEFAULT_REFRESH_INTERVAL
 
         # Filters
         self.current_status_filter = self.default_status_filter
@@ -819,19 +823,14 @@ class MainWindow(QMainWindow):
         # Auto-refresh settings
         self.auto_refresh_enabled = self.default_auto_refresh_enabled
         self.refresh_interval = self.default_refresh_interval
-        self.display_size_mode = _normalize_display_mode(
-            config.get('display_size_mode', DEFAULT_DISPLAY_SIZE_MODE),
-            DEFAULT_DISPLAY_SIZE_MODE
-        )
-        self.display_speed_mode = _normalize_display_mode(
-            config.get('display_speed_mode', DEFAULT_DISPLAY_SPEED_MODE),
-            DEFAULT_DISPLAY_SPEED_MODE
-        )
+        self.display_size_mode = DEFAULT_DISPLAY_SIZE_MODE
+        self.display_speed_mode = DEFAULT_DISPLAY_SPEED_MODE
 
         # UI Setup
         self._create_ui()
         self._create_menus()
         self._create_statusbar()
+        self._setup_clipboard_monitor()
         self._capture_default_view_state()
 
         # Timers
@@ -977,6 +976,15 @@ class MainWindow(QMainWindow):
         self.tree_files = QTreeWidget()
         self.tree_files.setHeaderLabels(["Name", "Size", "Progress", "Priority"])
         self.tree_files.setAlternatingRowColors(True)
+        self.tree_files.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tree_files.installEventFilter(self)
+        self.tree_files.itemActivated.connect(self._on_content_tree_item_activated)
+        self._content_open_shortcuts = []
+        for key_name in ("Return", "Enter"):
+            shortcut = QShortcut(QKeySequence(key_name), self.tree_files)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(self._open_selected_content_path)
+            self._content_open_shortcuts.append(shortcut)
         file_header = self.tree_files.header()
         file_header.setStretchLastSection(False)
         file_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -1149,6 +1157,7 @@ class MainWindow(QMainWindow):
         table = QTableWidget()
         table.setAlternatingRowColors(True)
         table.setSortingEnabled(True)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.itemSelectionChanged.connect(self._on_torrent_selected)
@@ -1168,6 +1177,13 @@ class MainWindow(QMainWindow):
         for idx, column in enumerate(self.torrent_columns):
             table.setColumnWidth(idx, int(column.get("width", 100)))
             table.setColumnHidden(idx, not bool(column.get("default_visible", True)))
+
+        # Open selected torrent local directory on Enter/Return.
+        self._torrent_open_shortcuts = []
+        for key_name in ("Return", "Enter"):
+            shortcut = QShortcut(QKeySequence(key_name), table)
+            shortcut.activated.connect(self._open_selected_torrent_location)
+            self._torrent_open_shortcuts.append(shortcut)
 
         return table
 
@@ -1331,6 +1347,12 @@ class MainWindow(QMainWindow):
         clear_cache_action.triggered.connect(self._clear_cache_and_refresh)
         view_menu.addAction(clear_cache_action)
 
+        self.action_human_readable = QAction("&Human Readable", self)
+        self.action_human_readable.setCheckable(True)
+        self.action_human_readable.setChecked(True)
+        self.action_human_readable.triggered.connect(self._toggle_human_readable)
+        view_menu.addAction(self.action_human_readable)
+
         view_menu.addSeparator()
         self._create_torrent_columns_menu(view_menu)
 
@@ -1350,6 +1372,19 @@ class MainWindow(QMainWindow):
         action_reset_view = QAction("&Reset View", self)
         action_reset_view.triggered.connect(self._reset_view_defaults)
         view_menu.addAction(action_reset_view)
+
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+
+        self.action_clipboard_monitor = QAction("Enable &Clipboard Monitor", self)
+        self.action_clipboard_monitor.setCheckable(True)
+        self.action_clipboard_monitor.setChecked(self.clipboard_monitor_enabled)
+        self.action_clipboard_monitor.triggered.connect(self._toggle_clipboard_monitor)
+        tools_menu.addAction(self.action_clipboard_monitor)
+
+        action_edit_ini = QAction("&Edit .ini file", self)
+        action_edit_ini.triggered.connect(self._edit_settings_ini_file)
+        tools_menu.addAction(action_edit_ini)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -1666,24 +1701,162 @@ class MainWindow(QMainWindow):
             return False
         return default
 
+    @staticmethod
+    def _new_settings() -> QSettings:
+        """Create QSettings configured to use INI backend."""
+        return QSettings(
+            QSettings.Format.IniFormat,
+            QSettings.Scope.UserScope,
+            G_ORG_NAME,
+            G_APP_NAME,
+        )
+
+    def _settings_ini_path(self) -> Path:
+        """Return the current INI file path used by QSettings."""
+        settings = self._new_settings()
+        settings.sync()
+        file_name = str(settings.fileName() or "").strip()
+        return Path(file_name) if file_name else Path(f"{G_APP_NAME}.ini").resolve()
+
     def _save_refresh_settings(self):
         """Persist only auto-refresh runtime settings."""
-        settings = QSettings(G_ORG_NAME, G_APP_NAME)
+        settings = self._new_settings()
         settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
         settings.setValue("refreshIntervalSec", int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)))
+
+    def _setup_clipboard_monitor(self):
+        """Attach clipboard change listener for optional auto-add behavior."""
+        try:
+            self._clipboard = QApplication.clipboard()
+            if self._clipboard:
+                self._clipboard.dataChanged.connect(self._on_clipboard_changed)
+        except Exception as e:
+            self._log("ERROR", f"Failed to initialize clipboard monitor: {e}")
+
+    @staticmethod
+    def _extract_magnet_link(text: str) -> str:
+        """Extract first magnet link from arbitrary clipboard text."""
+        if not text:
+            return ""
+        match = re.search(r"(magnet:\?[^\s]+)", text, flags=re.IGNORECASE)
+        return match.group(1).strip() if match else ""
+
+    @staticmethod
+    def _extract_torrent_hash(text: str) -> str:
+        """Extract first torrent hash (hex/base32 BTIH forms) from text."""
+        if not text:
+            return ""
+        match = re.search(
+            r"\b([A-Fa-f0-9]{40}|[A-Fa-f0-9]{64}|[A-Za-z2-7]{32})\b",
+            text
+        )
+        return match.group(1).strip() if match else ""
+
+    @staticmethod
+    def _magnet_from_hash(torrent_hash: str) -> str:
+        """Build magnet URI from torrent infohash."""
+        normalized = str(torrent_hash or "").strip().lower()
+        return f"magnet:?xt=urn:btih:{normalized}"
+
+    def _remember_clipboard_key(self, key: str):
+        """Remember processed clipboard key and evict oldest entries."""
+        if not key or key in self._clipboard_seen_keys:
+            return
+        self._clipboard_seen_keys.add(key)
+        self._clipboard_seen_order.append(key)
+        while len(self._clipboard_seen_order) > CLIPBOARD_SEEN_LIMIT:
+            evicted = self._clipboard_seen_order.popleft()
+            self._clipboard_seen_keys.discard(evicted)
+
+    def _queue_add_torrent_from_clipboard(self, magnet_url: str, source: str):
+        """Queue add-torrent task for clipboard-derived magnet url."""
+        self._log("INFO", f"Clipboard monitor detected {source}; adding torrent")
+        self._set_status("Clipboard monitor: adding torrent...")
+        self.api_queue.add_task(
+            "add_torrent_from_clipboard",
+            self._add_torrent_api,
+            self._on_add_torrent_complete,
+            {'urls': [magnet_url]}
+        )
+
+    def _process_clipboard_text(self, text: str) -> bool:
+        """Process clipboard text and auto-add torrent when magnet/hash appears."""
+        if not text:
+            return False
+
+        magnet_url = self._extract_magnet_link(text)
+        if magnet_url:
+            dedupe_key = f"magnet:{magnet_url.lower()}"
+            if dedupe_key in self._clipboard_seen_keys:
+                return False
+            self._remember_clipboard_key(dedupe_key)
+            self._queue_add_torrent_from_clipboard(magnet_url, "magnet link")
+            return True
+
+        torrent_hash = self._extract_torrent_hash(text)
+        if torrent_hash:
+            normalized = torrent_hash.lower()
+            dedupe_key = f"hash:{normalized}"
+            if dedupe_key in self._clipboard_seen_keys:
+                return False
+            self._remember_clipboard_key(dedupe_key)
+            self._queue_add_torrent_from_clipboard(
+                self._magnet_from_hash(normalized),
+                "torrent hash"
+            )
+            return True
+
+        return False
+
+    def _on_clipboard_changed(self):
+        """Clipboard signal handler used by monitor toggle."""
+        if not self.clipboard_monitor_enabled or not self._clipboard:
+            return
+        try:
+            text = (self._clipboard.text() or "").strip()
+        except Exception:
+            return
+        if not text or text == self._last_clipboard_text:
+            return
+        self._last_clipboard_text = text
+        self._process_clipboard_text(text)
+
+    def _toggle_clipboard_monitor(self, enabled: bool):
+        """Enable or disable clipboard monitor."""
+        self.clipboard_monitor_enabled = bool(enabled)
+        self._save_settings()
+        state = "enabled" if self.clipboard_monitor_enabled else "disabled"
+        self._log("INFO", f"Clipboard monitor {state}")
+        self._set_status(f"Clipboard monitor {state}")
+        if self.clipboard_monitor_enabled:
+            self._on_clipboard_changed()
+
+    def _edit_settings_ini_file(self):
+        """Open QSettings INI file in system default editor."""
+        try:
+            ini_path = self._settings_ini_path()
+            ini_path.parent.mkdir(parents=True, exist_ok=True)
+            if not ini_path.exists():
+                ini_path.touch()
+            _open_file_in_default_app(str(ini_path))
+            self._log("INFO", f"Opened settings INI file: {ini_path}")
+            self._set_status(f"Opened INI: {ini_path}")
+        except Exception as e:
+            self._log("ERROR", f"Failed to open settings INI file: {e}")
+            self._set_status(f"Failed to open INI file: {e}")
 
     def _load_settings(self):
         """Load window geometry, splitter sizes, column widths, sort order,
         and filter selection from QSettings."""
-        settings = QSettings(G_ORG_NAME, G_APP_NAME)
+        settings = self._new_settings()
 
         # Window geometry
         geometry = settings.value("geometry")
         if geometry:
             self.restoreGeometry(geometry)
         else:
-            default_width = self._safe_int(self.config.get('default_window_width', 1400), 1400)
-            default_height = self._safe_int(self.config.get('default_window_height', 800), 800)
+            default_width = DEFAULT_WINDOW_WIDTH
+            default_height = DEFAULT_WINDOW_HEIGHT
             default_width = max(600, default_width)
             default_height = max(400, default_height)
             self.resize(default_width, default_height)
@@ -1739,10 +1912,46 @@ class MainWindow(QMainWindow):
         else:
             self.refresh_timer.stop()
 
+        # Display mode settings (QSettings-only)
+        display_human = settings.value("displayHumanReadable")
+        if display_human is not None:
+            use_human = self._to_bool(display_human, True)
+            mode = "human_readable" if use_human else "bytes"
+            self.display_size_mode = mode
+            self.display_speed_mode = mode
+        else:
+            # Backward compatibility for older persisted keys.
+            self.display_size_mode = _normalize_display_mode(
+                settings.value("displaySizeMode", self.display_size_mode),
+                DEFAULT_DISPLAY_SIZE_MODE
+            )
+            self.display_speed_mode = _normalize_display_mode(
+                settings.value("displaySpeedMode", self.display_speed_mode),
+                DEFAULT_DISPLAY_SPEED_MODE
+            )
+        if hasattr(self, "action_human_readable"):
+            hr_checked = (
+                self.display_size_mode == "human_readable"
+                and self.display_speed_mode == "human_readable"
+            )
+            action_signals = self.action_human_readable.blockSignals(True)
+            self.action_human_readable.setChecked(hr_checked)
+            self.action_human_readable.blockSignals(action_signals)
+
+        # Clipboard monitor
+        self.clipboard_monitor_enabled = self._to_bool(
+            settings.value("clipboardMonitorEnabled"),
+            self.clipboard_monitor_enabled
+        )
+        if hasattr(self, "action_clipboard_monitor"):
+            self.action_clipboard_monitor.setChecked(self.clipboard_monitor_enabled)
+        if self.clipboard_monitor_enabled:
+            QTimer.singleShot(0, self._on_clipboard_changed)
+
     def _save_settings(self):
         """Save window geometry, splitter sizes, column widths, sort order,
         and filter selection to QSettings."""
-        settings = QSettings(G_ORG_NAME, G_APP_NAME)
+        settings = self._new_settings()
 
         # Window geometry
         settings.setValue("geometry", self.saveGeometry())
@@ -1766,6 +1975,16 @@ class MainWindow(QMainWindow):
         settings.setValue("filterStatus", self.current_status_filter)
         settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
         settings.setValue("refreshIntervalSec", int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)))
+        settings.setValue(
+            "displayHumanReadable",
+            bool(
+                self.display_size_mode == "human_readable"
+                and self.display_speed_mode == "human_readable"
+            )
+        )
+        settings.setValue("displaySizeMode", self.display_size_mode)
+        settings.setValue("displaySpeedMode", self.display_speed_mode)
+        settings.setValue("clipboardMonitorEnabled", bool(self.clipboard_monitor_enabled))
 
     # ========================================================================
     # Initial Data Loading
@@ -2343,6 +2562,11 @@ class MainWindow(QMainWindow):
                     dir_key = '/'.join(parts[:i + 1])
                     if dir_key not in dir_nodes:
                         node = QTreeWidgetItem([part, '', '', ''])
+                        node.setData(
+                            0,
+                            Qt.ItemDataRole.UserRole,
+                            {"relative_path": dir_key, "is_file": False},
+                        )
                         if parent:
                             parent.addChild(node)
                         else:
@@ -2356,6 +2580,11 @@ class MainWindow(QMainWindow):
                     f"{progress * 100:.1f}%",
                     PRIORITY_NAMES.get(priority, str(priority))
                 ])
+                file_item.setData(
+                    0,
+                    Qt.ItemDataRole.UserRole,
+                    {"relative_path": name.replace("\\", "/"), "is_file": True},
+                )
                 if parent:
                     parent.addChild(file_item)
                 else:
@@ -3190,6 +3419,145 @@ Content Path:   {content_path}
                     torrent_data
                 )
 
+    def _find_torrent_by_hash(self, torrent_hash: str):
+        """Find one torrent object by hash, preferring the currently filtered list."""
+        if not torrent_hash:
+            return None
+
+        for torrent in self.filtered_torrents:
+            if str(getattr(torrent, "hash", "")) == torrent_hash:
+                return torrent
+        for torrent in self.all_torrents:
+            if str(getattr(torrent, "hash", "")) == torrent_hash:
+                return torrent
+        return None
+
+    @staticmethod
+    def _expand_local_path(raw_path: Any) -> Optional[Path]:
+        """Expand user/env vars for a local path string."""
+        text = str(raw_path or "").strip().strip('"').strip("'")
+        if not text:
+            return None
+        expanded = os.path.expandvars(os.path.expanduser(text))
+        if not expanded:
+            return None
+        return Path(expanded)
+
+    def _resolve_local_torrent_directory(self, torrent) -> Optional[Path]:
+        """Return an existing local directory for a torrent, if available."""
+        if torrent is None:
+            return None
+
+        content_path = self._expand_local_path(getattr(torrent, "content_path", ""))
+        if content_path is not None:
+            if content_path.is_dir():
+                return content_path
+            parent_dir = content_path.parent
+            if parent_dir and parent_dir.is_dir():
+                return parent_dir
+
+        save_path = self._expand_local_path(getattr(torrent, "save_path", ""))
+        if save_path is not None:
+            if save_path.is_dir():
+                return save_path
+
+        return None
+
+    def _open_selected_torrent_location(self):
+        """Open selected torrent local directory when it exists on this machine."""
+        selected_hashes = self._get_selected_torrent_hashes()
+        if len(selected_hashes) != 1:
+            if selected_hashes:
+                self._set_status("Select one torrent to open its local directory")
+            return
+
+        torrent_hash = selected_hashes[0]
+        torrent = self._find_torrent_by_hash(torrent_hash)
+        if torrent is None:
+            self._set_status("Selected torrent was not found")
+            return
+
+        local_dir = self._resolve_local_torrent_directory(torrent)
+        if local_dir is None:
+            self._set_status("No local directory found for selected torrent")
+            return
+
+        _open_file_in_default_app(str(local_dir))
+        self._set_status(f"Opened local directory: {local_dir}")
+
+    def _on_content_tree_item_activated(self, item: QTreeWidgetItem, _column: int):
+        """Open activated content-tree item (Enter/double-click behavior)."""
+        self._open_selected_content_path(item=item)
+
+    def _open_selected_content_path(self, item: Optional[QTreeWidgetItem] = None):
+        """Open selected content-tree item in the local filesystem when available."""
+        if item is None:
+            item = self.tree_files.currentItem()
+        if item is None:
+            selected = self.tree_files.selectedItems()
+            if selected:
+                item = selected[0]
+        if item is None:
+            return
+
+        item_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(item_data, dict):
+            return
+
+        relative_path = str(item_data.get("relative_path", "") or "").strip()
+        is_file = bool(item_data.get("is_file", False))
+        if not relative_path:
+            return
+
+        torrent = getattr(self, "_selected_torrent", None)
+        if torrent is None:
+            self._set_status("No torrent selected")
+            return
+
+        base_dir = self._resolve_local_torrent_directory(torrent)
+        if base_dir is None:
+            self._set_status("No local directory found for selected torrent")
+            return
+
+        normalized_rel = relative_path.replace("\\", "/").lstrip("/")
+        rel_path = Path(*[part for part in normalized_rel.split("/") if part not in ("", ".", "..")])
+        candidate = base_dir / rel_path
+        if not candidate.exists():
+            torrent_content_path = self._expand_local_path(getattr(torrent, "content_path", ""))
+            lower_rel = normalized_rel.casefold()
+            content_name = (
+                str(torrent_content_path.name).casefold()
+                if torrent_content_path is not None and torrent_content_path.name
+                else ""
+            )
+            if (
+                torrent_content_path is not None
+                and torrent_content_path.is_dir()
+                and content_name
+                and lower_rel.startswith(f"{content_name}/")
+            ):
+                candidate = torrent_content_path.parent / rel_path
+            elif (
+                is_file
+                and torrent_content_path is not None
+                and torrent_content_path.is_file()
+                and (not rel_path.parts or rel_path.name.casefold() == content_name)
+            ):
+                candidate = torrent_content_path
+
+        if is_file:
+            if not candidate.is_file():
+                self._set_status("Selected file does not exist locally")
+                return
+        else:
+            if not candidate.is_dir():
+                self._set_status("Selected directory does not exist locally")
+                return
+
+        _open_file_in_default_app(str(candidate))
+        target_type = "file" if is_file else "directory"
+        self._set_status(f"Opened local {target_type}: {candidate}")
+
     def _get_selected_torrent_hash(self) -> Optional[str]:
         """Get the hash of the currently selected torrent, or None."""
         hashes = self._get_selected_torrent_hashes()
@@ -3586,6 +3954,28 @@ Content Path:   {content_path}
             self._log("INFO", "Auto-refresh disabled")
         self._save_refresh_settings()
 
+    def _toggle_human_readable(self, checked: bool):
+        """Toggle display of size/speed values between human-readable and bytes."""
+        mode = "human_readable" if checked else "bytes"
+        self.display_size_mode = mode
+        self.display_speed_mode = mode
+
+        # Re-render UI that depends on display units.
+        self._update_window_title_speeds()
+        self._calculate_size_buckets()
+        self._update_size_tree()
+        self._update_torrents_table()
+        self._apply_content_filter()
+
+        selected = getattr(self, "_selected_torrent", None)
+        if selected is not None and self.detail_tabs.isEnabled():
+            self._display_torrent_details(selected)
+
+        self._save_settings()
+        mode_label = "human readable" if checked else "bytes"
+        self._log("INFO", f"Display mode set to {mode_label}")
+        self._set_status(f"Display mode: {mode_label}")
+
     def _show_about(self):
         """Show about dialog"""
         QMessageBox.about(
@@ -3615,6 +4005,17 @@ Content Path:   {content_path}
     def _set_status(self, message: str):
         """Set status bar message"""
         self.lbl_status.setText(message)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Handle Enter in content tree consistently across Qt styles/platforms."""
+        if (
+            watched is getattr(self, "tree_files", None)
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        ):
+            self._open_selected_content_path()
+            return True
+        return super().eventFilter(watched, event)
 
     def _update_window_title_speeds(self):
         """Show aggregate up/down speeds in the window title."""
@@ -3708,10 +4109,7 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
     known_keys = {
         "qb_host", "qb_port", "qb_username", "qb_password",
         "http_basic_auth_username", "http_basic_auth_password",
-        "auto_refresh", "refresh_interval",
-        "default_window_width", "default_window_height",
-        "display_size_mode", "display_speed_mode",
-        "default_status_filter", "log_file",
+        "log_file",
         "_log_file_path",
     }
 
@@ -3727,21 +4125,6 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
     def _warn(msg: str):
         logger.warning("Config validation: %s", msg)
 
-    def _coerce_bool(value: Any, default: bool) -> Tuple[bool, bool]:
-        if isinstance(value, bool):
-            return value, True
-        if isinstance(value, (int, float)):
-            if value in {0, 1}:
-                return bool(value), True
-            return bool(value), False
-        if isinstance(value, str):
-            text = value.strip().lower()
-            if text in {"1", "true", "yes", "on"}:
-                return True, True
-            if text in {"0", "false", "no", "off"}:
-                return False, True
-        return default, False
-
     def _coerce_int(value: Any, default: int) -> int:
         try:
             return int(value)
@@ -3755,6 +4138,20 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
                 f"'{old_key}' is deprecated; use '{new_key}'. "
                 f"Using '{old_key}' value for now."
             )
+
+    settings_managed_keys = (
+        "auto_refresh",
+        "refresh_interval",
+        "default_window_width",
+        "default_window_height",
+        "default_status_filter",
+        "display_size_mode",
+        "display_speed_mode",
+    )
+    for key in settings_managed_keys:
+        if key in normalized:
+            _warn(f"'{key}' is ignored in TOML; managed via QSettings.")
+            normalized.pop(key, None)
 
     # qb_host
     host_val = normalized.get("qb_host", "localhost")
@@ -3786,72 +4183,6 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
             _warn(f"'{key}' should be a string; using default.")
             val = str(default_value)
         normalized[key] = val
-
-    # auto_refresh
-    raw_auto_refresh = normalized.get("auto_refresh", DEFAULT_AUTO_REFRESH)
-    auto_refresh, auto_refresh_valid = _coerce_bool(
-        raw_auto_refresh,
-        DEFAULT_AUTO_REFRESH
-    )
-    if not auto_refresh_valid:
-        _warn(
-            f"'auto_refresh' invalid ({raw_auto_refresh!r}); using {DEFAULT_AUTO_REFRESH}."
-        )
-    normalized["auto_refresh"] = auto_refresh
-
-    # refresh_interval
-    raw_interval = normalized.get("refresh_interval", DEFAULT_REFRESH_INTERVAL)
-    interval = _coerce_int(raw_interval, DEFAULT_REFRESH_INTERVAL)
-    if interval < 1:
-        _warn(
-            f"'refresh_interval' must be >= 1 ({raw_interval!r}); using {DEFAULT_REFRESH_INTERVAL}."
-        )
-        interval = DEFAULT_REFRESH_INTERVAL
-    normalized["refresh_interval"] = interval
-
-    # window dimensions
-    raw_width = normalized.get("default_window_width", 1400)
-    width = _coerce_int(raw_width, 1400)
-    if width < 600:
-        _warn(f"'default_window_width' too small ({raw_width!r}); using 1400.")
-        width = 1400
-    normalized["default_window_width"] = width
-
-    raw_height = normalized.get("default_window_height", 800)
-    height = _coerce_int(raw_height, 800)
-    if height < 400:
-        _warn(f"'default_window_height' too small ({raw_height!r}); using 800.")
-        height = 800
-    normalized["default_window_height"] = height
-
-    # display modes
-    raw_size_mode = normalized.get("display_size_mode", DEFAULT_DISPLAY_SIZE_MODE)
-    size_mode = _normalize_display_mode(raw_size_mode, DEFAULT_DISPLAY_SIZE_MODE)
-    if size_mode != str(raw_size_mode).strip().lower():
-        _warn(
-            f"'display_size_mode' invalid ({raw_size_mode!r}); "
-            f"using '{DEFAULT_DISPLAY_SIZE_MODE}'."
-        )
-    normalized["display_size_mode"] = size_mode
-
-    raw_speed_mode = normalized.get("display_speed_mode", DEFAULT_DISPLAY_SPEED_MODE)
-    speed_mode = _normalize_display_mode(raw_speed_mode, DEFAULT_DISPLAY_SPEED_MODE)
-    if speed_mode != str(raw_speed_mode).strip().lower():
-        _warn(
-            f"'display_speed_mode' invalid ({raw_speed_mode!r}); "
-            f"using '{DEFAULT_DISPLAY_SPEED_MODE}'."
-        )
-    normalized["display_speed_mode"] = speed_mode
-
-    # default status filter
-    raw_status = normalized.get("default_status_filter", DEFAULT_STATUS_FILTER)
-    status = str(raw_status or "").strip().lower()
-    if status not in STATUS_FILTERS:
-        _warn(
-            f"'default_status_filter' invalid ({raw_status!r}); using '{DEFAULT_STATUS_FILTER}'."
-        )
-        status = DEFAULT_STATUS_FILTER
-    normalized["default_status_filter"] = status
 
     # log_file
     raw_log_file = normalized.get("log_file", "qbiremo_enhanced.log")

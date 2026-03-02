@@ -65,10 +65,12 @@ qb_password = "your_password"
 # Optional HTTP Basic Auth (reverse proxy layer)
 http_basic_auth_username = ""
 http_basic_auth_password = ""
-
-auto_refresh = false
-refresh_interval = 60
 ```
+
+`auto_refresh`, `refresh_interval`, window size, and default status filter are
+managed by `QSettings` at runtime and are no longer read from TOML.
+Display mode (human-readable vs bytes) is also managed by `QSettings` and can
+be toggled from `View -> Human Readable`.
 
 ## Usage
 
