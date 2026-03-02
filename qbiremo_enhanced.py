@@ -1948,6 +1948,10 @@ class MainWindow(QMainWindow):
             self.tbl_torrents.setColumnHidden(idx, col["key"] in hidden)
         self._sync_torrent_column_actions()
 
+    def _fit_torrent_columns(self):
+        """Resize visible torrent table columns to fit their contents."""
+        self.tbl_torrents.resizeColumnsToContents()
+
     def _create_menus(self):
         """Create menu bar"""
         menubar = self.menuBar()
@@ -2096,12 +2100,17 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         self._create_torrent_columns_menu(view_menu)
 
+        action_fit_columns = QAction("Fit &Columns", self)
+        action_fit_columns.triggered.connect(self._fit_torrent_columns)
+        view_menu.addAction(action_fit_columns)
+
         view_menu.addSeparator()
 
         self.action_auto_refresh = QAction("Enable &Auto-Refresh", self)
         self.action_auto_refresh.setCheckable(True)
         self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
         self.action_auto_refresh.triggered.connect(self._toggle_auto_refresh)
+        self._update_auto_refresh_action_text()
         view_menu.addAction(self.action_auto_refresh)
 
         action_set_refresh_interval = QAction("Set Auto-Refresh &Interval...", self)
@@ -2679,6 +2688,7 @@ class MainWindow(QMainWindow):
         self.refresh_interval = max(1, loaded_interval)
         if hasattr(self, "action_auto_refresh"):
             self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
+            self._update_auto_refresh_action_text()
         self._sync_auto_refresh_timer_state()
 
         # Display mode settings (QSettings-only)
@@ -4825,6 +4835,13 @@ class MainWindow(QMainWindow):
         else:
             self.refresh_timer.stop()
 
+    def _update_auto_refresh_action_text(self):
+        """Refresh auto-refresh menu label to include current interval."""
+        if not hasattr(self, "action_auto_refresh"):
+            return
+        interval_seconds = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
+        self.action_auto_refresh.setText(f"Enable &Auto-Refresh ({interval_seconds})")
+
     @staticmethod
     def _detail_cell_text(value: Any) -> str:
         """Render one trackers/peers cell value to text."""
@@ -6350,6 +6367,7 @@ class MainWindow(QMainWindow):
                 action_signals = self.action_auto_refresh.blockSignals(True)
                 self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
                 self.action_auto_refresh.blockSignals(action_signals)
+                self._update_auto_refresh_action_text()
 
             self._sync_auto_refresh_timer_state()
 
@@ -6404,6 +6422,7 @@ class MainWindow(QMainWindow):
                 return
 
             self.refresh_interval = int(seconds)
+            self._update_auto_refresh_action_text()
             self._sync_auto_refresh_timer_state()
 
             self._log("INFO", f"Auto-refresh interval set to {self.refresh_interval}s")
