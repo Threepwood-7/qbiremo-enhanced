@@ -33,13 +33,12 @@ Filter torrents by multiple criteria:
 - **Torrents Grid**: Sortable table with all torrent information
 - **Details Panel**: Comprehensive information about selected torrent
 - **Status Bar**: Shows operation status, progress, and torrent count
-- **Log Panel**: Floating window with detailed operation logs
 
 ## Installation
 
 ### Requirements
 ```bash
-pip install PySide6 qbittorrent-api --break-system-packages
+pip install PySide6 qbittorrent-api
 ```
 
 ### Optional: Virtual Environment
@@ -240,17 +239,6 @@ qbiremo_enhanced.py
     └── Event Handlers
 ```
 
-### Adding Features
-1. Create async fetch function
-2. Create callback function
-3. Queue task via `api_queue.add_task()`
-4. Update UI in callback
-5. Log operation with timing
-
-## License
-
-Open source - modify and distribute freely.
-
 ## Credits
 
 Built with:
@@ -263,3 +251,13 @@ Original qBiremo concept enhanced with:
 - Queued API operations
 - Comprehensive logging
 - Add torrent functionality
+
+---
+
+**Tags:** qbittorrent, qbittorrent-api, torrent, pyside6, qt, desktop-app, windows
+
+---
+
+## Legal Disclaimer
+
+THIS SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OF ANY KIND, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING, WITHOUT LIMITATION, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY, OR QUIET ENJOYMENT. TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE AUTHORS, CONTRIBUTORS, MAINTAINERS, DISTRIBUTORS, AND AFFILIATED PARTIES SHALL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF DATA, PROFITS, GOODWILL, BUSINESS OPPORTUNITY, OR SERVICE INTERRUPTION, ARISING OUT OF OR RELATING TO THE USE OF, OR INABILITY TO USE, THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. THIS SOFTWARE HAS BEEN DEVELOPED, IN WHOLE OR IN PART, BY "INTELLIGENT TOOLS"; ACCORDINGLY, OUTPUTS MAY CONTAIN ERRORS OR OMISSIONS, AND YOU ASSUME FULL RESPONSIBILITY FOR INDEPENDENT VALIDATION, TESTING, LEGAL COMPLIANCE, AND SAFE OPERATION PRIOR TO ANY RELIANCE OR DEPLOYMENT.

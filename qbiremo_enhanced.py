@@ -8,6 +8,7 @@ import os
 import sys
 import argparse
 import atexit
+import html
 import json
 import logging
 import traceback
@@ -36,7 +37,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import (
     Qt, QTimer, QRunnable, Slot, Signal, QObject, QThreadPool, QSettings, QEvent
 )
-from PySide6.QtGui import QAction, QFont, QIcon, QColor, QBrush, QShortcut, QKeySequence
+from PySide6.QtGui import QAction, QIcon, QColor, QBrush, QShortcut, QKeySequence, QPainter, QPen
 
 import qbittorrentapi
 
@@ -588,8 +589,8 @@ class AddTorrentDialog(QDialog):
 class TaxonomyManagerDialog(QDialog):
     """Dialog to manage categories and tags in one place."""
 
-    create_category_requested = Signal(str, str)
-    edit_category_requested = Signal(str, str)
+    create_category_requested = Signal(str, str, str, bool)
+    edit_category_requested = Signal(str, str, str, bool)
     delete_category_requested = Signal(str)
     create_tags_requested = Signal(list)
     delete_tags_requested = Signal(list)
@@ -599,7 +600,7 @@ class TaxonomyManagerDialog(QDialog):
         self.setWindowTitle("Manage Tags and Categories")
         self.resize(760, 520)
 
-        self._category_paths: Dict[str, str] = {}
+        self._category_data: Dict[str, Dict[str, Any]] = {}
         self._build_ui()
         self._set_category_create_mode()
 
@@ -632,6 +633,19 @@ class TaxonomyManagerDialog(QDialog):
         path_row.addWidget(self.txt_category_save_path, 1)
         path_row.addWidget(btn_browse_path)
         form.addRow("Save Path:", path_row)
+
+        self.chk_category_use_incomplete = QCheckBox("Use incomplete save path")
+        self.chk_category_use_incomplete.toggled.connect(self._update_incomplete_path_enabled_state)
+        form.addRow("", self.chk_category_use_incomplete)
+
+        inc_row = QHBoxLayout()
+        self.txt_category_incomplete_path = QLineEdit()
+        self.txt_category_incomplete_path.setPlaceholderText("Optional incomplete path")
+        self.btn_category_browse_incomplete = QPushButton("Browse")
+        self.btn_category_browse_incomplete.clicked.connect(self._browse_category_incomplete_path)
+        inc_row.addWidget(self.txt_category_incomplete_path, 1)
+        inc_row.addWidget(self.btn_category_browse_incomplete)
+        form.addRow("Incomplete Path:", inc_row)
         editor_layout.addLayout(form)
 
         category_actions = QHBoxLayout()
@@ -694,6 +708,21 @@ class TaxonomyManagerDialog(QDialog):
         if selected:
             self.txt_category_save_path.setText(selected)
 
+    def _browse_category_incomplete_path(self):
+        """Browse for category incomplete save path."""
+        initial = self.txt_category_incomplete_path.text().strip()
+        selected = QFileDialog.getExistingDirectory(
+            self, "Select Category Incomplete Path", initial
+        )
+        if selected:
+            self.txt_category_incomplete_path.setText(selected)
+
+    def _update_incomplete_path_enabled_state(self, *_args):
+        """Enable/disable incomplete path controls based on checkbox."""
+        enabled = bool(self.chk_category_use_incomplete.isChecked())
+        self.txt_category_incomplete_path.setEnabled(enabled)
+        self.btn_category_browse_incomplete.setEnabled(enabled)
+
     def set_busy(self, busy: bool, message: str = ""):
         """Enable/disable editor controls while an API operation runs."""
         enabled = not bool(busy)
@@ -701,20 +730,23 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_category_new.setEnabled(enabled)
         self.btn_category_apply.setEnabled(enabled)
         self.btn_category_delete.setEnabled(enabled and self.lst_categories.currentItem() is not None)
+        self.chk_category_use_incomplete.setEnabled(enabled)
+        self.txt_category_incomplete_path.setEnabled(enabled and self.chk_category_use_incomplete.isChecked())
+        self.btn_category_browse_incomplete.setEnabled(enabled and self.chk_category_use_incomplete.isChecked())
         self.btn_add_tags.setEnabled(enabled)
         self.btn_delete_tags.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
-    def set_taxonomy_data(self, category_paths: Dict[str, str], tags: List[str]):
+    def set_taxonomy_data(self, category_data: Dict[str, Dict[str, Any]], tags: List[str]):
         """Refresh dialog contents from latest category/tag lists."""
         current_category = self.selected_category_name()
         selected_tags = {
             item.text() for item in self.lst_tags_manage.selectedItems()
         }
 
-        self._category_paths = dict(category_paths or {})
+        self._category_data = dict(category_data or {})
         self.lst_categories.clear()
-        for name in sorted(self._category_paths.keys()):
+        for name in sorted(self._category_data.keys()):
             self.lst_categories.addItem(name)
 
         if current_category:
@@ -744,9 +776,14 @@ class TaxonomyManagerDialog(QDialog):
             return
 
         name = current.text().strip()
+        details = self._category_data.get(name, {}) if isinstance(self._category_data, dict) else {}
         self.txt_category_name.setReadOnly(True)
         self.txt_category_name.setText(name)
-        self.txt_category_save_path.setText(self._category_paths.get(name, ""))
+        self.txt_category_save_path.setText(str(details.get("save_path", "") or ""))
+        use_incomplete = bool(details.get("use_incomplete_path", False))
+        self.chk_category_use_incomplete.setChecked(use_incomplete)
+        self.txt_category_incomplete_path.setText(str(details.get("incomplete_path", "") or ""))
+        self._update_incomplete_path_enabled_state()
         self.btn_category_apply.setText("Update Category")
         self.btn_category_delete.setEnabled(True)
 
@@ -760,6 +797,9 @@ class TaxonomyManagerDialog(QDialog):
         self.txt_category_name.setReadOnly(False)
         self.txt_category_name.clear()
         self.txt_category_save_path.clear()
+        self.chk_category_use_incomplete.setChecked(False)
+        self.txt_category_incomplete_path.clear()
+        self._update_incomplete_path_enabled_state()
         self.btn_category_apply.setText("Create Category")
         self.btn_category_delete.setEnabled(False)
 
@@ -767,15 +807,21 @@ class TaxonomyManagerDialog(QDialog):
         """Emit create/update category request."""
         name = self.txt_category_name.text().strip()
         save_path = self.txt_category_save_path.text().strip()
+        incomplete_path = self.txt_category_incomplete_path.text().strip()
+        use_incomplete = bool(self.chk_category_use_incomplete.isChecked())
         if not name:
             self.lbl_message.setText("Category name cannot be empty.")
             return
 
+        if use_incomplete and not incomplete_path:
+            self.lbl_message.setText("Incomplete path is enabled but empty.")
+            return
+
         selected_name = self.selected_category_name()
         if selected_name:
-            self.edit_category_requested.emit(selected_name, save_path)
+            self.edit_category_requested.emit(selected_name, save_path, incomplete_path, use_incomplete)
         else:
-            self.create_category_requested.emit(name, save_path)
+            self.create_category_requested.emit(name, save_path, incomplete_path, use_incomplete)
 
     def _delete_selected_category(self):
         """Emit delete request for selected category."""
@@ -907,6 +953,264 @@ class SpeedLimitsDialog(QDialog):
         ):
             widget.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
+
+
+# ============================================================================
+# Tracker Health Dashboard Dialog
+# ============================================================================
+
+class TrackerHealthDialog(QDialog):
+    """Dialog to display aggregated tracker health metrics."""
+
+    refresh_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Tracker Health Dashboard")
+        self.resize(980, 520)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        self.lbl_summary = QLabel("No tracker data loaded.")
+        layout.addWidget(self.lbl_summary)
+
+        self.tbl_health = QTableWidget()
+        self.tbl_health.setAlternatingRowColors(True)
+        self.tbl_health.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_health.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tbl_health.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tbl_health.setSortingEnabled(True)
+        self.tbl_health.setColumnCount(9)
+        self.tbl_health.setHorizontalHeaderLabels([
+            "Tracker",
+            "Torrents",
+            "Rows",
+            "Working",
+            "Failing",
+            "Fail Rate %",
+            "Dead",
+            "Avg Next Announce (s)",
+            "Last Error",
+        ])
+        header = self.tbl_health.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(True)
+        layout.addWidget(self.tbl_health, 1)
+
+        controls = QHBoxLayout()
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_close = QPushButton("Close")
+        self.btn_refresh.clicked.connect(self.refresh_requested.emit)
+        self.btn_close.clicked.connect(self.close)
+        controls.addWidget(self.btn_refresh)
+        controls.addStretch(1)
+        controls.addWidget(self.btn_close)
+        layout.addLayout(controls)
+
+    def set_busy(self, busy: bool, message: str = ""):
+        """Set dialog busy state."""
+        self.btn_refresh.setEnabled(not bool(busy))
+        if message:
+            self.lbl_summary.setText(message)
+
+    def set_rows(self, rows: List[Dict[str, Any]]):
+        """Render aggregated tracker-health rows."""
+        self.tbl_health.setSortingEnabled(False)
+        self.tbl_health.setRowCount(len(rows))
+
+        for row_idx, row in enumerate(rows):
+            values = [
+                str(row.get("tracker", "")),
+                str(row.get("torrent_count", 0)),
+                str(row.get("row_count", 0)),
+                str(row.get("working_count", 0)),
+                str(row.get("failing_count", 0)),
+                f"{float(row.get('fail_rate', 0.0)):.1f}",
+                "Yes" if bool(row.get("dead", False)) else "No",
+                str(row.get("avg_next_announce", "")),
+                str(row.get("last_error", "")),
+            ]
+            for col_idx, text in enumerate(values):
+                item = QTableWidgetItem(text)
+                if col_idx in {1, 2, 3, 4, 5, 7}:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.tbl_health.setItem(row_idx, col_idx, item)
+
+        self.tbl_health.setSortingEnabled(True)
+
+        total_trackers = len(rows)
+        dead_count = sum(1 for row in rows if bool(row.get("dead", False)))
+        self.lbl_summary.setText(
+            f"Trackers: {total_trackers}   Dead: {dead_count}"
+        )
+
+
+# ============================================================================
+# Session Timeline Dialog
+# ============================================================================
+
+class TimelineGraphWidget(QWidget):
+    """Simple custom graph for session timeline samples."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._samples: List[Dict[str, Any]] = []
+        self.setMinimumHeight(260)
+
+    def set_samples(self, samples: List[Dict[str, Any]]):
+        """Set timeline samples and trigger repaint."""
+        self._samples = list(samples or [])
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(16, 18, 22))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        samples = self._samples[-240:]
+        if len(samples) < 2:
+            painter.setPen(QColor(180, 180, 180))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Timeline waiting for samples...")
+            return
+
+        left, top, right, bottom = 48, 24, 14, 32
+        chart_w = max(10, self.width() - left - right)
+        chart_h = max(10, self.height() - top - bottom)
+
+        # Alt-speed mode background bands.
+        painter.setPen(Qt.PenStyle.NoPen)
+        band_color = QColor(255, 196, 0, 40)
+        for i in range(len(samples) - 1):
+            if not bool(samples[i].get("alt_enabled", False)):
+                continue
+            x1 = left + int(i * chart_w / max(1, len(samples) - 1))
+            x2 = left + int((i + 1) * chart_w / max(1, len(samples) - 1))
+            painter.fillRect(x1, top, max(1, x2 - x1), chart_h, band_color)
+
+        # Grid
+        painter.setPen(QPen(QColor(80, 86, 96), 1))
+        for idx in range(5):
+            y = top + int(idx * chart_h / 4)
+            painter.drawLine(left, y, left + chart_w, y)
+
+        max_speed = max(
+            1,
+            max(int(s.get("down_bps", 0)) for s in samples),
+            max(int(s.get("up_bps", 0)) for s in samples),
+        )
+        max_active = max(1, max(int(s.get("active_count", 0)) for s in samples))
+
+        def x_for(i: int) -> int:
+            return left + int(i * chart_w / max(1, len(samples) - 1))
+
+        def y_for_speed(value: int) -> int:
+            return top + chart_h - int(max(0, int(value)) * chart_h / max_speed)
+
+        def y_for_active(value: int) -> int:
+            return top + chart_h - int(max(0, int(value)) * chart_h / max_active)
+
+        # Down line
+        down_pen = QPen(QColor(80, 160, 255), 2)
+        painter.setPen(down_pen)
+        for i in range(len(samples) - 1):
+            painter.drawLine(
+                x_for(i), y_for_speed(samples[i].get("down_bps", 0)),
+                x_for(i + 1), y_for_speed(samples[i + 1].get("down_bps", 0)),
+            )
+
+        # Up line
+        up_pen = QPen(QColor(255, 140, 80), 2)
+        painter.setPen(up_pen)
+        for i in range(len(samples) - 1):
+            painter.drawLine(
+                x_for(i), y_for_speed(samples[i].get("up_bps", 0)),
+                x_for(i + 1), y_for_speed(samples[i + 1].get("up_bps", 0)),
+            )
+
+        # Active torrents line
+        active_pen = QPen(QColor(120, 220, 120), 1)
+        active_pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(active_pen)
+        for i in range(len(samples) - 1):
+            painter.drawLine(
+                x_for(i), y_for_active(samples[i].get("active_count", 0)),
+                x_for(i + 1), y_for_active(samples[i + 1].get("active_count", 0)),
+            )
+
+        painter.setPen(QColor(220, 220, 220))
+        painter.drawText(8, top + 10, f"{max_speed:,} B/s")
+        painter.drawText(8, top + chart_h, "0")
+
+        legend_y = 16
+        painter.setPen(QColor(80, 160, 255))
+        painter.drawText(left, legend_y, "DL")
+        painter.setPen(QColor(255, 140, 80))
+        painter.drawText(left + 40, legend_y, "UL")
+        painter.setPen(QColor(120, 220, 120))
+        painter.drawText(left + 80, legend_y, "Active Torrents")
+        painter.setPen(QColor(255, 196, 0))
+        painter.drawText(left + 210, legend_y, "Alt Mode")
+
+
+class SessionTimelineDialog(QDialog):
+    """Dialog to display timeline of speeds/active torrents/alt mode."""
+
+    refresh_requested = Signal()
+    clear_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Session Timeline")
+        self.resize(980, 420)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        self.graph = TimelineGraphWidget()
+        layout.addWidget(self.graph, 1)
+
+        self.lbl_summary = QLabel("No timeline samples yet.")
+        layout.addWidget(self.lbl_summary)
+
+        controls = QHBoxLayout()
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_clear = QPushButton("Clear History")
+        self.btn_close = QPushButton("Close")
+        self.btn_refresh.clicked.connect(self.refresh_requested.emit)
+        self.btn_clear.clicked.connect(self.clear_requested.emit)
+        self.btn_close.clicked.connect(self.close)
+        controls.addWidget(self.btn_refresh)
+        controls.addWidget(self.btn_clear)
+        controls.addStretch(1)
+        controls.addWidget(self.btn_close)
+        layout.addLayout(controls)
+
+    def set_samples(self, samples: List[Dict[str, Any]]):
+        """Update timeline graph and summary."""
+        self.graph.set_samples(samples)
+        if not samples:
+            self.lbl_summary.setText("No timeline samples yet.")
+            return
+        last = samples[-1]
+        summary = (
+            f"Samples: {len(samples)}   "
+            f"DL: {format_speed_mode(int(last.get('down_bps', 0)), mode='human_readable')}   "
+            f"UL: {format_speed_mode(int(last.get('up_bps', 0)), mode='human_readable')}   "
+            f"Active: {int(last.get('active_count', 0))}   "
+            f"Alt Mode: {'On' if bool(last.get('alt_enabled', False)) else 'Off'}"
+        )
+        self.lbl_summary.setText(summary)
+
+    def set_busy(self, busy: bool, message: str = ""):
+        """Set dialog busy state."""
+        enabled = not bool(busy)
+        self.btn_refresh.setEnabled(enabled)
+        self.btn_clear.setEnabled(enabled)
+        if message:
+            self.lbl_summary.setText(message)
 
 
 # ============================================================================
@@ -1130,11 +1434,17 @@ class MainWindow(QMainWindow):
         self.current_content_filter = ""
         self.current_content_files: List[Dict[str, Any]] = []
         self._selected_torrent = None
+        self._torrent_edit_original: Dict[str, Any] = {}
+        self.tab_torrent_edit: Optional[QWidget] = None
         self._suppress_next_cache_save = False
         self._sync_rid = 0
         self._sync_torrent_map: Dict[str, Dict[str, Any]] = {}
         self._taxonomy_dialog: Optional[TaxonomyManagerDialog] = None
         self._speed_limits_dialog: Optional[SpeedLimitsDialog] = None
+        self._tracker_health_dialog: Optional[TrackerHealthDialog] = None
+        self._session_timeline_dialog: Optional[SessionTimelineDialog] = None
+        self.session_timeline_history = deque(maxlen=720)
+        self._last_alt_speed_mode = False
 
         # Persistent per-torrent content cache (JSON file)
         self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME)
@@ -1150,6 +1460,7 @@ class MainWindow(QMainWindow):
         # Separate queue for selected-torrent details (trackers/peers), so
         # table refresh/actions are not interrupted by tab-level lookups.
         self.details_api_queue = APITaskQueue(self)
+        self.analytics_api_queue = APITaskQueue(self)
 
         # Log file path (set by main() before constructing MainWindow)
         self.log_file_path = config.get('_log_file_path', 'qbiremo_enhanced.log')
@@ -1170,8 +1481,7 @@ class MainWindow(QMainWindow):
         # Timers
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self._refresh_torrents)
-        if self.auto_refresh_enabled:
-            self.refresh_timer.start(self.refresh_interval * 1000)
+        self._sync_auto_refresh_timer_state()
 
         # Load settings
         self._load_settings()
@@ -1231,32 +1541,18 @@ class MainWindow(QMainWindow):
 
         self.txt_general_details = QTextEdit()
         self.txt_general_details.setReadOnly(True)
-        self.txt_general_details.setFont(QFont("Courier", 9))
+        self.txt_general_details.setAcceptRichText(True)
+        self.txt_general_details.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.txt_general_details.setPlaceholderText("Select one torrent to see its details.")
+        self.txt_general_details.document().setDefaultStyleSheet(
+            "body { margin: 0; font-size: 12px; }"
+            "h3 { margin: 10px 0 4px; font-size: 12px; font-weight: 700; }"
+            "table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }"
+            "td { padding: 2px 4px; vertical-align: top; }"
+            "td.key { color: #666; width: 190px; font-weight: 600; }"
+            "td.value { color: #111; }"
+        )
         general_layout.addWidget(self.txt_general_details)
-
-        # Editable fields
-        edit_group = QGroupBox("Edit Properties")
-        edit_form = QFormLayout(edit_group)
-
-        self.edit_name = QLineEdit()
-        edit_form.addRow("Name:", self.edit_name)
-
-        self.edit_category = QComboBox()
-        self.edit_category.setEditable(True)
-        edit_form.addRow("Category:", self.edit_category)
-
-        self.edit_tags = QLineEdit()
-        self.edit_tags.setPlaceholderText("Comma-separated tags")
-        edit_form.addRow("Tags:", self.edit_tags)
-
-        self.edit_save_path = QLineEdit()
-        edit_form.addRow("Save Path:", self.edit_save_path)
-
-        btn_save_props = QPushButton("Save Changes")
-        btn_save_props.clicked.connect(self._save_torrent_properties)
-        edit_form.addRow("", btn_save_props)
-
-        general_layout.addWidget(edit_group)
         self.detail_tabs.addTab(general_widget, "General")
 
         # -- Trackers tab --
@@ -1324,6 +1620,77 @@ class MainWindow(QMainWindow):
         file_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         content_layout.addWidget(self.tree_files)
         self.detail_tabs.addTab(content_widget, "Content")
+
+        # -- Edit tab --
+        edit_widget = QWidget()
+        edit_layout = QVBoxLayout(edit_widget)
+        edit_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.lbl_torrent_edit_state = QLabel("Select one torrent to edit.")
+        self.lbl_torrent_edit_state.setWordWrap(True)
+        edit_layout.addWidget(self.lbl_torrent_edit_state)
+
+        edit_form = QFormLayout()
+
+        self.txt_torrent_edit_name = QLineEdit()
+        self.txt_torrent_edit_name.setPlaceholderText("Torrent name")
+        edit_form.addRow("Name:", self.txt_torrent_edit_name)
+
+        self.chk_torrent_edit_auto_tmm = QCheckBox("Automatic Torrent Management")
+        self.chk_torrent_edit_auto_tmm.setTristate(True)
+        self.chk_torrent_edit_auto_tmm.setToolTip(
+            "Checked: enable, Unchecked: disable, Partially checked: leave unchanged."
+        )
+        edit_form.addRow("Auto Management:", self.chk_torrent_edit_auto_tmm)
+
+        self.cmb_torrent_edit_category = QComboBox()
+        self.cmb_torrent_edit_category.setEditable(True)
+        edit_form.addRow("Category:", self.cmb_torrent_edit_category)
+
+        self.txt_torrent_edit_tags = QLineEdit()
+        self.txt_torrent_edit_tags.setPlaceholderText("Comma-separated tags")
+        tags_row = QHBoxLayout()
+        tags_row.addWidget(self.txt_torrent_edit_tags)
+        btn_add_tags = QPushButton("+")
+        btn_add_tags.setToolTip("Add tags from known tag list")
+        btn_add_tags.clicked.connect(self._add_tags_to_torrent_edit)
+        tags_row.addWidget(btn_add_tags)
+        edit_form.addRow("Tags:", tags_row)
+        self.btn_torrent_edit_add_tags = btn_add_tags
+
+        self.txt_torrent_edit_save_path = QLineEdit()
+        save_path_row = QHBoxLayout()
+        save_path_row.addWidget(self.txt_torrent_edit_save_path)
+        btn_browse_save_path = QPushButton("Browse")
+        btn_browse_save_path.clicked.connect(self._browse_torrent_edit_save_path)
+        save_path_row.addWidget(btn_browse_save_path)
+        edit_form.addRow("Save Path:", save_path_row)
+        self.btn_torrent_edit_browse_save_path = btn_browse_save_path
+        self.txt_torrent_edit_save_path.textChanged.connect(self._update_torrent_edit_path_browse_buttons)
+
+        self.txt_torrent_edit_incomplete_path = QLineEdit()
+        incomplete_path_row = QHBoxLayout()
+        incomplete_path_row.addWidget(self.txt_torrent_edit_incomplete_path)
+        btn_browse_incomplete_path = QPushButton("Browse")
+        btn_browse_incomplete_path.clicked.connect(self._browse_torrent_edit_incomplete_path)
+        incomplete_path_row.addWidget(btn_browse_incomplete_path)
+        edit_form.addRow("Incomplete Path:", incomplete_path_row)
+        self.btn_torrent_edit_browse_incomplete_path = btn_browse_incomplete_path
+        self.txt_torrent_edit_incomplete_path.textChanged.connect(self._update_torrent_edit_path_browse_buttons)
+
+        edit_layout.addLayout(edit_form)
+
+        apply_row = QHBoxLayout()
+        apply_row.addStretch(1)
+        self.btn_torrent_edit_apply = QPushButton("Apply")
+        self.btn_torrent_edit_apply.clicked.connect(self._apply_selected_torrent_edits)
+        apply_row.addWidget(self.btn_torrent_edit_apply)
+        edit_layout.addLayout(apply_row)
+        self.detail_tabs.addTab(edit_widget, "Edit")
+        self.tab_torrent_edit = edit_widget
+        self.detail_tabs.currentChanged.connect(self._on_detail_tab_changed)
+
+        self._set_torrent_edit_enabled(False, "Select one torrent to edit.")
 
         self.right_splitter.addWidget(self.detail_tabs)
 
@@ -1766,6 +2133,16 @@ class MainWindow(QMainWindow):
         action_manage_taxonomy = QAction("Manage Tags and Categories", self)
         action_manage_taxonomy.triggered.connect(self._show_taxonomy_manager)
         tools_menu.addAction(action_manage_taxonomy)
+
+        tools_menu.addSeparator()
+
+        action_tracker_health = QAction("Tracker &Health Dashboard...", self)
+        action_tracker_health.triggered.connect(self._show_tracker_health_dashboard)
+        tools_menu.addAction(action_tracker_health)
+
+        action_session_timeline = QAction("Session &Timeline...", self)
+        action_session_timeline.triggered.connect(self._show_session_timeline)
+        tools_menu.addAction(action_session_timeline)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -2288,10 +2665,7 @@ class MainWindow(QMainWindow):
         self.refresh_interval = max(1, loaded_interval)
         if hasattr(self, "action_auto_refresh"):
             self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
-        if self.auto_refresh_enabled:
-            self.refresh_timer.start(self.refresh_interval * 1000)
-        else:
-            self.refresh_timer.stop()
+        self._sync_auto_refresh_timer_state()
 
         # Display mode settings (QSettings-only)
         display_human = settings.value("displayHumanReadable")
@@ -2422,12 +2796,23 @@ class MainWindow(QMainWindow):
         start_time = time.time()
 
         try:
+            alt_speed_mode = bool(self._last_alt_speed_mode)
             with self._create_client() as qb:
                 maindata = qb.sync_maindata(rid=int(self._sync_rid))
+                if hasattr(qb, "transfer_speed_limits_mode"):
+                    try:
+                        alt_speed_mode = self._safe_int(qb.transfer_speed_limits_mode(), 0) == 1
+                    except Exception:
+                        pass
             result = self._merge_sync_maindata(maindata)
 
             elapsed = time.time() - start_time
-            return {'data': result, 'elapsed': elapsed, 'success': True}
+            return {
+                'data': result,
+                'alt_speed_mode': bool(alt_speed_mode),
+                'elapsed': elapsed,
+                'success': True
+            }
         except Exception as e:
             elapsed = time.time() - start_time
             return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
@@ -2533,6 +2918,135 @@ class MainWindow(QMainWindow):
                     row.update(self._entry_to_dict(peer_entry))
                     rows.append(row)
 
+            elapsed = time.time() - start_time
+            return {'data': rows, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    @staticmethod
+    def _tracker_host_from_url(url: str) -> str:
+        """Extract tracker hostname from URL where possible."""
+        text = str(url or "").strip()
+        if not text:
+            return ""
+        try:
+            parsed = urlparse(text)
+            return (parsed.hostname or text).lower()
+        except Exception:
+            return text.lower()
+
+    @staticmethod
+    def _classify_tracker_health_status(status_code: int, message: str) -> str:
+        """Classify one tracker row into working/failing/unknown buckets."""
+        msg = str(message or "").strip().lower()
+        if status_code in {2, 3, 5}:
+            return "working"
+        if status_code == 4:
+            return "failing"
+        failure_terms = (
+            "timed out",
+            "timeout",
+            "error",
+            "unreachable",
+            "refused",
+            "not working",
+            "failure",
+            "offline",
+        )
+        if any(term in msg for term in failure_terms):
+            return "failing"
+        return "unknown"
+
+    def _fetch_tracker_health_data(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Fetch and aggregate tracker health metrics across provided torrents."""
+        start_time = time.time()
+        try:
+            stats: Dict[str, Dict[str, Any]] = {}
+            with self._create_client() as qb:
+                for torrent_hash in list(torrent_hashes or []):
+                    if not torrent_hash:
+                        continue
+                    try:
+                        tracker_rows = list(qb.torrents_trackers(torrent_hash=torrent_hash) or [])
+                    except Exception:
+                        continue
+                    for entry in tracker_rows:
+                        row = self._entry_to_dict(entry)
+                        tracker_host = self._tracker_host_from_url(row.get("url", ""))
+                        if not tracker_host:
+                            continue
+                        bucket = stats.setdefault(
+                            tracker_host,
+                            {
+                                "tracker": tracker_host,
+                                "torrent_hashes": set(),
+                                "row_count": 0,
+                                "working_count": 0,
+                                "failing_count": 0,
+                                "unknown_count": 0,
+                                "next_announce_sum": 0,
+                                "next_announce_count": 0,
+                                "last_error": "",
+                            },
+                        )
+                        bucket["torrent_hashes"].add(str(torrent_hash))
+                        bucket["row_count"] += 1
+
+                        status_code = self._safe_int(row.get("status", -1), -1)
+                        message = str(row.get("msg", "") or "").strip()
+                        status_kind = self._classify_tracker_health_status(status_code, message)
+                        if status_kind == "working":
+                            bucket["working_count"] += 1
+                        elif status_kind == "failing":
+                            bucket["failing_count"] += 1
+                            if message:
+                                bucket["last_error"] = message
+                        else:
+                            bucket["unknown_count"] += 1
+
+                        next_announce = self._safe_int(row.get("next_announce", -1), -1)
+                        if next_announce >= 0:
+                            bucket["next_announce_sum"] += next_announce
+                            bucket["next_announce_count"] += 1
+
+            rows: List[Dict[str, Any]] = []
+            for tracker, bucket in stats.items():
+                row_count = self._safe_int(bucket.get("row_count", 0), 0)
+                failing = self._safe_int(bucket.get("failing_count", 0), 0)
+                working = self._safe_int(bucket.get("working_count", 0), 0)
+                fail_rate = (failing * 100.0 / row_count) if row_count > 0 else 0.0
+                avg_next = ""
+                if self._safe_int(bucket.get("next_announce_count", 0), 0) > 0:
+                    avg_next = str(
+                        int(
+                            bucket["next_announce_sum"]
+                            / max(1, bucket["next_announce_count"])
+                        )
+                    )
+
+                dead = bool(failing > 0 and working == 0 and fail_rate >= 50.0)
+                rows.append(
+                    {
+                        "tracker": tracker,
+                        "torrent_count": len(bucket.get("torrent_hashes", set())),
+                        "row_count": row_count,
+                        "working_count": working,
+                        "failing_count": failing,
+                        "fail_rate": fail_rate,
+                        "dead": dead,
+                        "avg_next_announce": avg_next,
+                        "last_error": str(bucket.get("last_error", "") or ""),
+                    }
+                )
+
+            rows.sort(
+                key=lambda row: (
+                    not bool(row.get("dead", False)),
+                    -float(row.get("fail_rate", 0.0)),
+                    str(row.get("tracker", "")),
+                )
+            )
             elapsed = time.time() - start_time
             return {'data': rows, 'elapsed': elapsed, 'success': True}
         except Exception as e:
@@ -2677,6 +3191,87 @@ class MainWindow(QMainWindow):
         try:
             with self._create_client() as qb:
                 qb.torrents_bottom_priority(torrent_hashes=list(torrent_hashes))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_apply_selected_torrent_edits(
+        self,
+        torrent_hash: str,
+        updates: Dict[str, Any],
+        **_kw,
+    ) -> Dict:
+        """Apply editable properties for a single torrent."""
+        start_time = time.time()
+        try:
+            normalized_hash = str(torrent_hash or "").strip()
+            if not normalized_hash:
+                raise ValueError("Missing torrent hash")
+            normalized_updates = dict(updates or {})
+            hashes = [normalized_hash]
+
+            with self._create_client() as qb:
+                if "name" in normalized_updates:
+                    torrent_name = str(normalized_updates.get("name", "") or "").strip()
+                    if not torrent_name:
+                        raise ValueError("Torrent name cannot be empty")
+                    qb.torrents_rename(
+                        torrent_hash=normalized_hash,
+                        new_torrent_name=torrent_name,
+                    )
+
+                if "auto_tmm" in normalized_updates:
+                    qb.torrents_set_auto_management(
+                        enable=bool(normalized_updates["auto_tmm"]),
+                        torrent_hashes=hashes,
+                    )
+
+                if "category" in normalized_updates:
+                    qb.torrents_set_category(
+                        torrent_hashes=hashes,
+                        category=str(normalized_updates.get("category", "") or ""),
+                    )
+
+                if "tags" in normalized_updates:
+                    tags_text = str(normalized_updates.get("tags", "") or "")
+                    qb.torrents_remove_tags(torrent_hashes=hashes)
+                    if tags_text:
+                        qb.torrents_add_tags(
+                            torrent_hashes=hashes,
+                            tags=tags_text,
+                        )
+
+                if "save_path" in normalized_updates:
+                    save_path = str(normalized_updates.get("save_path", "") or "")
+                    if hasattr(qb, "torrents_set_save_path"):
+                        qb.torrents_set_save_path(
+                            torrent_hashes=hashes,
+                            save_path=save_path,
+                        )
+                    elif save_path:
+                        qb.torrents_set_location(
+                            torrent_hashes=hashes,
+                            location=save_path,
+                        )
+                    else:
+                        raise RuntimeError(
+                            "Clearing save path is not supported by this qBittorrent version."
+                        )
+
+                if "download_path" in normalized_updates:
+                    download_path = str(normalized_updates.get("download_path", "") or "")
+                    if hasattr(qb, "torrents_set_download_path"):
+                        qb.torrents_set_download_path(
+                            torrent_hashes=hashes,
+                            download_path=download_path,
+                        )
+                    else:
+                        raise RuntimeError(
+                            "Editing incomplete save path is not supported by this qBittorrent version."
+                        )
+
             elapsed = time.time() - start_time
             return {'data': True, 'elapsed': elapsed, 'success': True}
         except Exception as e:
@@ -2908,24 +3503,54 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _api_create_category(self, name: str, save_path: str, **_kw) -> Dict:
+    def _api_create_category(
+        self,
+        name: str,
+        save_path: str,
+        incomplete_path: str,
+        use_incomplete_path: bool,
+        **_kw,
+    ) -> Dict:
         """Create a new category."""
         start_time = time.time()
         try:
+            normalized_save = str(save_path or "").strip()
+            normalized_incomplete = str(incomplete_path or "").strip()
+            enable_download_path = bool(use_incomplete_path and normalized_incomplete)
             with self._create_client() as qb:
-                qb.torrents_create_category(name=name, save_path=save_path)
+                qb.torrents_create_category(
+                    name=name,
+                    save_path=normalized_save or None,
+                    download_path=normalized_incomplete or None,
+                    enable_download_path=enable_download_path,
+                )
             elapsed = time.time() - start_time
             return {'data': True, 'elapsed': elapsed, 'success': True}
         except Exception as e:
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _api_edit_category(self, name: str, save_path: str, **_kw) -> Dict:
+    def _api_edit_category(
+        self,
+        name: str,
+        save_path: str,
+        incomplete_path: str,
+        use_incomplete_path: bool,
+        **_kw,
+    ) -> Dict:
         """Edit one existing category."""
         start_time = time.time()
         try:
+            normalized_save = str(save_path or "").strip()
+            normalized_incomplete = str(incomplete_path or "").strip()
+            enable_download_path = bool(use_incomplete_path and normalized_incomplete)
             with self._create_client() as qb:
-                qb.torrents_edit_category(name=name, save_path=save_path)
+                qb.torrents_edit_category(
+                    name=name,
+                    save_path=normalized_save or None,
+                    download_path=normalized_incomplete or None,
+                    enable_download_path=enable_download_path,
+                )
             elapsed = time.time() - start_time
             return {'data': True, 'elapsed': elapsed, 'success': True}
         except Exception as e:
@@ -3004,29 +3629,6 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _api_save_torrent_properties(self, torrent_hash: str,
-                                     props: Dict[str, Any], **_kw) -> Dict:
-        """Save changed torrent properties via API."""
-        start_time = time.time()
-        try:
-            with self._create_client() as qb:
-                if 'name' in props:
-                    qb.torrents_rename(torrent_hash=torrent_hash, new_torrent_name=props['name'])
-                if 'category' in props:
-                    qb.torrents_set_category(torrent_hashes=[torrent_hash], category=props['category'])
-                if 'tags' in props:
-                    # Remove all existing tags then add new ones
-                    qb.torrents_remove_tags(torrent_hashes=[torrent_hash])
-                    if props['tags']:
-                        qb.torrents_add_tags(torrent_hashes=[torrent_hash], tags=props['tags'])
-                if 'save_path' in props:
-                    qb.torrents_set_location(torrent_hashes=[torrent_hash], location=props['save_path'])
-            elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
-        except Exception as e:
-            elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
-
     # ========================================================================
     # API Callbacks
     # ========================================================================
@@ -3045,6 +3647,7 @@ class MainWindow(QMainWindow):
         self.category_details = category_details
         self.categories = sorted(category_details.keys())
         self._update_category_tree()
+        self._refresh_torrent_edit_categories()
         self._sync_taxonomy_dialog_data()
 
     def _category_save_path_by_name(self, category_name: str) -> str:
@@ -3052,16 +3655,46 @@ class MainWindow(QMainWindow):
         details = self.category_details.get(str(category_name or ""), {})
         if not isinstance(details, dict):
             return ""
-        for key in ("save_path", "savePath", "download_path", "downloadPath"):
+        for key in ("save_path", "savePath"):
             value = str(details.get(key, "") or "").strip()
             if value:
                 return value
         return ""
 
-    def _taxonomy_category_paths(self) -> Dict[str, str]:
-        """Build category -> save-path mapping for manager dialog."""
+    def _category_incomplete_path_by_name(self, category_name: str) -> str:
+        """Resolve incomplete path for one category from cached details."""
+        details = self.category_details.get(str(category_name or ""), {})
+        if not isinstance(details, dict):
+            return ""
+        for key in ("download_path", "downloadPath"):
+            value = str(details.get(key, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _category_use_incomplete_path_by_name(self, category_name: str) -> bool:
+        """Resolve whether incomplete path is enabled for one category."""
+        details = self.category_details.get(str(category_name or ""), {})
+        if not isinstance(details, dict):
+            return False
+        for key in (
+            "enable_download_path",
+            "enableDownloadPath",
+            "use_download_path",
+            "useDownloadPath",
+        ):
+            if key in details:
+                return self._to_bool(details.get(key), False)
+        return bool(self._category_incomplete_path_by_name(category_name))
+
+    def _taxonomy_category_data(self) -> Dict[str, Dict[str, Any]]:
+        """Build category metadata mapping for manager dialog."""
         return {
-            name: self._category_save_path_by_name(name)
+            name: {
+                "save_path": self._category_save_path_by_name(name),
+                "incomplete_path": self._category_incomplete_path_by_name(name),
+                "use_incomplete_path": self._category_use_incomplete_path_by_name(name),
+            }
             for name in self.categories
         }
 
@@ -3072,7 +3705,7 @@ class MainWindow(QMainWindow):
             return
         if not dialog.isVisible():
             return
-        dialog.set_taxonomy_data(self._taxonomy_category_paths(), list(self.tags))
+        dialog.set_taxonomy_data(self._taxonomy_category_data(), list(self.tags))
 
     def _on_categories_loaded(self, result: Dict):
         """Handle categories loaded"""
@@ -3167,6 +3800,9 @@ class MainWindow(QMainWindow):
                 return
 
             self.all_torrents = result.get('data', [])
+            if "alt_speed_mode" in result:
+                self._last_alt_speed_mode = bool(result.get("alt_speed_mode"))
+            self._record_session_timeline_sample(self._last_alt_speed_mode)
             self._log("INFO", f"Loaded {len(self.all_torrents)} torrents", result.get('elapsed', 0))
             self._update_window_title_speeds()
 
@@ -3267,6 +3903,18 @@ class MainWindow(QMainWindow):
             error_msg = result.get('error', 'Unknown error')
             self._log("ERROR", f"Failed to add torrent: {error_msg}", result.get('elapsed', 0))
             self._set_status(f"Failed to add torrent: {error_msg}")
+        self._hide_progress()
+
+    def _on_apply_selected_torrent_edits_done(self, result: Dict):
+        """Handle completion of selected torrent edit apply action."""
+        if result.get("success"):
+            self._log("INFO", "Torrent edits applied", result.get("elapsed", 0))
+            self._set_status("Torrent edits applied")
+            QTimer.singleShot(500, self._refresh_torrents)
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"Failed to apply torrent edits: {error}", result.get("elapsed", 0))
+            self._set_status(f"Failed to apply torrent edits: {error}")
         self._hide_progress()
 
     def _populate_content_tree(self, files: List[Dict[str, Any]]):
@@ -3375,18 +4023,6 @@ class MainWindow(QMainWindow):
         """Display content tree from local cache for selected torrent."""
         self.current_content_files = self._get_cached_files(torrent_hash)
         self._apply_content_filter()
-
-    def _on_save_properties_done(self, result: Dict):
-        """Handle save-properties completion."""
-        if result.get('success'):
-            self._log("INFO", "Torrent properties saved", result.get('elapsed', 0))
-            self._set_status("Properties saved")
-            QTimer.singleShot(500, self._refresh_torrents)
-        else:
-            error = result.get('error', 'Unknown error')
-            self._log("ERROR", f"Failed to save properties: {error}", result.get('elapsed', 0))
-            self._set_status(f"Failed to save properties: {error}")
-        self._hide_progress()
 
     # ========================================================================
     # Task Queue Event Handlers
@@ -3886,6 +4522,233 @@ class MainWindow(QMainWindow):
         self._set_status("General details copied to clipboard")
 
     @staticmethod
+    def _display_detail_value(value: Any, fallback: str = "N/A") -> str:
+        """Normalize one detail value for display."""
+        if value is None:
+            return fallback
+        if isinstance(value, str):
+            text = value.strip()
+            return text if text else fallback
+        return str(value)
+
+    def _build_general_details_html(self, sections: List[Tuple[str, List[Tuple[str, Any]]]]) -> str:
+        """Build rich read-only HTML layout for the General details panel."""
+        chunks = ["<html><body>"]
+        for title, rows in sections:
+            chunks.append(f"<h3>{html.escape(str(title))}</h3>")
+            chunks.append("<table>")
+            for key, value in rows:
+                key_text = html.escape(str(key))
+                value_text = html.escape(self._display_detail_value(value))
+                chunks.append(
+                    f"<tr><td class=\"key\">{key_text}</td><td class=\"value\">{value_text}</td></tr>"
+                )
+            chunks.append("</table>")
+        chunks.append("</body></html>")
+        return "".join(chunks)
+
+    def _set_torrent_edit_enabled(self, enabled: bool, message: str):
+        """Enable/disable torrent edit controls and update state message."""
+        self.lbl_torrent_edit_state.setText(str(message or ""))
+        enabled_flag = bool(enabled)
+        self.txt_torrent_edit_name.setEnabled(enabled_flag)
+        self.chk_torrent_edit_auto_tmm.setEnabled(enabled_flag)
+        self.cmb_torrent_edit_category.setEnabled(enabled_flag)
+        self.txt_torrent_edit_tags.setEnabled(enabled_flag)
+        self.btn_torrent_edit_add_tags.setEnabled(enabled_flag)
+        self.txt_torrent_edit_save_path.setEnabled(enabled_flag)
+        self.btn_torrent_edit_browse_save_path.setEnabled(enabled_flag)
+        self.txt_torrent_edit_incomplete_path.setEnabled(enabled_flag)
+        self.btn_torrent_edit_browse_incomplete_path.setEnabled(enabled_flag)
+        self.btn_torrent_edit_apply.setEnabled(enabled_flag)
+        self._update_torrent_edit_path_browse_buttons()
+
+    def _clear_torrent_edit_panel(self, message: str):
+        """Reset editable torrent fields."""
+        self._torrent_edit_original = {}
+        self.txt_torrent_edit_name.clear()
+        self.chk_torrent_edit_auto_tmm.setCheckState(Qt.CheckState.PartiallyChecked)
+        self.cmb_torrent_edit_category.blockSignals(True)
+        self.cmb_torrent_edit_category.clear()
+        self.cmb_torrent_edit_category.addItems([""] + self.categories)
+        self.cmb_torrent_edit_category.blockSignals(False)
+        self.txt_torrent_edit_tags.clear()
+        self.txt_torrent_edit_save_path.clear()
+        self.txt_torrent_edit_incomplete_path.clear()
+        self._set_torrent_edit_enabled(False, message)
+
+    def _refresh_torrent_edit_categories(self, current_category: str = ""):
+        """Refresh category combo options while preserving text selection."""
+        current_text = str(current_category or self.cmb_torrent_edit_category.currentText() or "").strip()
+        self.cmb_torrent_edit_category.blockSignals(True)
+        self.cmb_torrent_edit_category.clear()
+        self.cmb_torrent_edit_category.addItems([""] + self.categories)
+        idx = self.cmb_torrent_edit_category.findText(current_text)
+        if idx >= 0:
+            self.cmb_torrent_edit_category.setCurrentIndex(idx)
+        else:
+            self.cmb_torrent_edit_category.setEditText(current_text)
+        self.cmb_torrent_edit_category.blockSignals(False)
+
+    @staticmethod
+    def _torrent_auto_management_value(torrent: Any) -> Optional[bool]:
+        """Extract automatic torrent management state when available."""
+        for key in (
+            "auto_tmm",
+            "auto_management",
+            "automatic_torrent_management",
+            "use_auto_torrent_management",
+        ):
+            raw = getattr(torrent, key, None)
+            if raw is None:
+                continue
+            if isinstance(raw, bool):
+                return raw
+            if isinstance(raw, (int, float)):
+                return bool(raw)
+            text = str(raw).strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            if text in {"0", "false", "no", "off"}:
+                return False
+        return None
+
+    def _populate_torrent_edit_panel(self, torrent: Any):
+        """Populate the editable torrent panel from selected torrent data."""
+        torrent_name = str(getattr(torrent, "name", "") or "").strip()
+        auto_tmm = self._torrent_auto_management_value(torrent)
+        category = str(getattr(torrent, "category", "") or "").strip()
+        tags = parse_tags(getattr(torrent, "tags", None))
+        save_path = str(getattr(torrent, "save_path", "") or "").strip()
+        download_path = str(getattr(torrent, "download_path", "") or "").strip()
+
+        self._torrent_edit_original = {
+            "hash": str(getattr(torrent, "hash", "") or ""),
+            "name": torrent_name,
+            "auto_tmm": auto_tmm,
+            "category": category,
+            "tags": ",".join(tags),
+            "save_path": save_path,
+            "download_path": download_path,
+        }
+
+        if auto_tmm is None:
+            self.chk_torrent_edit_auto_tmm.setCheckState(Qt.CheckState.PartiallyChecked)
+        elif auto_tmm:
+            self.chk_torrent_edit_auto_tmm.setCheckState(Qt.CheckState.Checked)
+        else:
+            self.chk_torrent_edit_auto_tmm.setCheckState(Qt.CheckState.Unchecked)
+
+        self.txt_torrent_edit_name.setText(torrent_name)
+        self._refresh_torrent_edit_categories(category)
+        self.txt_torrent_edit_tags.setText(", ".join(tags))
+        self.txt_torrent_edit_save_path.setText(save_path)
+        self.txt_torrent_edit_incomplete_path.setText(download_path)
+
+        if torrent_name:
+            self._set_torrent_edit_enabled(True, f"Editing [ {torrent_name} ]")
+        else:
+            self._set_torrent_edit_enabled(True, "Editing selected torrent")
+
+    @staticmethod
+    def _normalize_tags_csv(value: str) -> str:
+        """Normalize tag CSV to comma-separated string without extra spaces."""
+        return ",".join(parse_tags(value))
+
+    def _add_tags_to_torrent_edit(self):
+        """Append selected tags from a multi-select dialog into edit tags field."""
+        available_tags = sorted(
+            {str(tag).strip() for tag in list(self.tags or []) if str(tag).strip()},
+            key=lambda value: value.lower(),
+        )
+        if not available_tags:
+            self._set_status("No tags available to add")
+            return
+
+        current_tags = parse_tags(self.txt_torrent_edit_tags.text())
+        selected_tags = self._pick_tags_for_torrent_edit(available_tags, current_tags)
+        if selected_tags is None:
+            return
+
+        merged_tags = list(current_tags)
+        for tag in selected_tags:
+            normalized_tag = str(tag).strip()
+            if normalized_tag and normalized_tag not in merged_tags:
+                merged_tags.append(normalized_tag)
+        self.txt_torrent_edit_tags.setText(", ".join(merged_tags))
+
+    def _pick_tags_for_torrent_edit(self, available_tags: List[str], selected_tags: List[str]) -> Optional[List[str]]:
+        """Show multi-select picker for known tags and return selected values."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add Tags")
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Select tags to add:"))
+
+        list_widget = QListWidget(dialog)
+        list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        selected_set = {str(tag).strip() for tag in list(selected_tags or []) if str(tag).strip()}
+        for tag in available_tags:
+            item = QListWidgetItem(tag)
+            item.setSelected(tag in selected_set)
+            list_widget.addItem(item)
+        layout.addWidget(list_widget)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return [item.text().strip() for item in list_widget.selectedItems() if item.text().strip()]
+
+    def _path_exists_on_local_machine(self, raw_path: Any) -> bool:
+        """Return True when a provided path exists on this machine."""
+        candidate = self._expand_local_path(raw_path)
+        if candidate is None:
+            return False
+        try:
+            return candidate.exists()
+        except Exception:
+            return False
+
+    def _update_torrent_edit_path_browse_buttons(self):
+        """Show browse buttons only for paths that exist on this machine."""
+        save_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_save_path.text())
+        incomplete_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_incomplete_path.text())
+        self.btn_torrent_edit_browse_save_path.setVisible(save_exists)
+        self.btn_torrent_edit_browse_incomplete_path.setVisible(incomplete_exists)
+
+    def _on_detail_tab_changed(self, _index: int):
+        """React to details tab switches that affect auto-refresh policy."""
+        self._sync_auto_refresh_timer_state()
+
+    def _is_torrent_edit_tab_active(self) -> bool:
+        """Return True when Edit tab is selected and active for editing."""
+        if not self.detail_tabs.isEnabled():
+            return False
+        if self.tab_torrent_edit is None:
+            return False
+        if self.detail_tabs.currentWidget() is not self.tab_torrent_edit:
+            return False
+        return self.btn_torrent_edit_apply.isEnabled()
+
+    def _sync_auto_refresh_timer_state(self):
+        """Start/stop refresh timer based on settings and current details context."""
+        if not hasattr(self, "refresh_timer"):
+            return
+        should_run = bool(self.auto_refresh_enabled) and not self._is_torrent_edit_tab_active()
+        interval_seconds = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
+        if should_run:
+            self.refresh_timer.start(interval_seconds * 1000)
+        else:
+            self.refresh_timer.stop()
+
+    @staticmethod
     def _detail_cell_text(value: Any) -> str:
         """Render one trackers/peers cell value to text."""
         if value is None:
@@ -4031,18 +4894,16 @@ class MainWindow(QMainWindow):
             self._set_details_table_message(self.tbl_peers, f"Failed to load peers: {error}")
 
     def _set_details_panels_enabled(self, enabled: bool):
-        """Enable/disable bottom details tabs and edit controls."""
+        """Enable/disable bottom details tabs."""
         self.detail_tabs.setEnabled(bool(enabled))
-        self.edit_name.setEnabled(bool(enabled))
-        self.edit_category.setEnabled(bool(enabled))
-        self.edit_tags.setEnabled(bool(enabled))
-        self.edit_save_path.setEnabled(bool(enabled))
+        self._sync_auto_refresh_timer_state()
 
     def _clear_details_panels(self, reason: str):
         """Clear all details panels with a reason message for trackers/peers."""
         self.txt_general_details.clear()
         self._set_details_table_message(self.tbl_trackers, reason)
         self._set_details_table_message(self.tbl_peers, reason)
+        self._clear_torrent_edit_panel(reason)
         self.current_content_files = []
         self.current_content_filter = ""
         self.tree_files.clear()
@@ -4092,68 +4953,52 @@ class MainWindow(QMainWindow):
             is_private = getattr(torrent, 'is_private', None)
             private_str = 'Yes' if is_private else ('No' if is_private is False else 'N/A')
             num_files = getattr(torrent, 'num_files', 'N/A')
-            content_path = getattr(torrent, 'content_path', 'N/A')
+            content_path = self._display_detail_value(getattr(torrent, 'content_path', None))
             tracker_url = getattr(torrent, 'tracker', '') or ''
             tracker_host = self._tracker_display_text(tracker_url) or 'N/A'
             eta = self._safe_int(getattr(torrent, 'eta', 0), 0)
             eta_str = format_eta(eta) if eta > 0 else 'N/A'
+            progress_pct = self._safe_float(getattr(torrent, 'progress', 0.0), 0.0) * 100.0
+            ratio = self._safe_float(getattr(torrent, 'ratio', 0.0), 0.0)
 
-            details = f"""GENERAL
-{'=' * 80}
-
-Name:           {getattr(torrent, 'name', 'N/A')}
-Hash:           {getattr(torrent, 'hash', 'N/A')}
-State:          {getattr(torrent, 'state', 'N/A')}
-Size:           {format_size_mode(getattr(torrent, 'size', 0), self.display_size_mode)}
-Total Size:     {format_size_mode(getattr(torrent, 'total_size', 0), self.display_size_mode)}
-Progress:       {getattr(torrent, 'progress', 0) * 100:.2f}%
-Private:        {private_str}
-Files:          {num_files}
-
-TRANSFER
-{'=' * 80}
-
-Downloaded:     {format_size_mode(getattr(torrent, 'downloaded', 0), self.display_size_mode)}
-Uploaded:       {format_size_mode(getattr(torrent, 'uploaded', 0), self.display_size_mode)}
-Download Speed: {format_speed_mode(getattr(torrent, 'dlspeed', 0), self.display_speed_mode)}
-Upload Speed:   {format_speed_mode(getattr(torrent, 'upspeed', 0), self.display_speed_mode)}
-Ratio:          {format_float(getattr(torrent, 'ratio', 0), 3)}
-ETA:            {eta_str}
-
-PEERS
-{'=' * 80}
-
-Seeds:          {getattr(torrent, 'num_seeds', 0)} ({getattr(torrent, 'num_complete', 0)})
-Peers:          {getattr(torrent, 'num_leechs', 0)} ({getattr(torrent, 'num_incomplete', 0)})
-
-METADATA
-{'=' * 80}
-
-Tracker Host:   {tracker_host}
-Tracker URL:    {tracker_url or 'N/A'}
-Category:       {getattr(torrent, 'category', 'None')}
-Tags:           {tags_str}
-Added On:       {format_datetime(getattr(torrent, 'added_on', 0))}
-Completion On:  {format_datetime(completion_on) if completion_on > 0 else 'N/A'}
-Last Activity:  {format_datetime(last_activity) if last_activity > 0 else 'N/A'}
-Save Path:      {getattr(torrent, 'save_path', 'N/A')}
-Content Path:   {content_path}
-"""
-            self.txt_general_details.setPlainText(details.strip())
+            sections = [
+                ("GENERAL", [
+                    ("Name", getattr(torrent, 'name', None)),
+                    ("Hash", getattr(torrent, 'hash', None)),
+                    ("State", getattr(torrent, 'state', None)),
+                    ("Size", format_size_mode(getattr(torrent, 'size', 0), self.display_size_mode)),
+                    ("Total Size", format_size_mode(getattr(torrent, 'total_size', 0), self.display_size_mode)),
+                    ("Progress", f"{progress_pct:.2f}%"),
+                    ("Private", private_str),
+                    ("Files", num_files),
+                ]),
+                ("TRANSFER", [
+                    ("Downloaded", format_size_mode(getattr(torrent, 'downloaded', 0), self.display_size_mode)),
+                    ("Uploaded", format_size_mode(getattr(torrent, 'uploaded', 0), self.display_size_mode)),
+                    ("Download Speed", format_speed_mode(getattr(torrent, 'dlspeed', 0), self.display_speed_mode)),
+                    ("Upload Speed", format_speed_mode(getattr(torrent, 'upspeed', 0), self.display_speed_mode)),
+                    ("Ratio", f"{ratio:.3f}"),
+                    ("ETA", eta_str),
+                ]),
+                ("PEERS", [
+                    ("Seeds", f"{getattr(torrent, 'num_seeds', 0)} ({getattr(torrent, 'num_complete', 0)})"),
+                    ("Peers", f"{getattr(torrent, 'num_leechs', 0)} ({getattr(torrent, 'num_incomplete', 0)})"),
+                ]),
+                ("METADATA", [
+                    ("Tracker Host", tracker_host),
+                    ("Tracker URL", tracker_url or 'N/A'),
+                    ("Category", getattr(torrent, 'category', '') or 'None'),
+                    ("Tags", tags_str),
+                    ("Added On", format_datetime(getattr(torrent, 'added_on', 0))),
+                    ("Completion On", format_datetime(completion_on) if completion_on > 0 else 'N/A'),
+                    ("Last Activity", format_datetime(last_activity) if last_activity > 0 else 'N/A'),
+                    ("Save Path", getattr(torrent, 'save_path', None)),
+                    ("Content Path", content_path),
+                ]),
+            ]
+            self.txt_general_details.setHtml(self._build_general_details_html(sections))
             self._load_selected_torrent_network_details(str(torrent.hash))
-
-            # Populate editable fields
-            self.edit_name.setText(getattr(torrent, 'name', ''))
-            self.edit_category.clear()
-            self.edit_category.addItems([''] + self.categories)
-            current_cat = getattr(torrent, 'category', '')
-            idx = self.edit_category.findText(current_cat)
-            if idx >= 0:
-                self.edit_category.setCurrentIndex(idx)
-            else:
-                self.edit_category.setEditText(current_cat)
-            self.edit_tags.setText(', '.join(tags_list))
-            self.edit_save_path.setText(getattr(torrent, 'save_path', ''))
+            self._populate_torrent_edit_panel(torrent)
 
             # Show file content from local cache
             self._show_cached_torrent_content(torrent.hash)
@@ -4162,6 +5007,7 @@ Content Path:   {content_path}
             self.txt_general_details.setPlainText(f"Error displaying details: {e}")
             self._set_details_table_message(self.tbl_trackers, "Failed to render trackers.")
             self._set_details_table_message(self.tbl_peers, "Failed to render peers.")
+            self._clear_torrent_edit_panel("Failed to load torrent for editing.")
 
     # ========================================================================
     # Actions
@@ -4177,35 +5023,93 @@ Content Path:   {content_path}
             else:
                 self._set_status(f"{len(hashes)} hashes copied to clipboard")
 
-    def _save_torrent_properties(self):
-        """Save edited torrent properties via API."""
-        torrent = getattr(self, '_selected_torrent', None)
-        if not torrent:
+    def _browse_torrent_edit_save_path(self):
+        """Browse for a new torrent save path."""
+        initial = self.txt_torrent_edit_save_path.text().strip()
+        selected = QFileDialog.getExistingDirectory(self, "Select Save Path", initial)
+        if selected:
+            self.txt_torrent_edit_save_path.setText(selected)
+
+    def _browse_torrent_edit_incomplete_path(self):
+        """Browse for a new torrent incomplete save path."""
+        initial = self.txt_torrent_edit_incomplete_path.text().strip()
+        selected = QFileDialog.getExistingDirectory(self, "Select Incomplete Save Path", initial)
+        if selected:
+            self.txt_torrent_edit_incomplete_path.setText(selected)
+
+    def _collect_selected_torrent_edit_updates(self) -> Dict[str, Any]:
+        """Collect changed edit fields for currently selected torrent."""
+        original = dict(self._torrent_edit_original or {})
+        updates: Dict[str, Any] = {}
+
+        new_name = str(self.txt_torrent_edit_name.text() or "").strip()
+        if new_name != str(original.get("name", "") or "").strip():
+            updates["name"] = new_name
+
+        auto_state = self.chk_torrent_edit_auto_tmm.checkState()
+        new_auto: Optional[bool]
+        if auto_state == Qt.CheckState.PartiallyChecked:
+            new_auto = None
+        else:
+            new_auto = auto_state == Qt.CheckState.Checked
+        old_auto = original.get("auto_tmm")
+        if new_auto is not None and new_auto != old_auto:
+            updates["auto_tmm"] = new_auto
+
+        new_category = str(self.cmb_torrent_edit_category.currentText() or "").strip()
+        if new_category != str(original.get("category", "") or ""):
+            updates["category"] = new_category
+
+        new_tags = self._normalize_tags_csv(self.txt_torrent_edit_tags.text())
+        if new_tags != str(original.get("tags", "") or ""):
+            updates["tags"] = new_tags
+
+        new_save_path = str(self.txt_torrent_edit_save_path.text() or "").strip()
+        if new_save_path != str(original.get("save_path", "") or ""):
+            updates["save_path"] = new_save_path
+
+        new_download_path = str(self.txt_torrent_edit_incomplete_path.text() or "").strip()
+        if new_download_path != str(original.get("download_path", "") or ""):
+            updates["download_path"] = new_download_path
+
+        return updates
+
+    def _apply_selected_torrent_edits(self):
+        """Apply torrent edits for exactly one selected torrent."""
+        selected_hashes = self._get_selected_torrent_hashes()
+        if len(selected_hashes) != 1:
+            self._set_status("Select exactly one torrent to apply edits")
             return
-        props = {}
-        new_name = self.edit_name.text().strip()
-        if new_name and new_name != getattr(torrent, 'name', ''):
-            props['name'] = new_name
-        new_cat = self.edit_category.currentText()
-        if new_cat != getattr(torrent, 'category', ''):
-            props['category'] = new_cat
-        new_tags = self.edit_tags.text().strip()
-        old_tags = ', '.join(parse_tags(getattr(torrent, 'tags', None)))
-        if new_tags != old_tags:
-            props['tags'] = new_tags
-        new_path = self.edit_save_path.text().strip()
-        if new_path and new_path != getattr(torrent, 'save_path', ''):
-            props['save_path'] = new_path
-        if not props:
-            self._set_status("No changes to save")
+
+        torrent_hash = selected_hashes[0]
+        selected = getattr(self, "_selected_torrent", None)
+        selected_hash = str(getattr(selected, "hash", "") or "")
+        if not selected_hash or selected_hash != torrent_hash:
+            selected = self._find_torrent_by_hash(torrent_hash)
+            if selected is None:
+                self._set_status("Selected torrent is no longer available")
+                return
+            self._selected_torrent = selected
+
+        current_name = str(self.txt_torrent_edit_name.text() or "").strip()
+        original_name = str(self._torrent_edit_original.get("name", "") or "").strip()
+        if current_name != original_name and not current_name:
+            self._set_status("Torrent name cannot be empty")
             return
-        self._log("INFO", f"Saving properties for {torrent.hash}: {list(props.keys())}")
-        self._show_progress("Saving properties...")
+
+        updates = self._collect_selected_torrent_edit_updates()
+        if not updates:
+            self._set_status("No changes to apply")
+            return
+
+        self._log("INFO", f"Applying edits for {torrent_hash}: {list(updates.keys())}")
+        self._show_progress("Applying torrent edits...")
         self.api_queue.add_task(
-            "save_properties",
-            self._api_save_torrent_properties,
-            self._on_save_properties_done,
-            torrent.hash, props
+            "apply_selected_torrent_edits",
+            self._api_apply_selected_torrent_edits,
+            self._on_apply_selected_torrent_edits_done,
+            torrent_hash,
+            updates,
         )
 
     def _refresh_torrents(self):
@@ -4647,6 +5551,8 @@ Content Path:   {content_path}
         """Populate speed limits dialog from API response."""
         if result.get("success"):
             data = result.get("data", {}) or {}
+            self._last_alt_speed_mode = bool(data.get("alt_enabled", self._last_alt_speed_mode))
+            self._record_session_timeline_sample(self._last_alt_speed_mode)
             dialog = self._speed_limits_dialog
             if dialog is not None and dialog.isVisible():
                 dialog.set_values(
@@ -4696,6 +5602,120 @@ Content Path:   {content_path}
         error = result.get("error", "Unknown error")
         self._set_status(f"Failed to apply speed limits: {error}")
         self._set_speed_limits_dialog_busy(False, f"Failed: {error}")
+        self._hide_progress()
+
+    def _record_session_timeline_sample(self, alt_enabled: Optional[bool] = None):
+        """Record one session timeline sample from current torrent list."""
+        total_down = 0
+        total_up = 0
+        active_count = 0
+        for torrent in self.all_torrents:
+            down = self._safe_int(getattr(torrent, "dlspeed", 0), 0)
+            up = self._safe_int(getattr(torrent, "upspeed", 0), 0)
+            total_down += down
+            total_up += up
+            if down > 0 or up > 0:
+                active_count += 1
+
+        alt_mode = self._last_alt_speed_mode if alt_enabled is None else bool(alt_enabled)
+        sample = {
+            "ts": time.time(),
+            "down_bps": int(total_down),
+            "up_bps": int(total_up),
+            "active_count": int(active_count),
+            "alt_enabled": bool(alt_mode),
+        }
+        self.session_timeline_history.append(sample)
+
+        dialog = self._session_timeline_dialog
+        if dialog is not None and dialog.isVisible():
+            dialog.set_samples(list(self.session_timeline_history))
+
+    def _show_session_timeline(self):
+        """Open session timeline dialog."""
+        if self._session_timeline_dialog is not None and self._session_timeline_dialog.isVisible():
+            self._session_timeline_dialog.raise_()
+            self._session_timeline_dialog.activateWindow()
+            self._session_timeline_dialog.set_samples(list(self.session_timeline_history))
+            return
+
+        dialog = SessionTimelineDialog(self)
+        dialog.refresh_requested.connect(self._refresh_torrents)
+        dialog.clear_requested.connect(self._clear_session_timeline_history)
+        dialog.finished.connect(self._on_session_timeline_dialog_closed)
+        dialog.set_samples(list(self.session_timeline_history))
+        self._session_timeline_dialog = dialog
+        dialog.show()
+
+    def _on_session_timeline_dialog_closed(self, _result: int):
+        """Clear timeline dialog reference on close."""
+        self._session_timeline_dialog = None
+
+    def _clear_session_timeline_history(self):
+        """Clear stored session timeline samples."""
+        self.session_timeline_history.clear()
+        dialog = self._session_timeline_dialog
+        if dialog is not None and dialog.isVisible():
+            dialog.set_samples([])
+
+    def _show_tracker_health_dashboard(self):
+        """Open tracker health dashboard dialog."""
+        if self._tracker_health_dialog is not None and self._tracker_health_dialog.isVisible():
+            self._tracker_health_dialog.raise_()
+            self._tracker_health_dialog.activateWindow()
+            self._request_tracker_health_refresh()
+            return
+
+        dialog = TrackerHealthDialog(self)
+        dialog.refresh_requested.connect(self._request_tracker_health_refresh)
+        dialog.finished.connect(self._on_tracker_health_dialog_closed)
+        self._tracker_health_dialog = dialog
+        dialog.show()
+        self._request_tracker_health_refresh()
+
+    def _on_tracker_health_dialog_closed(self, _result: int):
+        """Clear tracker-health dialog reference on close."""
+        self._tracker_health_dialog = None
+
+    def _set_tracker_health_dialog_busy(self, busy: bool, message: str = ""):
+        """Set tracker-health dialog busy state."""
+        dialog = self._tracker_health_dialog
+        if dialog is None:
+            return
+        if not dialog.isVisible():
+            return
+        dialog.set_busy(bool(busy), message)
+
+    def _request_tracker_health_refresh(self):
+        """Queue tracker health aggregation for all currently known torrents."""
+        torrent_hashes = [
+            str(getattr(torrent, "hash", "") or "").strip()
+            for torrent in self.all_torrents
+            if str(getattr(torrent, "hash", "") or "").strip()
+        ]
+        self._show_progress("Loading tracker health dashboard...")
+        self._set_tracker_health_dialog_busy(True, "Loading tracker health...")
+        self.analytics_api_queue.add_task(
+            "tracker_health_dashboard",
+            self._fetch_tracker_health_data,
+            self._on_tracker_health_loaded,
+            torrent_hashes,
+        )
+
+    def _on_tracker_health_loaded(self, result: Dict):
+        """Render tracker health dashboard data."""
+        dialog = self._tracker_health_dialog
+        if result.get("success"):
+            rows = result.get("data", [])
+            if dialog is not None and dialog.isVisible():
+                dialog.set_rows(rows if isinstance(rows, list) else [])
+                dialog.set_busy(False)
+            self._set_status("Tracker health loaded")
+        else:
+            error = result.get("error", "Unknown error")
+            if dialog is not None and dialog.isVisible():
+                dialog.set_busy(False, f"Failed: {error}")
+            self._set_status(f"Tracker health failed: {error}")
         self._hide_progress()
 
     def _set_global_download_limit(self):
@@ -4932,7 +5952,7 @@ Content Path:   {content_path}
             return
 
         dialog = TaxonomyManagerDialog(self)
-        dialog.set_taxonomy_data(self._taxonomy_category_paths(), list(self.tags))
+        dialog.set_taxonomy_data(self._taxonomy_category_data(), list(self.tags))
         dialog.create_category_requested.connect(self._on_taxonomy_create_category_requested)
         dialog.edit_category_requested.connect(self._on_taxonomy_edit_category_requested)
         dialog.delete_category_requested.connect(self._on_taxonomy_delete_category_requested)
@@ -4946,32 +5966,60 @@ Content Path:   {content_path}
         """Clear dialog reference when closed."""
         self._taxonomy_dialog = None
 
-    def _on_taxonomy_create_category_requested(self, name: str, save_path: str):
+    def _on_taxonomy_create_category_requested(
+        self,
+        name: str,
+        save_path: str,
+        incomplete_path: str,
+        use_incomplete_path: bool,
+    ):
         """Handle create-category request from manager dialog."""
         normalized_name = str(name or "").strip()
+        normalized_save = str(save_path or "").strip()
+        normalized_incomplete = str(incomplete_path or "").strip()
+        use_incomplete = bool(use_incomplete_path)
         if not normalized_name:
             self._set_taxonomy_dialog_busy(False, "Category name cannot be empty.")
+            return
+        if use_incomplete and not normalized_incomplete:
+            self._set_taxonomy_dialog_busy(False, "Incomplete path is enabled but empty.")
             return
         self._queue_taxonomy_action(
             "create_category",
             self._api_create_category,
             "Create Category",
             normalized_name,
-            str(save_path or "").strip(),
+            normalized_save,
+            normalized_incomplete,
+            use_incomplete,
         )
 
-    def _on_taxonomy_edit_category_requested(self, name: str, save_path: str):
+    def _on_taxonomy_edit_category_requested(
+        self,
+        name: str,
+        save_path: str,
+        incomplete_path: str,
+        use_incomplete_path: bool,
+    ):
         """Handle edit-category request from manager dialog."""
         normalized_name = str(name or "").strip()
+        normalized_save = str(save_path or "").strip()
+        normalized_incomplete = str(incomplete_path or "").strip()
+        use_incomplete = bool(use_incomplete_path)
         if not normalized_name:
             self._set_taxonomy_dialog_busy(False, "Select a category to update.")
+            return
+        if use_incomplete and not normalized_incomplete:
+            self._set_taxonomy_dialog_busy(False, "Incomplete path is enabled but empty.")
             return
         self._queue_taxonomy_action(
             "edit_category",
             self._api_edit_category,
             "Edit Category",
             normalized_name,
-            str(save_path or "").strip(),
+            normalized_save,
+            normalized_incomplete,
+            use_incomplete,
         )
 
     def _on_taxonomy_delete_category_requested(self, name: str):
@@ -5226,10 +6274,7 @@ Content Path:   {content_path}
                 self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
                 self.action_auto_refresh.blockSignals(action_signals)
 
-            if self.auto_refresh_enabled:
-                self.refresh_timer.start(self.refresh_interval * 1000)
-            else:
-                self.refresh_timer.stop()
+            self._sync_auto_refresh_timer_state()
 
             # Persist and refresh data using default status/category/tag filters.
             self._save_settings()
@@ -5282,8 +6327,7 @@ Content Path:   {content_path}
                 return
 
             self.refresh_interval = int(seconds)
-            if self.auto_refresh_enabled:
-                self.refresh_timer.start(self.refresh_interval * 1000)
+            self._sync_auto_refresh_timer_state()
 
             self._log("INFO", f"Auto-refresh interval set to {self.refresh_interval}s")
             self._set_status(f"Auto-refresh interval: {self.refresh_interval}s")
@@ -5296,10 +6340,13 @@ Content Path:   {content_path}
         """Toggle auto-refresh"""
         self.auto_refresh_enabled = checked
         if checked:
-            self.refresh_timer.start(self.refresh_interval * 1000)
-            self._log("INFO", f"Auto-refresh enabled ({self.refresh_interval}s)")
+            self._sync_auto_refresh_timer_state()
+            if self.refresh_timer.isActive():
+                self._log("INFO", f"Auto-refresh enabled ({self.refresh_interval}s)")
+            else:
+                self._log("INFO", "Auto-refresh enabled and paused on Edit tab")
         else:
-            self.refresh_timer.stop()
+            self._sync_auto_refresh_timer_state()
             self._log("INFO", "Auto-refresh disabled")
         self._save_refresh_settings()
 

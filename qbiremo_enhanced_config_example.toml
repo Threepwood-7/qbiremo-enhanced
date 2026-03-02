@@ -2,8 +2,6 @@
 # Copy/rename to: qbiremo_enhanced_config.toml
 
 # qBittorrent Connection Settings
-# These can also be set via environment variables:
-# X_LOCAL_IP, X_QB_PORT, X_QB_USER, X_QB_PASS
 #
 # qb_host can be a plain hostname/IP or a full URL with scheme:
 #   qb_host = "127.0.0.1"
