@@ -1161,6 +1161,7 @@ class MainWindow(QMainWindow):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.itemSelectionChanged.connect(self._on_torrent_selected)
+        table.itemDoubleClicked.connect(self._on_torrent_table_item_double_clicked)
 
         headers = [col["label"] for col in self.torrent_columns]
         table.setColumnCount(len(headers))
@@ -3471,7 +3472,14 @@ Content Path:   {content_path}
                 self._set_status("Select one torrent to open its local directory")
             return
 
-        torrent_hash = selected_hashes[0]
+        self._open_torrent_location_by_hash(selected_hashes[0])
+
+    def _open_torrent_location_by_hash(self, torrent_hash: str):
+        """Open local torrent directory for one hash when available."""
+        if not torrent_hash:
+            self._set_status("Selected torrent was not found")
+            return
+
         torrent = self._find_torrent_by_hash(torrent_hash)
         if torrent is None:
             self._set_status("Selected torrent was not found")
@@ -3484,6 +3492,14 @@ Content Path:   {content_path}
 
         _open_file_in_default_app(str(local_dir))
         self._set_status(f"Opened local directory: {local_dir}")
+
+    def _on_torrent_table_item_double_clicked(self, item: QTableWidgetItem):
+        """Open local torrent directory for the row that was double-clicked."""
+        if item is None:
+            return
+        hash_item = self.tbl_torrents.item(item.row(), 0)
+        torrent_hash = hash_item.text().strip() if hash_item else ""
+        self._open_torrent_location_by_hash(torrent_hash)
 
     def _on_content_tree_item_activated(self, item: QTreeWidgetItem, _column: int):
         """Open activated content-tree item (Enter/double-click behavior)."""
