@@ -11,6 +11,7 @@ import atexit
 import json
 import logging
 import traceback
+import tempfile
 import base64
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,7 @@ DEFAULT_AUTO_REFRESH = False
 DEFAULT_STATUS_FILTER = 'active'
 DEFAULT_DISPLAY_SIZE_MODE = 'human_readable'
 DEFAULT_DISPLAY_SPEED_MODE = 'human_readable'
+CACHE_TEMP_SUBDIR = "qbiremo_enhanced_temp"
 CACHE_FILE_NAME = "qbiremo_enhanced.cache"
 
 logger = logging.getLogger(G_APP_NAME)
@@ -672,6 +674,14 @@ def format_eta(seconds: int) -> str:
     return f"{secs}s"
 
 
+def resolve_cache_file_path(cache_file_name: str = CACHE_FILE_NAME) -> Path:
+    """Resolve cache file path under OS temp dir unless absolute override is used."""
+    raw_path = Path(str(cache_file_name))
+    if raw_path.is_absolute():
+        return raw_path
+    return Path(tempfile.gettempdir()) / CACHE_TEMP_SUBDIR / raw_path
+
+
 def parse_tags(tags) -> List[str]:
     """Parse tags from qBittorrentAPI into a list of strings.
 
@@ -789,7 +799,7 @@ class MainWindow(QMainWindow):
         self._suppress_next_cache_save = False
 
         # Persistent per-torrent content cache (JSON file)
-        self.cache_file_path = Path(CACHE_FILE_NAME)
+        self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME)
         self.content_cache: Dict[str, Dict[str, Any]] = {}
         self._load_content_cache()
 
@@ -1140,10 +1150,8 @@ class MainWindow(QMainWindow):
         table.setAlternatingRowColors(True)
         table.setSortingEnabled(True)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         table.itemSelectionChanged.connect(self._on_torrent_selected)
-        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        table.customContextMenuRequested.connect(self._show_torrent_context_menu)
 
         headers = [col["label"] for col in self.torrent_columns]
         table.setColumnCount(len(headers))
@@ -1251,6 +1259,38 @@ class MainWindow(QMainWindow):
         action_stop.setShortcut("Ctrl+P")
         action_stop.triggered.connect(self._pause_torrent)
         edit_menu.addAction(action_stop)
+
+        action_force_start = QAction("&Force Start", self)
+        action_force_start.setShortcut("Ctrl+M")
+        action_force_start.triggered.connect(self._force_start_torrent)
+        edit_menu.addAction(action_force_start)
+
+        action_recheck = QAction("Re&check", self)
+        action_recheck.setShortcut("Ctrl+R")
+        action_recheck.triggered.connect(self._recheck_torrent)
+        edit_menu.addAction(action_recheck)
+
+        action_increase_priority = QAction("&Increase Priority in Queue", self)
+        action_increase_priority.setShortcut("Ctrl++")
+        action_increase_priority.triggered.connect(self._increase_torrent_priority)
+        edit_menu.addAction(action_increase_priority)
+
+        action_decrease_priority = QAction("&Decrease Priority in Queue", self)
+        action_decrease_priority.setShortcut("Ctrl+-")
+        action_decrease_priority.triggered.connect(self._decrease_torrent_priority)
+        edit_menu.addAction(action_decrease_priority)
+
+        action_top_priority = QAction("&Top Priority in Queue", self)
+        action_top_priority.setShortcut("Ctrl+Shift++")
+        action_top_priority.triggered.connect(self._top_torrent_priority)
+        edit_menu.addAction(action_top_priority)
+
+        action_bottom_priority = QAction("Mi&nimum Priority in Queue", self)
+        action_bottom_priority.setShortcut("Ctrl+Shift+-")
+        action_bottom_priority.triggered.connect(self._minimum_torrent_priority)
+        edit_menu.addAction(action_bottom_priority)
+
+        edit_menu.addSeparator()
 
         action_remove = QAction("Remo&ve", self)
         action_remove.setShortcut("Del")
@@ -1466,6 +1506,7 @@ class MainWindow(QMainWindow):
     def _save_content_cache(self):
         """Persist content cache to disk as JSON."""
         try:
+            self.cache_file_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = Path(f"{self.cache_file_path}.tmp")
             tmp_path.write_text(
                 json.dumps(self.content_cache, ensure_ascii=False, indent=2),
@@ -1921,24 +1962,96 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _api_pause_torrent(self, torrent_hash: str, **_kw) -> Dict:
-        """Pause a torrent via API."""
+    def _api_pause_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Pause one or more torrents via API."""
         start_time = time.time()
         try:
             with self._create_client() as qb:
-                qb.torrents_pause(torrent_hashes=[torrent_hash])
+                qb.torrents_pause(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return {'data': True, 'elapsed': elapsed, 'success': True}
         except Exception as e:
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _api_resume_torrent(self, torrent_hash: str, **_kw) -> Dict:
-        """Resume a torrent via API."""
+    def _api_resume_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Resume one or more torrents via API."""
         start_time = time.time()
         try:
             with self._create_client() as qb:
-                qb.torrents_resume(torrent_hashes=[torrent_hash])
+                qb.torrents_resume(torrent_hashes=list(torrent_hashes))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_force_start_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Enable force start for one or more torrents via API."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_set_force_start(enable=True, torrent_hashes=list(torrent_hashes))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_recheck_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Recheck one or more torrents via API."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_recheck(torrent_hashes=list(torrent_hashes))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_increase_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Increase queue priority for one or more torrents via API."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_increase_priority(torrent_hashes=list(torrent_hashes))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_decrease_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Decrease queue priority for one or more torrents via API."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_decrease_priority(torrent_hashes=list(torrent_hashes))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_top_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Move one or more torrents to top queue priority via API."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_top_priority(torrent_hashes=list(torrent_hashes))
+            elapsed = time.time() - start_time
+            return {'data': True, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_minimum_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
+        """Move one or more torrents to minimum queue priority via API."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                qb.torrents_bottom_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return {'data': True, 'elapsed': elapsed, 'success': True}
         except Exception as e:
@@ -1969,12 +2082,12 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _api_delete_torrent(self, torrent_hash: str, delete_files: bool, **_kw) -> Dict:
-        """Delete a torrent via API."""
+    def _api_delete_torrent(self, torrent_hashes: List[str], delete_files: bool, **_kw) -> Dict:
+        """Delete one or more torrents via API."""
         start_time = time.time()
         try:
             with self._create_client() as qb:
-                qb.torrents_delete(torrent_hashes=[torrent_hash], delete_files=delete_files)
+                qb.torrents_delete(torrent_hashes=list(torrent_hashes), delete_files=delete_files)
             elapsed = time.time() - start_time
             return {'data': True, 'elapsed': elapsed, 'success': True}
         except Exception as e:
@@ -2128,6 +2241,7 @@ class MainWindow(QMainWindow):
 
             # Apply filters and update table
             self._apply_filters()
+            self._select_first_torrent_after_refresh()
             self._hide_progress()
         except Exception as e:
             self._log("ERROR", f"Exception in _on_torrents_loaded: {e}")
@@ -2138,6 +2252,13 @@ class MainWindow(QMainWindow):
             self.filtered_torrents = []
             self._update_window_title_speeds()
             self._update_torrents_table()
+
+    def _select_first_torrent_after_refresh(self):
+        """After a list refresh, select the first torrent row when available."""
+        if self.tbl_torrents.rowCount() <= 0:
+            return
+        self.tbl_torrents.clearSelection()
+        self.tbl_torrents.selectRow(0)
 
     def _on_content_cache_refreshed(self, result: Dict):
         """Handle background refresh of cached torrent content trees."""
@@ -2864,20 +2985,44 @@ class MainWindow(QMainWindow):
             error = result.get('error', 'Unknown error')
             self._set_details_table_message(self.tbl_peers, f"Failed to load peers: {error}")
 
+    def _set_details_panels_enabled(self, enabled: bool):
+        """Enable/disable bottom details tabs and edit controls."""
+        self.detail_tabs.setEnabled(bool(enabled))
+        self.edit_name.setEnabled(bool(enabled))
+        self.edit_category.setEnabled(bool(enabled))
+        self.edit_tags.setEnabled(bool(enabled))
+        self.edit_save_path.setEnabled(bool(enabled))
+
+    def _clear_details_panels(self, reason: str):
+        """Clear all details panels with a reason message for trackers/peers."""
+        self.txt_general_details.clear()
+        self._set_details_table_message(self.tbl_trackers, reason)
+        self._set_details_table_message(self.tbl_peers, reason)
+        self.current_content_files = []
+        self.current_content_filter = ""
+        self.tree_files.clear()
+        previous = self.txt_content_filter.blockSignals(True)
+        self.txt_content_filter.clear()
+        self.txt_content_filter.blockSignals(previous)
+
     def _on_torrent_selected(self):
         """Handle torrent selection in table"""
-        selected = self.tbl_torrents.selectedItems()
-        if not selected:
+        selected_hashes = self._get_selected_torrent_hashes()
+        if not selected_hashes:
             self._selected_torrent = None
-            self.txt_general_details.clear()
-            self._set_details_table_message(self.tbl_trackers, "No torrent selected.")
-            self._set_details_table_message(self.tbl_peers, "No torrent selected.")
-            self.current_content_files = []
-            self.tree_files.clear()
+            self._set_details_panels_enabled(True)
+            self._clear_details_panels("No torrent selected.")
             return
 
-        row = selected[0].row()
-        torrent_hash = self.tbl_torrents.item(row, 0).text()
+        if len(selected_hashes) > 1:
+            self._selected_torrent = None
+            self._clear_details_panels("Multiple torrents selected.")
+            self._set_details_panels_enabled(False)
+            self._set_status(f"{len(selected_hashes)} torrents selected")
+            return
+
+        self._set_details_panels_enabled(True)
+        torrent_hash = selected_hashes[0]
 
         # Find torrent in filtered list
         torrent = None
@@ -2892,6 +3037,7 @@ class MainWindow(QMainWindow):
     def _display_torrent_details(self, torrent):
         """Display detailed information about selected torrent."""
         self._selected_torrent = torrent
+        self._set_details_panels_enabled(True)
         try:
             tags_list = parse_tags(getattr(torrent, 'tags', None))
             tags_str = ', '.join(tags_list) if tags_list else 'None'
@@ -2976,26 +3122,15 @@ Content Path:   {content_path}
     # Actions
     # ========================================================================
 
-    def _show_torrent_context_menu(self, pos):
-        """Show right-click context menu on the torrent table."""
-        item = self.tbl_torrents.itemAt(pos)
-        if not item:
-            return
-        menu = QMenu(self)
-        menu.addAction("Pause", self._pause_torrent)
-        menu.addAction("Resume", self._resume_torrent)
-        menu.addSeparator()
-        menu.addAction("Delete...", self._delete_torrent)
-        menu.addSeparator()
-        menu.addAction("Copy Hash", self._copy_torrent_hash)
-        menu.exec(self.tbl_torrents.viewport().mapToGlobal(pos))
-
     def _copy_torrent_hash(self):
         """Copy selected torrent hash to clipboard."""
-        torrent_hash = self._get_selected_torrent_hash()
-        if torrent_hash:
-            QApplication.clipboard().setText(torrent_hash)
-            self._set_status("Hash copied to clipboard")
+        hashes = self._get_selected_torrent_hashes()
+        if hashes:
+            QApplication.clipboard().setText("\n".join(hashes))
+            if len(hashes) == 1:
+                self._set_status("Hash copied to clipboard")
+            else:
+                self._set_status(f"{len(hashes)} hashes copied to clipboard")
 
     def _save_torrent_properties(self):
         """Save edited torrent properties via API."""
@@ -3057,12 +3192,25 @@ Content Path:   {content_path}
 
     def _get_selected_torrent_hash(self) -> Optional[str]:
         """Get the hash of the currently selected torrent, or None."""
-        selected = self.tbl_torrents.selectedItems()
-        if not selected:
+        hashes = self._get_selected_torrent_hashes()
+        if not hashes:
             return None
-        row = selected[0].row()
-        item = self.tbl_torrents.item(row, 0)
-        return item.text() if item else None
+        return hashes[0]
+
+    def _get_selected_torrent_hashes(self) -> List[str]:
+        """Get unique selected torrent hashes preserving current row order."""
+        hashes: List[str] = []
+        seen = set()
+
+        sel_model = self.tbl_torrents.selectionModel()
+        if sel_model:
+            for idx in sel_model.selectedRows(0):
+                item = self.tbl_torrents.item(idx.row(), 0)
+                torrent_hash = item.text() if item else ""
+                if torrent_hash and torrent_hash not in seen:
+                    seen.add(torrent_hash)
+                    hashes.append(torrent_hash)
+        return hashes
 
     def _on_torrent_action_done(self, action_name: str, result: Dict):
         """Generic callback for pause/resume/delete actions."""
@@ -3075,31 +3223,101 @@ Content Path:   {content_path}
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
 
+    def _queue_bulk_torrent_action(self, task_name: str, api_method, action_name: str,
+                                   singular_progress: str, plural_progress: str):
+        """Queue a bulk action for currently selected torrents."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
+            return
+        count = len(torrent_hashes)
+        self._log("INFO", f"{action_name}: {count} torrent(s)")
+        self._show_progress(singular_progress if count == 1 else plural_progress.format(count=count))
+        self.api_queue.add_task(
+            task_name,
+            api_method,
+            lambda r: self._on_torrent_action_done(action_name, r),
+            torrent_hashes
+        )
+
     def _pause_torrent(self):
-        """Pause selected torrent"""
-        torrent_hash = self._get_selected_torrent_hash()
-        if torrent_hash:
-            self._log("INFO", f"Pausing torrent: {torrent_hash}")
-            self._show_progress("Pausing torrent...")
-            self.api_queue.add_task(
-                "pause_torrent",
-                self._api_pause_torrent,
-                lambda r: self._on_torrent_action_done("Pause", r),
-                torrent_hash
-            )
+        """Pause selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "pause_torrent",
+            self._api_pause_torrent,
+            "Pause",
+            "Pausing torrent...",
+            "Pausing {count} torrents...",
+        )
 
     def _resume_torrent(self):
-        """Resume selected torrent"""
-        torrent_hash = self._get_selected_torrent_hash()
-        if torrent_hash:
-            self._log("INFO", f"Resuming torrent: {torrent_hash}")
-            self._show_progress("Resuming torrent...")
-            self.api_queue.add_task(
-                "resume_torrent",
-                self._api_resume_torrent,
-                lambda r: self._on_torrent_action_done("Resume", r),
-                torrent_hash
-            )
+        """Resume selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "resume_torrent",
+            self._api_resume_torrent,
+            "Resume",
+            "Resuming torrent...",
+            "Resuming {count} torrents...",
+        )
+
+    def _force_start_torrent(self):
+        """Force-start selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "force_start_torrent",
+            self._api_force_start_torrent,
+            "Force Start",
+            "Force-starting torrent...",
+            "Force-starting {count} torrents...",
+        )
+
+    def _recheck_torrent(self):
+        """Recheck selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "recheck_torrent",
+            self._api_recheck_torrent,
+            "Recheck",
+            "Rechecking torrent...",
+            "Rechecking {count} torrents...",
+        )
+
+    def _increase_torrent_priority(self):
+        """Increase queue priority for selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "increase_torrent_priority",
+            self._api_increase_torrent_priority,
+            "Increase Priority",
+            "Increasing queue priority...",
+            "Increasing queue priority for {count} torrents...",
+        )
+
+    def _decrease_torrent_priority(self):
+        """Decrease queue priority for selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "decrease_torrent_priority",
+            self._api_decrease_torrent_priority,
+            "Decrease Priority",
+            "Decreasing queue priority...",
+            "Decreasing queue priority for {count} torrents...",
+        )
+
+    def _top_torrent_priority(self):
+        """Set top queue priority for selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "top_torrent_priority",
+            self._api_top_torrent_priority,
+            "Top Priority",
+            "Setting top queue priority...",
+            "Setting top queue priority for {count} torrents...",
+        )
+
+    def _minimum_torrent_priority(self):
+        """Set minimum queue priority for selected torrent(s)."""
+        self._queue_bulk_torrent_action(
+            "minimum_torrent_priority",
+            self._api_minimum_torrent_priority,
+            "Minimum Priority",
+            "Setting minimum queue priority...",
+            "Setting minimum queue priority for {count} torrents...",
+        )
 
     def _pause_session(self):
         """Pause all torrents in current session."""
@@ -3121,80 +3339,87 @@ Content Path:   {content_path}
             lambda r: self._on_torrent_action_done("Resume Session", r),
         )
 
-    def _queue_delete_torrent(self, torrent_hash: str, delete_files: bool,
-                              action_name: str, progress_text: str):
-        """Queue deletion for selected torrent with explicit delete-files mode."""
-        self._log("INFO", f"{action_name}: {torrent_hash} (files={delete_files})")
+    def _queue_delete_torrents(self, torrent_hashes: List[str], delete_files: bool,
+                               action_name: str, progress_text: str):
+        """Queue deletion for selected torrent(s) with explicit delete-files mode."""
+        self._log(
+            "INFO",
+            f"{action_name}: {len(torrent_hashes)} torrent(s) (files={delete_files})"
+        )
         self._show_progress(progress_text)
         task_name = "delete_torrent_with_data" if delete_files else "delete_torrent"
         self.api_queue.add_task(
             task_name,
             self._api_delete_torrent,
             lambda r: self._on_torrent_action_done(action_name, r),
-            torrent_hash, delete_files
+            torrent_hashes, delete_files
         )
 
     def _remove_torrent(self):
-        """Remove selected torrent and keep data on disk."""
-        torrent_hash = self._get_selected_torrent_hash()
-        if not torrent_hash:
+        """Remove selected torrent(s) and keep data on disk."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
             return
         reply = QMessageBox.question(
             self,
-            "Remove Torrent",
-            "Remove selected torrent from qBittorrent and keep data on disk?",
+            "Remove Torrent(s)",
+            f"Remove {len(torrent_hashes)} selected torrent(s) from qBittorrent and keep data on disk?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self._queue_delete_torrent(
-            torrent_hash,
+        self._queue_delete_torrents(
+            torrent_hashes,
             delete_files=False,
             action_name="Remove",
-            progress_text="Removing torrent..."
+            progress_text="Removing torrent..." if len(torrent_hashes) == 1 else f"Removing {len(torrent_hashes)} torrents..."
         )
 
     def _remove_torrent_and_delete_data(self):
-        """Remove selected torrent and delete data from disk."""
-        torrent_hash = self._get_selected_torrent_hash()
-        if not torrent_hash:
+        """Remove selected torrent(s) and delete data from disk."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
             return
         reply = QMessageBox.question(
             self,
             "Remove And Delete Data",
-            "Remove selected torrent and delete its data from disk?",
+            f"Remove {len(torrent_hashes)} selected torrent(s) and delete data from disk?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        self._queue_delete_torrent(
-            torrent_hash,
+        self._queue_delete_torrents(
+            torrent_hashes,
             delete_files=True,
             action_name="Remove + Delete Data",
-            progress_text="Removing torrent and deleting data..."
+            progress_text=(
+                "Removing torrent and deleting data..."
+                if len(torrent_hashes) == 1
+                else f"Removing {len(torrent_hashes)} torrents and deleting data..."
+            )
         )
 
     def _delete_torrent(self):
-        """Delete selected torrent with confirmation"""
-        torrent_hash = self._get_selected_torrent_hash()
-        if not torrent_hash:
+        """Delete selected torrent(s) with confirmation."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
             return
         reply = QMessageBox.question(
-            self, "Delete Torrent",
-            "Delete torrent and its files from disk?",
+            self, "Delete Torrent(s)",
+            f"Delete {len(torrent_hashes)} selected torrent(s) and their files from disk?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel
         )
         if reply == QMessageBox.StandardButton.Cancel:
             return
         delete_files = (reply == QMessageBox.StandardButton.Yes)
-        self._queue_delete_torrent(
-            torrent_hash,
+        self._queue_delete_torrents(
+            torrent_hashes,
             delete_files=delete_files,
             action_name="Delete",
-            progress_text="Deleting torrent..."
+            progress_text="Deleting torrent..." if len(torrent_hashes) == 1 else f"Deleting {len(torrent_hashes)} torrents..."
         )
 
     # ========================================================================
