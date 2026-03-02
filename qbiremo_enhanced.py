@@ -4681,6 +4681,14 @@ class MainWindow(QMainWindow):
         """Show multi-select picker for known tags and return selected values."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Tags")
+        parent_rect = self.frameGeometry()
+        parent_width = parent_rect.width() if parent_rect.width() > 0 else max(1, self.width())
+        parent_height = parent_rect.height() if parent_rect.height() > 0 else max(1, self.height())
+        dialog_width = 212
+        dialog_height = max(1, int(parent_height * 0.90))
+        dialog_x = parent_rect.x() + int(parent_width * 0.70)
+        dialog_y = parent_rect.y() + max(0, (parent_height - dialog_height) // 2)
+        dialog.setGeometry(dialog_x, dialog_y, dialog_width, dialog_height)
 
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel("Select tags to add:"))
