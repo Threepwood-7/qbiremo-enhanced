@@ -57,6 +57,7 @@ DEFAULT_DISPLAY_SIZE_MODE = 'bytes'
 DEFAULT_DISPLAY_SPEED_MODE = 'bytes'
 CACHE_TEMP_SUBDIR = "qbiremo_enhanced_temp"
 CACHE_FILE_NAME = "qbiremo_enhanced.cache"
+CACHE_MAX_AGE_DAYS = 3
 CLIPBOARD_SEEN_LIMIT = 256
 
 logger = logging.getLogger(G_APP_NAME)
@@ -1449,6 +1450,7 @@ class MainWindow(QMainWindow):
         # Persistent per-torrent content cache (JSON file)
         self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME)
         self.content_cache: Dict[str, Dict[str, Any]] = {}
+        self._remove_expired_cache_file()
         self._load_content_cache()
 
         # API task queue
@@ -2263,6 +2265,27 @@ class MainWindow(QMainWindow):
     # Content Cache
     # ========================================================================
 
+    def _remove_expired_cache_file(self):
+        """Delete cache file when older than configured maximum age."""
+        try:
+            if not self.cache_file_path.exists():
+                return
+            max_age_seconds = max(1, int(CACHE_MAX_AGE_DAYS)) * 24 * 60 * 60
+            age_seconds = time.time() - float(self.cache_file_path.stat().st_mtime)
+            if age_seconds <= max_age_seconds:
+                return
+            self.cache_file_path.unlink()
+            cache_tmp = Path(f"{self.cache_file_path}.tmp")
+            if cache_tmp.exists():
+                cache_tmp.unlink()
+            logger.info(
+                "Deleted expired content cache file: %s (age %.1f days)",
+                self.cache_file_path,
+                age_seconds / (24 * 60 * 60),
+            )
+        except Exception as e:
+            logger.warning("Failed to remove expired content cache %s: %s", self.cache_file_path, e)
+
     def _load_content_cache(self):
         """Load persistent content cache from JSON file."""
         self.content_cache = {}
@@ -2349,29 +2372,19 @@ class MainWindow(QMainWindow):
         files = entry.get('files', []) if isinstance(entry, dict) else []
         return files if isinstance(files, list) else []
 
-    def _get_cache_refresh_candidates(self, prune_removed: bool = True) -> Dict[str, str]:
+    def _get_cache_refresh_candidates(self) -> Dict[str, str]:
         """Return torrent hashes that need cache refresh (new/missing/status change)."""
         candidates: Dict[str, str] = {}
-        live_hashes = set()
         for torrent in self.all_torrents:
             torrent_hash = getattr(torrent, 'hash', '') or ''
             if not torrent_hash:
                 continue
-            live_hashes.add(torrent_hash)
             state = str(getattr(torrent, 'state', '') or '')
             cached = self.content_cache.get(torrent_hash)
             cached_state = str(cached.get('state', '')) if isinstance(cached, dict) else ''
             cached_files = cached.get('files') if isinstance(cached, dict) else None
             if cached_state != state or not isinstance(cached_files, list):
                 candidates[torrent_hash] = state
-
-        if prune_removed:
-            # Prune removed torrents from cache only when full remote list was fetched.
-            stale_hashes = [h for h in self.content_cache.keys() if h not in live_hashes]
-            for h in stale_hashes:
-                self.content_cache.pop(h, None)
-            if stale_hashes:
-                self._save_content_cache()
 
         return candidates
 
@@ -3825,6 +3838,7 @@ class MainWindow(QMainWindow):
                 self._update_torrents_table()
                 return
 
+            previous_selected_hash = self._get_selected_torrent_hash()
             self.all_torrents = result.get('data', [])
             if "alt_speed_mode" in result:
                 self._last_alt_speed_mode = bool(result.get("alt_speed_mode"))
@@ -3841,10 +3855,7 @@ class MainWindow(QMainWindow):
             self._update_tracker_tree()
 
             # Refresh cache only for new torrents or torrents with changed status
-            remote_filtered = bool(result.get("remote_filtered", False))
-            refresh_candidates = self._get_cache_refresh_candidates(
-                prune_removed=not remote_filtered
-            )
+            refresh_candidates = self._get_cache_refresh_candidates()
             if refresh_candidates:
                 self._log(
                     "INFO",
@@ -3862,7 +3873,7 @@ class MainWindow(QMainWindow):
 
             # Apply filters and update table
             self._apply_filters()
-            self._select_first_torrent_after_refresh()
+            self._select_first_torrent_after_refresh(previous_selected_hash)
             self._hide_progress()
         except Exception as e:
             self._log("ERROR", f"Exception in _on_torrents_loaded: {e}")
@@ -3874,12 +3885,41 @@ class MainWindow(QMainWindow):
             self._update_window_title_speeds()
             self._update_torrents_table()
 
-    def _select_first_torrent_after_refresh(self):
-        """After a list refresh, select the first torrent row when available."""
+    def _select_first_torrent_after_refresh(self, previous_selected_hash: Optional[str] = None):
+        """Select/restore one row after refresh without overriding a valid existing selection."""
         if self.tbl_torrents.rowCount() <= 0:
             return
+
+        current_hash = self._get_selected_torrent_hash()
+        previous_hash = str(previous_selected_hash or "").strip()
+        previous_row = -1
+        if previous_hash:
+            for row in range(self.tbl_torrents.rowCount()):
+                item = self.tbl_torrents.item(row, 0)
+                row_hash = item.text().strip() if item else ""
+                if row_hash == previous_hash:
+                    previous_row = row
+                    break
+
+        # No prior selection: keep any current selection, otherwise select first.
+        if not previous_hash:
+            if current_hash:
+                return
+            self.tbl_torrents.selectRow(0)
+            return
+
+        # Prior selection vanished: always select first row.
+        if previous_row < 0:
+            self.tbl_torrents.clearSelection()
+            self.tbl_torrents.selectRow(0)
+            return
+
+        # Prior selection still present: keep if already selected, otherwise restore by hash.
+        if current_hash == previous_hash:
+            return
         self.tbl_torrents.clearSelection()
-        self.tbl_torrents.selectRow(0)
+        self.tbl_torrents.selectRow(previous_row)
+
 
     def _on_content_cache_refreshed(self, result: Dict):
         """Handle background refresh of cached torrent content trees."""
