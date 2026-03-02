@@ -2349,7 +2349,7 @@ class MainWindow(QMainWindow):
         files = entry.get('files', []) if isinstance(entry, dict) else []
         return files if isinstance(files, list) else []
 
-    def _get_cache_refresh_candidates(self) -> Dict[str, str]:
+    def _get_cache_refresh_candidates(self, prune_removed: bool = True) -> Dict[str, str]:
         """Return torrent hashes that need cache refresh (new/missing/status change)."""
         candidates: Dict[str, str] = {}
         live_hashes = set()
@@ -2365,12 +2365,13 @@ class MainWindow(QMainWindow):
             if cached_state != state or not isinstance(cached_files, list):
                 candidates[torrent_hash] = state
 
-        # Prune removed torrents from cache
-        stale_hashes = [h for h in self.content_cache.keys() if h not in live_hashes]
-        for h in stale_hashes:
-            self.content_cache.pop(h, None)
-        if stale_hashes:
-            self._save_content_cache()
+        if prune_removed:
+            # Prune removed torrents from cache only when full remote list was fetched.
+            stale_hashes = [h for h in self.content_cache.keys() if h not in live_hashes]
+            for h in stale_hashes:
+                self.content_cache.pop(h, None)
+            if stale_hashes:
+                self._save_content_cache()
 
         return candidates
 
@@ -2791,24 +2792,49 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
+    def _selected_remote_torrent_filters(self) -> Dict[str, Any]:
+        """Build remote API filter kwargs from selected status/category/tag filters."""
+        filters: Dict[str, Any] = {}
+
+        status = str(self.current_status_filter or "").strip()
+        if status and status.lower() != "all":
+            filters["status_filter"] = status
+
+        if self.current_category_filter is not None:
+            filters["category"] = str(self.current_category_filter or "")
+
+        if self.current_tag_filter is not None:
+            filters["tag"] = str(self.current_tag_filter or "")
+
+        return filters
+
     def _fetch_torrents(self, **_kw) -> List:
         """Fetch torrents via incremental sync/maindata and return current full list."""
         start_time = time.time()
 
         try:
             alt_speed_mode = bool(self._last_alt_speed_mode)
+            remote_filters = self._selected_remote_torrent_filters()
             with self._create_client() as qb:
-                maindata = qb.sync_maindata(rid=int(self._sync_rid))
+                if remote_filters:
+                    result = list(qb.torrents_info(**remote_filters))
+                    result.sort(
+                        key=lambda t: self._safe_int(getattr(t, "added_on", 0), 0),
+                        reverse=True
+                    )
+                else:
+                    maindata = qb.sync_maindata(rid=int(self._sync_rid))
+                    result = self._merge_sync_maindata(maindata)
                 if hasattr(qb, "transfer_speed_limits_mode"):
                     try:
                         alt_speed_mode = self._safe_int(qb.transfer_speed_limits_mode(), 0) == 1
                     except Exception:
                         pass
-            result = self._merge_sync_maindata(maindata)
 
             elapsed = time.time() - start_time
             return {
                 'data': result,
+                'remote_filtered': bool(remote_filters),
                 'alt_speed_mode': bool(alt_speed_mode),
                 'elapsed': elapsed,
                 'success': True
@@ -3815,7 +3841,10 @@ class MainWindow(QMainWindow):
             self._update_tracker_tree()
 
             # Refresh cache only for new torrents or torrents with changed status
-            refresh_candidates = self._get_cache_refresh_candidates()
+            remote_filtered = bool(result.get("remote_filtered", False))
+            refresh_candidates = self._get_cache_refresh_candidates(
+                prune_removed=not remote_filtered
+            )
             if refresh_candidates:
                 self._log(
                     "INFO",
