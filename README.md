@@ -351,41 +351,38 @@ pip install -r requirements.txt
 ### TOML File
 Default file: `qbiremo_enhanced_config.toml`
 
-Supported keys:
-```toml
-qb_host = "127.0.0.1"
-qb_port = 8080
-qb_username = "admin"
-qb_password = "CHANGE_ME"
-# Optional protocol scheme for WebUI/API (allowed: "http", "https")
-# Default: "http"
-http_protocol_scheme = "http"
+Validated key contract (`validate_and_normalize_config`):
 
-# Optional HTTP timeout for qBittorrent API requests, in seconds
-# Default: 300
-http_timeout = 300
-
-# Optional reverse-proxy/basic-auth layer (separate from qb API auth)
-http_basic_auth_username = ""
-http_basic_auth_password = ""
-
-# Optional title format (tokens: {down_text}, {up_text})
-title_bar_speed_format = "[D: {down_text}, U: {up_text}]"
-
-# Optional log file path
-# log_file = "qbiremo_enhanced.log"
-```
+| Key | Type | Default if Missing/Invalid | Allowed Values / Validation Rules |
+|---|---|---|---|
+| `qb_host` | `str` | `"localhost"` | Non-empty string. Can be hostname/IP or full URL (`http[s]://host[:port][/path]`). If URL includes `user:pass@`, those are used for HTTP basic auth. |
+| `qb_port` | `int` | `8080` | Must be in range `1..65535`. |
+| `qb_username` | `str` | `"admin"` | qBittorrent API username (not reverse-proxy basic auth). |
+| `qb_password` | `str` | `""` | qBittorrent API password. |
+| `http_basic_auth_username` | `str` | `""` | Optional reverse-proxy basic-auth username. If `qb_host` has embedded username, embedded value wins. |
+| `http_basic_auth_password` | `str` | `""` | Optional reverse-proxy basic-auth password. If `qb_host` has embedded password, embedded value wins. |
+| `http_protocol_scheme` | `str` | Effective default: `"http"` | Allowed: `"http"`, `"https"`. Invalid value is normalized to `"http"`. |
+| `http_timeout` | `int` | `300` | Must be integer `> 0`. Used as qBittorrent API HTTP timeout in seconds. |
+| `log_file` | `str` | `"qbiremo_enhanced.log"` | Non-empty path string. |
+| `title_bar_speed_format` | `str` | `"[D: {down_text}, U: {up_text}]"` | Must be non-empty and format successfully with `{down_text}` and `{up_text}` placeholders. |
 
 Behavior notes:
 - Legacy keys (`host`, `port`, `username`, `password`, `http_user`, `http_password`) are mapped and warned as deprecated.
 - Unknown TOML keys are ignored with warnings.
-- Runtime UI settings (`auto_refresh`, interval, window size/layout, display mode, default status) are QSettings-managed and not read from TOML.
+- Runtime UI settings are QSettings-managed and ignored in TOML (with warnings):
+  - `auto_refresh`
+  - `refresh_interval`
+  - `default_window_width`
+  - `default_window_height`
+  - `default_status_filter`
+  - `display_size_mode`
+  - `display_speed_mode`
 - If `qb_host` includes a full URL with embedded userinfo, HTTP basic auth is extracted and sent via `Authorization` header.
-- `http_protocol_scheme` controls the connection/browser scheme (`http`/`https`) and defaults to `http` when omitted.
-- `http_timeout` sets the qBittorrent API HTTP timeout in seconds and defaults to `300`.
 - Environment fallback for HTTP basic auth:
   - `X_HTTP_USER`
   - `X_HTTP_PASS`
+- Internal keys are runtime-managed and should not be set manually:
+  - `_config_file_path`, `_log_file_path`, `_instance_id`, `_instance_counter`, `_instance_lock_file_path`
 
 ## Usage
 

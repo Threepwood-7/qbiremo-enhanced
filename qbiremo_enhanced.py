@@ -22,7 +22,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, Callable, TypedDict, NotRequired, cast, Union
 from urllib.parse import quote, urlparse
 import time
 import fnmatch
@@ -81,6 +81,40 @@ APP_ICON_FILE_NAME = "qbiremo_enhanced.ico"
 
 logger = logging.getLogger(G_APP_NAME)
 _INSTANCE_LOCK_HANDLES: Dict[str, Any] = {}
+
+
+class APITaskResult(TypedDict):
+    """Standard task payload envelope used by API queue workers."""
+
+    data: Any
+    elapsed: float
+    success: bool
+    error: NotRequired[str]
+
+
+def api_task_result(
+    *,
+    data: Any,
+    elapsed: float,
+    success: bool,
+    error: Optional[str] = None,
+    **extra: Any,
+) -> APITaskResult:
+    """Create one API-task payload with consistent success/error/data/elapsed keys.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    payload: Dict[str, Any] = {
+        "data": data,
+        "elapsed": float(elapsed),
+        "success": bool(success),
+    }
+    if error:
+        payload["error"] = str(error)
+    if extra:
+        payload.update(extra)
+    return cast(APITaskResult, payload)
 
 # Status filters as per qBittorrent API
 STATUS_FILTERS = [
@@ -206,7 +240,12 @@ class WorkerSignals(QObject):
 class Worker(QRunnable):
     """Worker thread for background tasks with cancellation support"""
 
-    def __init__(self, fn, *args, **kwargs):
+    def __init__(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+        """Store callable and arguments for execution in a worker thread.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         super().__init__()
         self.fn = fn
         self.args = args
@@ -215,13 +254,21 @@ class Worker(QRunnable):
         self.kwargs["progress_callback"] = self.signals.progress
         self.is_cancelled = False
 
-    def cancel(self):
-        """Cancel this worker"""
+    def cancel(self) -> None:
+        """Cancel this worker.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         self.is_cancelled = True
 
     @Slot()
-    def run(self):
-        """Execute the worker function"""
+    def run(self) -> None:
+        """Execute the worker function.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         was_cancelled = False
         try:
             if self.is_cancelled:
@@ -255,16 +302,40 @@ class APITaskQueue(QObject):
     task_failed = Signal(str, str)  # task_name, error_message
     task_cancelled = Signal(str)  # task_name
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        """Initialize queue state and threadpool used for API tasks.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         super().__init__(parent)
-        self.current_worker = None
+        self.current_worker: Optional[Worker] = None
         self.is_processing = False
         self.threadpool = QThreadPool()
-        self.current_task_name = None
-        self.pending_task = None
+        self.current_task_name: Optional[str] = None
+        self.pending_task: Optional[
+            Tuple[
+                str,
+                Callable[..., Any],
+                Optional[Callable[[Any], None]],
+                Tuple[Any, ...],
+                Dict[str, Any],
+            ]
+        ] = None
 
-    def _start_task(self, task_name: str, fn, callback, *args, **kwargs):
-        """Create one worker and start processing."""
+    def _start_task(
+        self,
+        task_name: str,
+        fn: Callable[..., Any],
+        callback: Optional[Callable[[Any], None]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Create one worker and start processing.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         self.is_processing = True
         self.current_task_name = task_name
 
@@ -294,8 +365,19 @@ class APITaskQueue(QObject):
         )
         self.threadpool.start(worker)
 
-    def add_task(self, task_name: str, fn, callback, *args, **kwargs):
-        """Add a task to the queue, coalescing to latest while one is running."""
+    def add_task(
+        self,
+        task_name: str,
+        fn: Callable[..., Any],
+        callback: Optional[Callable[[Any], None]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Add a task to the queue, coalescing to latest while one is running.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         if self.current_worker:
             self.current_worker.cancel()
             self.pending_task = (task_name, fn, callback, args, kwargs)
@@ -304,8 +386,12 @@ class APITaskQueue(QObject):
 
         self._start_task(task_name, fn, callback, *args, **kwargs)
 
-    def clear_queue(self):
-        """Cancel current task and drop any queued replacement task."""
+    def clear_queue(self) -> None:
+        """Cancel current task and drop any queued replacement task.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         if self.current_worker:
             self.current_worker.cancel()
         self.pending_task = None
@@ -313,8 +399,18 @@ class APITaskQueue(QObject):
             self.is_processing = False
             self.current_task_name = None
 
-    def _on_task_complete(self, worker: Worker, task_name: str, callback, result):
-        """Handle successful task completion"""
+    def _on_task_complete(
+        self,
+        worker: Worker,
+        task_name: str,
+        callback: Optional[Callable[[Any], None]],
+        result: Any,
+    ) -> None:
+        """Handle successful task completion.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if worker is not self.current_worker:
             logger.debug("Ignoring stale task completion: %s", task_name)
             return
@@ -328,8 +424,12 @@ class APITaskQueue(QObject):
         except Exception as e:
             self.task_failed.emit(task_name, str(e))
 
-    def _on_task_error(self, worker: Worker, task_name: str, error):
-        """Handle task failure"""
+    def _on_task_error(self, worker: Worker, task_name: str, error: Tuple[Any, Any, str]) -> None:
+        """Handle task failure.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if worker is not self.current_worker:
             logger.debug("Ignoring stale task error: %s", task_name)
             return
@@ -345,8 +445,12 @@ class APITaskQueue(QObject):
             logger.error("Error in _on_task_error for %s: %s", task_name, e)
             self.task_failed.emit(task_name, str(e))
 
-    def _on_task_cancelled(self, worker: Worker, task_name: str):
-        """Handle task cancellation"""
+    def _on_task_cancelled(self, worker: Worker, task_name: str) -> None:
+        """Handle task cancellation.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if worker is not self.current_worker:
             return
         try:
@@ -354,8 +458,12 @@ class APITaskQueue(QObject):
         except Exception as e:
             logger.error("Error in _on_task_cancelled for %s: %s", task_name, e)
 
-    def _on_worker_finished(self, worker: Worker):
-        """Finalize worker lifecycle and start latest pending task, if any."""
+    def _on_worker_finished(self, worker: Worker) -> None:
+        """Finalize worker lifecycle and start latest pending task, if any.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         if worker is not self.current_worker:
             return
 
@@ -373,25 +481,50 @@ class APITaskQueue(QObject):
 class _DebugAPIClientProxy:
     """Proxy that logs qBittorrent API calls and responses."""
 
-    def __init__(self, client: Any, owner: "MainWindow"):
+    def __init__(self, client: Any, owner: "MainWindow") -> None:
+        """Wrap one API client and route log events through the main window.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: None.
+        """
         self._client = client
         self._owner = owner
 
-    def __enter__(self):
+    def __enter__(self) -> "_DebugAPIClientProxy":
+        """Enter wrapped context manager and preserve proxy behavior.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: Propagates unexpected exceptions unless explicitly handled by caller or runtime.
+        """
         entered = self._client.__enter__()
         if entered is self._client:
             return self
         return _DebugAPIClientProxy(entered, self._owner)
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        """Delegate context-manager exit to wrapped client.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: Propagates unexpected exceptions unless explicitly handled by caller or runtime.
+        """
         return self._client.__exit__(exc_type, exc, tb)
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
+        """Intercept callable attributes to add call/response/error logging.
+
+        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         attr = getattr(self._client, name)
         if not callable(attr):
             return attr
 
-        def _wrapped(*args, **kwargs):
+        def _wrapped(*args: Any, **kwargs: Any) -> Any:
+            """Execute one proxied API call with debug timing logs.
+
+            Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
+            Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+            """
             self._owner._debug_log_api_call(name, args, kwargs)
             start_time = time.time()
             try:
@@ -414,7 +547,12 @@ class _DebugAPIClientProxy:
 class AddTorrentDialog(QDialog):
     """Dialog for adding a new torrent"""
 
-    def __init__(self, categories: List[str], tags: List[str], parent=None):
+    def __init__(self, categories: List[str], tags: List[str], parent=None) -> None:
+        """Build add-torrent dialog with source, behavior, and limits tabs.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Add Torrent")
         self.resize(780, 720)
@@ -614,43 +752,74 @@ class AddTorrentDialog(QDialog):
 
         self.torrent_data = None
 
-    def accept(self):
-        """Validate and cache torrent payload before closing the dialog."""
+    def accept(self) -> None:
+        """Validate and cache torrent payload before closing the dialog.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         payload = self.get_torrent_data()
         if not payload:
             return
         self.torrent_data = payload
         super().accept()
 
-    def _browse_files(self):
-        """Browse and append one or more torrent files."""
+    def _browse_files(self) -> None:
+        """Browse and append one or more torrent files.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         file_paths, _ = QFileDialog.getOpenFileNames(
             self, "Select Torrent Files", "", "Torrent Files (*.torrent);;All Files (*)"
         )
         if file_paths:
             self._append_multiline_entries(self.txt_torrent_files, file_paths)
 
-    def _browse_save_path(self):
-        """Browse for save directory"""
+    def _browse_save_path(self) -> None:
+        """Browse for save directory.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if dir_path:
             self.txt_save_path.setText(dir_path)
 
-    def _browse_download_path(self):
-        """Browse for download directory"""
+    def _browse_download_path(self) -> None:
+        """Browse for download directory.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Download Directory")
         if dir_path:
             self.txt_download_path.setText(dir_path)
 
     @staticmethod
     def _split_csv(text: str) -> List[str]:
+        """Split comma-separated text into trimmed non-empty entries.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         return [p.strip() for p in (text or "").split(",") if p.strip()]
 
     @staticmethod
     def _split_multiline(text: str) -> List[str]:
+        """Split multiline text into trimmed non-empty lines.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         return [line.strip() for line in str(text or "").splitlines() if line.strip()]
 
-    def _append_multiline_entries(self, editor: QTextEdit, entries: List[str]):
+    def _append_multiline_entries(self, editor: QTextEdit, entries: List[str]) -> None:
+        """Append unique lines to one multiline editor while preserving order.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         existing = self._split_multiline(editor.toPlainText())
         combined = existing + [str(entry).strip() for entry in (entries or []) if str(entry).strip()]
         # Preserve order while removing duplicates.
@@ -658,7 +827,11 @@ class AddTorrentDialog(QDialog):
         editor.setPlainText("\n".join(deduped))
 
     def _get_selected_tags(self) -> str:
-        """Return comma-separated string of checked tags."""
+        """Return comma-separated string of checked tags.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         selected = []
         for i in range(self.lst_tags.count()):
             item = self.lst_tags.item(i)
@@ -671,11 +844,21 @@ class AddTorrentDialog(QDialog):
 
     @staticmethod
     def _is_url_source(source: str) -> bool:
+        """Return True when one source entry is a supported URL/magnet.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         lower = source.lower()
         return lower.startswith("magnet:") or lower.startswith("http://") or lower.startswith("https://") or lower.startswith("bc://")
 
     @staticmethod
-    def _parse_url_sources(lines: List[str]):
+    def _parse_url_sources(lines: List[str]) -> Union[str, List[str]]:
+        """Convert URL list to qBittorrent payload format (single item or list).
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         # Accept one URL per line for convenience.
         if not lines:
             return ""
@@ -684,7 +867,11 @@ class AddTorrentDialog(QDialog):
         return lines
 
     def get_torrent_data(self) -> Optional[Dict[str, Any]]:
-        """Get the torrent data from the dialog"""
+        """Get the torrent data from the dialog.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         source_files = self._split_multiline(self.txt_torrent_files.toPlainText())
         source_urls = self._split_multiline(self.txt_source_urls.toPlainText())
         if not source_files and not source_urls:
@@ -805,7 +992,12 @@ class TaxonomyManagerDialog(QDialog):
     create_tags_requested = Signal(list)
     delete_tags_requested = Signal(list)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
+        """Initialize category/tag management dialog and default edit mode.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Manage Tags and Categories")
         self.resize(760, 520)
@@ -814,7 +1006,12 @@ class TaxonomyManagerDialog(QDialog):
         self._build_ui()
         self._set_category_create_mode()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
+        """Create categories/tags tabs and wire user actions.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         layout = QVBoxLayout(self)
 
         self.tabs = QTabWidget()
@@ -909,8 +1106,12 @@ class TaxonomyManagerDialog(QDialog):
         buttons.rejected.connect(self.close)
         layout.addWidget(buttons)
 
-    def _browse_category_save_path(self):
-        """Browse for category default save path."""
+    def _browse_category_save_path(self) -> None:
+        """Browse for category default save path.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         initial = self.txt_category_save_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
             self, "Select Category Save Path", initial
@@ -918,8 +1119,12 @@ class TaxonomyManagerDialog(QDialog):
         if selected:
             self.txt_category_save_path.setText(selected)
 
-    def _browse_category_incomplete_path(self):
-        """Browse for category incomplete save path."""
+    def _browse_category_incomplete_path(self) -> None:
+        """Browse for category incomplete save path.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         initial = self.txt_category_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
             self, "Select Category Incomplete Path", initial
@@ -927,14 +1132,22 @@ class TaxonomyManagerDialog(QDialog):
         if selected:
             self.txt_category_incomplete_path.setText(selected)
 
-    def _update_incomplete_path_enabled_state(self, *_args):
-        """Enable/disable incomplete path controls based on checkbox."""
+    def _update_incomplete_path_enabled_state(self, *_args) -> None:
+        """Enable/disable incomplete path controls based on checkbox.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         enabled = bool(self.chk_category_use_incomplete.isChecked())
         self.txt_category_incomplete_path.setEnabled(enabled)
         self.btn_category_browse_incomplete.setEnabled(enabled)
 
-    def set_busy(self, busy: bool, message: str = ""):
-        """Enable/disable editor controls while an API operation runs."""
+    def set_busy(self, busy: bool, message: str = "") -> None:
+        """Enable/disable editor controls while an API operation runs.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         enabled = not bool(busy)
         self.tabs.setEnabled(enabled)
         self.btn_category_new.setEnabled(enabled)
@@ -947,8 +1160,12 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_delete_tags.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
-    def set_taxonomy_data(self, category_data: Dict[str, Dict[str, Any]], tags: List[str]):
-        """Refresh dialog contents from latest category/tag lists."""
+    def set_taxonomy_data(self, category_data: Dict[str, Dict[str, Any]], tags: List[str]) -> None:
+        """Refresh dialog contents from latest category/tag lists.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         current_category = self.selected_category_name()
         selected_tags = {
             item.text() for item in self.lst_tags_manage.selectedItems()
@@ -975,12 +1192,20 @@ class TaxonomyManagerDialog(QDialog):
             self.lst_tags_manage.addItem(item)
 
     def selected_category_name(self) -> str:
-        """Return selected category name, or empty string."""
+        """Return selected category name, or empty string.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         item = self.lst_categories.currentItem()
         return item.text().strip() if item else ""
 
-    def _on_category_selection_changed(self, current: Optional[QListWidgetItem], _previous):
-        """Load selected category into the editor."""
+    def _on_category_selection_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
+        """Load selected category into the editor.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         if current is None:
             self._set_category_create_mode()
             return
@@ -997,8 +1222,12 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_category_apply.setText("Update Category")
         self.btn_category_delete.setEnabled(True)
 
-    def _set_category_create_mode(self):
-        """Prepare editor for creating a new category."""
+    def _set_category_create_mode(self) -> None:
+        """Prepare editor for creating a new category.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         if self.lst_categories.currentItem() is not None:
             prev = self.lst_categories.blockSignals(True)
             self.lst_categories.clearSelection()
@@ -1013,8 +1242,12 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_category_apply.setText("Create Category")
         self.btn_category_delete.setEnabled(False)
 
-    def _apply_category_changes(self):
-        """Emit create/update category request."""
+    def _apply_category_changes(self) -> None:
+        """Emit create/update category request.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         name = self.txt_category_name.text().strip()
         save_path = self.txt_category_save_path.text().strip()
         incomplete_path = self.txt_category_incomplete_path.text().strip()
@@ -1033,8 +1266,12 @@ class TaxonomyManagerDialog(QDialog):
         else:
             self.create_category_requested.emit(name, save_path, incomplete_path, use_incomplete)
 
-    def _delete_selected_category(self):
-        """Emit delete request for selected category."""
+    def _delete_selected_category(self) -> None:
+        """Emit delete request for selected category.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         name = self.selected_category_name()
         if not name:
             self.lbl_message.setText("Select a category to delete.")
@@ -1043,6 +1280,11 @@ class TaxonomyManagerDialog(QDialog):
 
     @staticmethod
     def _parse_csv_entries(raw_text: str) -> List[str]:
+        """Parse comma-separated text into unique ordered tag values.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         values: List[str] = []
         seen = set()
         for part in str(raw_text or "").split(","):
@@ -1052,8 +1294,12 @@ class TaxonomyManagerDialog(QDialog):
                 values.append(value)
         return values
 
-    def _add_tags(self):
-        """Emit create-tags request from entry field."""
+    def _add_tags(self) -> None:
+        """Emit create-tags request from entry field.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         tags = self._parse_csv_entries(self.txt_new_tags.text())
         if not tags:
             self.lbl_message.setText("Enter at least one tag.")
@@ -1061,8 +1307,12 @@ class TaxonomyManagerDialog(QDialog):
         self.create_tags_requested.emit(tags)
         self.txt_new_tags.clear()
 
-    def _delete_selected_tags(self):
-        """Emit delete-tags request for selected tags."""
+    def _delete_selected_tags(self) -> None:
+        """Emit delete-tags request for selected tags.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         tags = [item.text().strip() for item in self.lst_tags_manage.selectedItems() if item.text().strip()]
         if not tags:
             self.lbl_message.setText("Select at least one tag to delete.")
@@ -1080,13 +1330,23 @@ class SpeedLimitsDialog(QDialog):
     refresh_requested = Signal()
     apply_requested = Signal(int, int, int, int, bool)  # normal_dl_kib, normal_ul_kib, alt_dl_kib, alt_ul_kib, alt_enabled
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
+        """Initialize speed-limits dialog and create controls.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Manage Speed Limits")
         self.resize(520, 320)
         self._build_ui()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
+        """Build normal/alternative speed controls and command buttons.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         layout = QVBoxLayout(self)
 
         normal_group = QGroupBox("Normal Speed Limits (KiB/s)")
@@ -1130,8 +1390,12 @@ class SpeedLimitsDialog(QDialog):
         buttons_row.addWidget(self.btn_close)
         layout.addLayout(buttons_row)
 
-    def _emit_apply(self):
-        """Emit apply signal with current dialog values."""
+    def _emit_apply(self) -> None:
+        """Emit apply signal with current dialog values.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self.apply_requested.emit(
             int(self.spn_normal_dl.value()),
             int(self.spn_normal_ul.value()),
@@ -1141,16 +1405,24 @@ class SpeedLimitsDialog(QDialog):
         )
 
     def set_values(self, normal_dl_bytes: int, normal_ul_bytes: int,
-                   alt_dl_bytes: int, alt_ul_bytes: int, alt_enabled: bool):
-        """Update dialog controls from bytes/sec values."""
+                   alt_dl_bytes: int, alt_ul_bytes: int, alt_enabled: bool) -> None:
+        """Update dialog controls from bytes/sec values.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self.spn_normal_dl.setValue(max(0, int(normal_dl_bytes)) // 1024)
         self.spn_normal_ul.setValue(max(0, int(normal_ul_bytes)) // 1024)
         self.spn_alt_dl.setValue(max(0, int(alt_dl_bytes)) // 1024)
         self.spn_alt_ul.setValue(max(0, int(alt_ul_bytes)) // 1024)
         self.chk_alt_enabled.setChecked(bool(alt_enabled))
 
-    def set_busy(self, busy: bool, message: str = ""):
-        """Enable/disable controls while async operation runs."""
+    def set_busy(self, busy: bool, message: str = "") -> None:
+        """Enable/disable controls while async operation runs.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         enabled = not bool(busy)
         for widget in (
             self.spn_normal_dl,
@@ -1177,7 +1449,12 @@ class AppPreferencesDialog(QDialog):
     ROLE_PATH = int(Qt.ItemDataRole.UserRole) + 200
     ROLE_IS_LEAF = int(Qt.ItemDataRole.UserRole) + 201
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
+        """Initialize raw app-preferences editor dialog and state trackers.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Edit App Preferences")
         self.resize(980, 640)
@@ -1190,7 +1467,12 @@ class AppPreferencesDialog(QDialog):
         self._leaf_items: Dict[Tuple[Any, ...], QTreeWidgetItem] = {}
         self._build_ui()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
+        """Build preferences tree view and apply/cancel actions.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         layout = QVBoxLayout(self)
 
         self.tree_preferences = QTreeWidget()
@@ -1221,15 +1503,23 @@ class AppPreferencesDialog(QDialog):
         controls.addWidget(self.btn_cancel)
         layout.addLayout(controls)
 
-    def set_busy(self, busy: bool, message: str = ""):
-        """Enable/disable dialog controls while API operation runs."""
+    def set_busy(self, busy: bool, message: str = "") -> None:
+        """Enable/disable dialog controls while API operation runs.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         enabled = not bool(busy)
         self.tree_preferences.setEnabled(enabled)
         self.btn_apply.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
-    def set_preferences(self, preferences: Dict[str, Any]):
-        """Load preferences into editable tree and reset change tracking."""
+    def set_preferences(self, preferences: Dict[str, Any]) -> None:
+        """Load preferences into editable tree and reset change tracking.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         self._updating_tree = True
         try:
             source = dict(preferences or {}) if isinstance(preferences, dict) else {}
@@ -1256,10 +1546,20 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _is_container(value: Any) -> bool:
+        """Return True when value is a nested dict/list container.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         return isinstance(value, (dict, list))
 
     @staticmethod
     def _value_type_name(value: Any) -> str:
+        """Return a human-readable type name for one preference value.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         if value is None:
             return "null"
         if isinstance(value, bool):
@@ -1278,6 +1578,11 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _value_to_text(value: Any) -> str:
+        """Render one preference value to editable text representation.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if value is None:
             return "null"
         if isinstance(value, bool):
@@ -1291,6 +1596,11 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _container_summary(value: Any) -> str:
+        """Return compact summary label for dict/list containers.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         if isinstance(value, dict):
             count = len(value)
             suffix = "key" if count == 1 else "keys"
@@ -1307,7 +1617,12 @@ class AppPreferencesDialog(QDialog):
         path: Tuple[Any, ...],
         label: str,
         value: Any,
-    ):
+    ) -> None:
+        """Add one preference tree node and recurse for nested values.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         item = QTreeWidgetItem([str(label), "", self._value_type_name(value)])
         item.setData(0, self.ROLE_PATH, path)
         item.setData(0, self.ROLE_IS_LEAF, False)
@@ -1340,6 +1655,11 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _normalize_item_path(path_data: Any) -> Tuple[Any, ...]:
+        """Normalize serialized path metadata to tuple form.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         if isinstance(path_data, tuple):
             return path_data
         if isinstance(path_data, list):
@@ -1348,6 +1668,11 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _path_label(path: Tuple[Any, ...]) -> str:
+        """Format one tree path tuple as dotted/bracketed label.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         if not path:
             return ""
         parts: List[str] = []
@@ -1361,7 +1686,12 @@ class AppPreferencesDialog(QDialog):
         return "".join(parts)
 
     @staticmethod
-    def _set_path_value(container: Any, path: Tuple[Any, ...], value: Any):
+    def _set_path_value(container: Any, path: Tuple[Any, ...], value: Any) -> None:
+        """Assign one nested container value addressed by path tuple.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         target = container
         for key in path[:-1]:
             target = target[key]
@@ -1369,6 +1699,11 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _get_path_value(container: Any, path: Tuple[Any, ...]) -> Any:
+        """Resolve one nested container value addressed by path tuple.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         target = container
         for key in path:
             target = target[key]
@@ -1376,6 +1711,11 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _parse_bool(text: str) -> bool:
+        """Parse flexible bool text tokens and raise on invalid input.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: Raises validation/runtime exceptions for invalid inputs or unsupported states.
+        """
         token = str(text or "").strip().lower()
         if token in {"1", "true", "yes", "on"}:
             return True
@@ -1385,6 +1725,11 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _parse_value_by_example(text: str, example: Any) -> Any:
+        """Parse editor text using original value type as parsing guide.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         raw = str(text or "")
         stripped = raw.strip()
 
@@ -1426,7 +1771,12 @@ class AppPreferencesDialog(QDialog):
         except Exception:
             return raw
 
-    def _refresh_changed_highlights(self):
+    def _refresh_changed_highlights(self) -> None:
+        """Highlight changed leaf values in coral for quick scanning.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         coral_brush = QBrush(QColor("coral"))
         clear_brush = QBrush()
         for path, item in self._leaf_items.items():
@@ -1436,7 +1786,11 @@ class AppPreferencesDialog(QDialog):
             item.setBackground(1, coral_brush if changed else clear_brush)
 
     def changed_preferences(self) -> Dict[str, Any]:
-        """Return only top-level preferences changed by the user."""
+        """Return only top-level preferences changed by the user.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         changes: Dict[str, Any] = {}
         for key, edited_value in self._edited_preferences.items():
             original_value = self._original_preferences.get(key, None)
@@ -1444,7 +1798,12 @@ class AppPreferencesDialog(QDialog):
                 changes[str(key)] = copy.deepcopy(edited_value)
         return changes
 
-    def _on_tree_item_changed(self, item: QTreeWidgetItem, column: int):
+    def _on_tree_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        """Validate one edited cell and propagate value/type updates upward.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if self._updating_tree:
             return
         if column != 1:
@@ -1493,7 +1852,12 @@ class AppPreferencesDialog(QDialog):
         else:
             self.lbl_message.setText(f"Changed preferences: {change_count}")
 
-    def _emit_apply(self):
+    def _emit_apply(self) -> None:
+        """Emit only changed preferences for API apply.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         changes = self.changed_preferences()
         if not changes:
             self.lbl_message.setText("No changed preferences to apply.")
@@ -1539,14 +1903,24 @@ class FriendlyAddPreferencesDialog(QDialog):
         "max_seeding_time",
     )
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
+        """Initialize friendly app-preferences dialog and form state.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Edit Add Preferences (friendly)")
         self.resize(640, 560)
         self._original_values: Dict[str, Any] = {}
         self._build_ui()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
+        """Build tabbed friendly controls for common preference subsets.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         layout = QVBoxLayout(self)
 
         self.lbl_summary = QLabel(
@@ -1656,6 +2030,11 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     @staticmethod
     def _make_unlimited_spinbox() -> QSpinBox:
+        """Create integer spinbox using `-1` sentinel for unlimited values.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         spin = QSpinBox()
         spin.setRange(-1, 10_000_000)
         spin.setSingleStep(1)
@@ -1664,6 +2043,11 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     @staticmethod
     def _to_bool(value: Any, default: bool = False) -> bool:
+        """Best-effort conversion of unknown value to bool with default.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):
@@ -1678,6 +2062,11 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     @staticmethod
     def _to_int(value: Any, default: int = -1) -> int:
+        """Best-effort conversion of unknown value to int with default.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if isinstance(value, bool):
             return int(default)
         try:
@@ -1687,6 +2076,11 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     @staticmethod
     def _to_float(value: Any, default: float = 0.0) -> float:
+        """Best-effort conversion of unknown value to float with default.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if isinstance(value, bool):
             return float(default)
         try:
@@ -1695,7 +2089,12 @@ class FriendlyAddPreferencesDialog(QDialog):
             return float(default)
 
     @staticmethod
-    def _set_combo_data(combo: QComboBox, value: Any, fallback: int = 0):
+    def _set_combo_data(combo: QComboBox, value: Any, fallback: int = 0) -> None:
+        """Select combo item by `data` value with robust fallback behavior.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         desired = FriendlyAddPreferencesDialog._to_int(value, fallback)
         idx = combo.findData(desired)
         if idx < 0:
@@ -1704,18 +2103,37 @@ class FriendlyAddPreferencesDialog(QDialog):
             idx = 0
         combo.setCurrentIndex(idx)
 
-    def _update_temp_path_enabled_state(self):
+    def _update_temp_path_enabled_state(self) -> None:
+        """Sync temporary-path edit enablement with its toggle checkbox.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         enabled = bool(self.chk_temp_path_enabled.isChecked())
         self.txt_temp_path.setEnabled(enabled)
 
-    def _update_ratio_enabled_state(self):
+    def _update_ratio_enabled_state(self) -> None:
+        """Enable ratio spinbox only when default ratio limit is enabled.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self.spn_max_ratio.setEnabled(bool(self.chk_max_ratio_enabled.isChecked()))
 
-    def _update_seeding_time_enabled_state(self):
+    def _update_seeding_time_enabled_state(self) -> None:
+        """Enable seeding-time spinbox only when limit toggle is enabled.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self.spn_max_seeding_time.setEnabled(bool(self.chk_max_seeding_time_enabled.isChecked()))
 
-    def set_busy(self, busy: bool, message: str = ""):
-        """Enable/disable controls while loading/applying preferences."""
+    def set_busy(self, busy: bool, message: str = "") -> None:
+        """Enable/disable controls while loading/applying preferences.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         enabled = not bool(busy)
         self.tabs.setEnabled(enabled)
         self.btn_apply.setEnabled(enabled)
@@ -1726,6 +2144,11 @@ class FriendlyAddPreferencesDialog(QDialog):
         self.lbl_message.setText(str(message or ""))
 
     def _collect_values(self) -> Dict[str, Any]:
+        """Collect current friendly form state into preference payload dict.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         values = {
             "save_path": str(self.txt_save_path.text() or "").strip(),
             "temp_path_enabled": bool(self.chk_temp_path_enabled.isChecked()),
@@ -1756,8 +2179,12 @@ class FriendlyAddPreferencesDialog(QDialog):
         }
         return values
 
-    def set_preferences(self, preferences: Dict[str, Any]):
-        """Load selected friendly fields from raw app preferences payload."""
+    def set_preferences(self, preferences: Dict[str, Any]) -> None:
+        """Load selected friendly fields from raw app preferences payload.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         prefs = dict(preferences or {}) if isinstance(preferences, dict) else {}
 
         self.txt_save_path.setText(str(prefs.get("save_path", "") or ""))
@@ -1796,7 +2223,11 @@ class FriendlyAddPreferencesDialog(QDialog):
         self.lbl_message.setText("Loaded friendly add preferences.")
 
     def changed_preferences(self) -> Dict[str, Any]:
-        """Return only friendly fields changed by the user."""
+        """Return only friendly fields changed by the user.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         current = self._collect_values()
         changes: Dict[str, Any] = {}
         for key in self.FRIENDLY_PREF_KEYS:
@@ -1804,7 +2235,12 @@ class FriendlyAddPreferencesDialog(QDialog):
                 changes[key] = copy.deepcopy(current.get(key))
         return changes
 
-    def _emit_apply(self):
+    def _emit_apply(self) -> None:
+        """Emit only changed friendly preferences for API apply.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         changes = self.changed_preferences()
         if not changes:
             self.lbl_message.setText("No changed preferences to apply.")
@@ -1821,13 +2257,23 @@ class TrackerHealthDialog(QDialog):
 
     refresh_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
+        """Initialize tracker health dashboard dialog.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Tracker Health Dashboard")
         self.resize(980, 520)
         self._build_ui()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
+        """Build tracker-health table and control buttons.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         layout = QVBoxLayout(self)
 
         self.lbl_summary = QLabel("No tracker data loaded.")
@@ -1866,14 +2312,22 @@ class TrackerHealthDialog(QDialog):
         controls.addWidget(self.btn_close)
         layout.addLayout(controls)
 
-    def set_busy(self, busy: bool, message: str = ""):
-        """Set dialog busy state."""
+    def set_busy(self, busy: bool, message: str = "") -> None:
+        """Set dialog busy state.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self.btn_refresh.setEnabled(not bool(busy))
         if message:
             self.lbl_summary.setText(message)
 
-    def set_rows(self, rows: List[Dict[str, Any]]):
-        """Render aggregated tracker-health rows."""
+    def set_rows(self, rows: List[Dict[str, Any]]) -> None:
+        """Render aggregated tracker-health rows.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self.tbl_health.setSortingEnabled(False)
         self.tbl_health.setRowCount(len(rows))
 
@@ -1911,17 +2365,31 @@ class TrackerHealthDialog(QDialog):
 class TimelineGraphWidget(QWidget):
     """Simple custom graph for session timeline samples."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
+        """Initialize timeline graph widget with empty sample buffer.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self._samples: List[Dict[str, Any]] = []
         self.setMinimumHeight(260)
 
-    def set_samples(self, samples: List[Dict[str, Any]]):
-        """Set timeline samples and trigger repaint."""
+    def set_samples(self, samples: List[Dict[str, Any]]) -> None:
+        """Set timeline samples and trigger repaint.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self._samples = list(samples or [])
         self.update()
 
-    def paintEvent(self, event):
+    def paintEvent(self, event) -> None:
+        """Render timeline graph for speed, active-count, and alt-mode bands.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().paintEvent(event)
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(16, 18, 22))
@@ -1961,12 +2429,27 @@ class TimelineGraphWidget(QWidget):
         max_active = max(1, max(int(s.get("active_count", 0)) for s in samples))
 
         def x_for(i: int) -> int:
+            """Map sample index to chart x coordinate.
+
+            Side effects: Updates dialog/widget state and connected UI controls.
+            Failure modes: None.
+            """
             return left + int(i * chart_w / max(1, len(samples) - 1))
 
         def y_for_speed(value: int) -> int:
+            """Map speed value to chart y coordinate.
+
+            Side effects: Updates dialog/widget state and connected UI controls.
+            Failure modes: None.
+            """
             return top + chart_h - int(max(0, int(value)) * chart_h / max_speed)
 
         def y_for_active(value: int) -> int:
+            """Map active torrent count to chart y coordinate.
+
+            Side effects: Updates dialog/widget state and connected UI controls.
+            Failure modes: None.
+            """
             return top + chart_h - int(max(0, int(value)) * chart_h / max_active)
 
         # Down line
@@ -2018,13 +2501,23 @@ class SessionTimelineDialog(QDialog):
     refresh_requested = Signal()
     clear_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
+        """Initialize session timeline dialog and create UI controls.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         super().__init__(parent)
         self.setWindowTitle("Session Timeline")
         self.resize(980, 420)
         self._build_ui()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
+        """Build timeline graph panel, summary label, and control row.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         layout = QVBoxLayout(self)
         self.graph = TimelineGraphWidget()
         layout.addWidget(self.graph, 1)
@@ -2045,8 +2538,12 @@ class SessionTimelineDialog(QDialog):
         controls.addWidget(self.btn_close)
         layout.addLayout(controls)
 
-    def set_samples(self, samples: List[Dict[str, Any]]):
-        """Update timeline graph and summary."""
+    def set_samples(self, samples: List[Dict[str, Any]]) -> None:
+        """Update timeline graph and summary.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         self.graph.set_samples(samples)
         if not samples:
             self.lbl_summary.setText("No timeline samples yet.")
@@ -2061,8 +2558,12 @@ class SessionTimelineDialog(QDialog):
         )
         self.lbl_summary.setText(summary)
 
-    def set_busy(self, busy: bool, message: str = ""):
-        """Set dialog busy state."""
+    def set_busy(self, busy: bool, message: str = "") -> None:
+        """Set dialog busy state.
+
+        Side effects: Updates dialog/widget state and connected UI controls.
+        Failure modes: None.
+        """
         enabled = not bool(busy)
         self.btn_refresh.setEnabled(enabled)
         self.btn_clear.setEnabled(enabled)
@@ -2075,38 +2576,62 @@ class SessionTimelineDialog(QDialog):
 # ============================================================================
 
 def format_float(value: float, decimals: int = 2) -> str:
-    """Format float with specified decimals, empty if zero"""
+    """Format float with specified decimals, empty if zero.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if value != 0:
         return f"{value:.{decimals}f}"
     return ""
 
 
 def format_int(value: int) -> str:
-    """Format integer with thousands separator, empty if zero"""
+    """Format integer with thousands separator, empty if zero.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if value != 0:
         return f"{value:,}"
     return ""
 
 
 def format_datetime(timestamp: int) -> str:
-    """Format Unix timestamp, empty if zero"""
+    """Format Unix timestamp, empty if zero.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if timestamp > 0:
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
     return ""
 
 
 def format_size(bytes_size: int) -> str:
-    """Format bytes as human-readable size"""
+    """Format bytes as human-readable size.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     return format_size_mode(bytes_size, mode='human_readable')
 
 
 def format_speed(bytes_per_sec: int) -> str:
-    """Format speed in bytes/sec"""
+    """Format speed in bytes/sec.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     return format_speed_mode(bytes_per_sec, mode='human_readable')
 
 
 def _normalize_display_mode(value: Any, default: str) -> str:
-    """Normalize mode to 'bytes' or 'human_readable'."""
+    """Normalize mode to 'bytes' or 'human_readable'.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     mode = str(value or default).strip().lower()
     if mode in {'bytes', 'human_readable'}:
         return mode
@@ -2114,7 +2639,11 @@ def _normalize_display_mode(value: Any, default: str) -> str:
 
 
 def format_size_mode(bytes_size: int, mode: str = 'human_readable') -> str:
-    """Format size according to display mode."""
+    """Format size according to display mode.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     mode = _normalize_display_mode(mode, DEFAULT_DISPLAY_SIZE_MODE)
     size_val = int(bytes_size or 0)
     if mode == 'bytes':
@@ -2135,7 +2664,11 @@ def format_size_mode(bytes_size: int, mode: str = 'human_readable') -> str:
 
 
 def format_speed_mode(bytes_per_sec: int, mode: str = 'human_readable') -> str:
-    """Format speed according to display mode."""
+    """Format speed according to display mode.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     speed_val = int(bytes_per_sec or 0)
     if speed_val == 0:
         return ""
@@ -2146,7 +2679,11 @@ def format_speed_mode(bytes_per_sec: int, mode: str = 'human_readable') -> str:
 
 
 def format_eta(seconds: int) -> str:
-    """Format ETA seconds to compact human-readable duration."""
+    """Format ETA seconds to compact human-readable duration.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     try:
         eta = int(seconds)
     except Exception:
@@ -2169,7 +2706,11 @@ def format_eta(seconds: int) -> str:
 
 
 def _normalize_instance_host(raw_host: Any) -> str:
-    """Normalize host input used for per-instance file ID generation."""
+    """Normalize host input used for per-instance file ID generation.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if raw_host is None:
         return "localhost"
     host = str(raw_host).strip()
@@ -2177,7 +2718,11 @@ def _normalize_instance_host(raw_host: Any) -> str:
 
 
 def _normalize_instance_port(raw_port: Any) -> int:
-    """Normalize port input used for per-instance file ID generation."""
+    """Normalize port input used for per-instance file ID generation.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     try:
         port = int(raw_port)
     except Exception:
@@ -2188,7 +2733,11 @@ def _normalize_instance_port(raw_port: Any) -> int:
 
 
 def _normalize_instance_counter(raw_counter: Any) -> int:
-    """Normalize per-server instance counter used as instance ID suffix."""
+    """Normalize per-server instance counter used as instance ID suffix.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     try:
         counter = int(raw_counter)
     except Exception:
@@ -2197,7 +2746,11 @@ def _normalize_instance_counter(raw_counter: Any) -> int:
 
 
 def _normalize_http_protocol_scheme(raw_scheme: Any) -> str:
-    """Normalize WebUI/API protocol scheme to http or https."""
+    """Normalize WebUI/API protocol scheme to http or https.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     scheme = str(raw_scheme or "").strip().lower()
     if scheme in ("http", "https"):
         return scheme
@@ -2210,7 +2763,11 @@ def compute_instance_id(
     length: int = INSTANCE_ID_LENGTH,
     instance_counter: Any = 1,
 ) -> str:
-    """Compute a short deterministic ID from qb_host + qb_port."""
+    """Compute a short deterministic ID from qb_host + qb_port.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     host = _normalize_instance_host(qb_host)
     port = _normalize_instance_port(qb_port)
     digest = hashlib.sha1(f"{host}:{port}".encode("utf-8")).hexdigest()
@@ -2224,7 +2781,11 @@ def compute_instance_id(
 
 
 def compute_instance_id_from_config(config: Dict[str, Any]) -> str:
-    """Compute instance ID from a config dict using normalized host/port values."""
+    """Compute instance ID from a config dict using normalized host/port values.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     cfg = config if isinstance(config, dict) else {}
     host = cfg.get("qb_host", cfg.get("host", "localhost"))
     port = cfg.get("qb_port", cfg.get("port", 8080))
@@ -2233,7 +2794,11 @@ def compute_instance_id_from_config(config: Dict[str, Any]) -> str:
 
 
 def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
-    """Append _<instance_id> before file extension, preserving directory."""
+    """Append _<instance_id> before file extension, preserving directory.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     raw = str(path_value or "").strip()
     if not raw:
         return raw
@@ -2253,7 +2818,11 @@ def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
 
 
 def settings_app_name_for_instance(instance_id: str) -> str:
-    """Build QSettings app name for a given instance ID."""
+    """Build QSettings app name for a given instance ID.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: None.
+    """
     ident = str(instance_id or "").strip().lower()
     if not ident:
         return G_APP_NAME
@@ -2264,7 +2833,11 @@ def resolve_cache_file_path(
     cache_file_name: str = CACHE_FILE_NAME,
     instance_id: str = "",
 ) -> Path:
-    """Resolve cache file path under OS temp dir unless absolute override is used."""
+    """Resolve cache file path under OS temp dir unless absolute override is used.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     raw_path = Path(str(cache_file_name))
     if instance_id:
         raw_path = Path(_append_instance_id_to_filename(str(raw_path), instance_id))
@@ -2274,7 +2847,11 @@ def resolve_cache_file_path(
 
 
 def resolve_instance_lock_file_path(instance_id: str, instance_counter: Any) -> Path:
-    """Resolve one .lck file path for a computed instance id + counter."""
+    """Resolve one .lck file path for a computed instance id + counter.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     ident = str(instance_id or "").strip().lower()
     counter = _normalize_instance_counter(instance_counter)
     suffix = f"_{counter}"
@@ -2283,7 +2860,11 @@ def resolve_instance_lock_file_path(instance_id: str, instance_counter: Any) -> 
 
 
 def load_app_icon() -> QIcon:
-    """Load the application icon from the script directory when available."""
+    """Load the application icon from the script directory when available.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: None.
+    """
     icon_path = Path(__file__).resolve().with_name(APP_ICON_FILE_NAME)
     if not icon_path.exists():
         return QIcon()
@@ -2291,7 +2872,11 @@ def load_app_icon() -> QIcon:
 
 
 def _instance_lock_key(lock_path: Path) -> str:
-    """Build a stable dictionary key for one lock file path."""
+    """Build a stable dictionary key for one lock file path.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     try:
         return str(Path(lock_path).resolve())
     except Exception:
@@ -2299,7 +2884,11 @@ def _instance_lock_key(lock_path: Path) -> str:
 
 
 def _try_acquire_os_file_lock(handle) -> bool:
-    """Try to acquire a non-blocking exclusive lock on one open file handle."""
+    """Try to acquire a non-blocking exclusive lock on one open file handle.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     try:
         if os.name == "nt":
             import msvcrt
@@ -2316,8 +2905,12 @@ def _try_acquire_os_file_lock(handle) -> bool:
         return False
 
 
-def _release_os_file_lock(handle):
-    """Best-effort release of an OS-level file lock."""
+def _release_os_file_lock(handle) -> None:
+    """Best-effort release of an OS-level file lock.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     try:
         if os.name == "nt":
             import msvcrt
@@ -2337,7 +2930,11 @@ def acquire_instance_lock(
     config: Dict[str, Any],
     start_counter: Any,
 ) -> Tuple[int, str, Path]:
-    """Acquire an exclusive .lck file lock; auto-increment counter when in use."""
+    """Acquire an exclusive .lck file lock; auto-increment counter when in use.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     cfg = config if isinstance(config, dict) else {}
     counter = _normalize_instance_counter(start_counter)
 
@@ -2386,8 +2983,12 @@ def acquire_instance_lock(
             raise
 
 
-def release_instance_lock(lock_path: Path):
-    """Best-effort release/removal of an instance .lck file on shutdown."""
+def release_instance_lock(lock_path: Path) -> None:
+    """Best-effort release/removal of an instance .lck file on shutdown.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     key = _instance_lock_key(Path(lock_path))
     handle = _INSTANCE_LOCK_HANDLES.pop(key, None)
     if handle is not None:
@@ -2409,7 +3010,8 @@ def release_instance_lock(lock_path: Path):
 def parse_tags(tags) -> List[str]:
     """Parse tags from qBittorrentAPI into a list of strings.
 
-    qbittorrentapi may return tags as a comma-separated string or a list.
+    Side effects: None.
+    Failure modes: None.
     """
     if not tags:
         return []
@@ -2421,14 +3023,22 @@ def parse_tags(tags) -> List[str]:
 
 
 def matches_wildcard(text: str, pattern: str) -> bool:
-    """Check if text matches DOS-style wildcard pattern"""
+    """Check if text matches DOS-style wildcard pattern.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if not pattern:
         return True
     return fnmatch.fnmatch(text.lower(), pattern.lower())
 
 
 def normalize_filter_pattern(raw_pattern: str) -> str:
-    """Normalize filter input: plain text becomes a contains wildcard pattern."""
+    """Normalize filter input: plain text becomes a contains wildcard pattern.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     pattern = (raw_pattern or "").strip()
     if not pattern:
         return ""
@@ -2438,7 +3048,11 @@ def normalize_filter_pattern(raw_pattern: str) -> str:
 
 
 def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> List[tuple]:
-    """Calculate size bucket ranges"""
+    """Calculate size bucket ranges.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if min_size >= max_size or count < 1:
         return []
 
@@ -2456,11 +3070,21 @@ def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> List
 class NumericTableWidgetItem(QTableWidgetItem):
     """QTableWidgetItem that sorts by a numeric value instead of text."""
 
-    def __init__(self, display_text: str, sort_value: float = 0.0):
+    def __init__(self, display_text: str, sort_value: float = 0.0) -> None:
+        """Store display text and numeric sort key for table sorting.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         super().__init__(display_text)
         self._sort_value = sort_value
 
-    def __lt__(self, other):
+    def __lt__(self, other) -> bool:
+        """Compare by numeric sort key when both items are numeric wrappers.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if isinstance(other, NumericTableWidgetItem):
             return self._sort_value < other._sort_value
         return super().__lt__(other)
@@ -2473,7 +3097,12 @@ class NumericTableWidgetItem(QTableWidgetItem):
 class MainWindow(QMainWindow):
     """Main application window"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """Initialize UI, runtime state, queues, settings, and startup refresh.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         super().__init__()
 
         self.config = config if isinstance(config, dict) else {}
@@ -2610,8 +3239,12 @@ class MainWindow(QMainWindow):
         self.show()
         QTimer.singleShot(500, self._bring_to_front_startup)
 
-    def _create_ui(self):
-        """Create the main UI layout"""
+    def _create_ui(self) -> None:
+        """Create the main UI layout.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -2647,8 +3280,12 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.main_splitter)
 
-    def _create_details_tabs(self):
-        """Create details tabs (General/Trackers/Peers/Content/Edit)."""
+    def _create_details_tabs(self) -> None:
+        """Create details tabs (General/Trackers/Peers/Content/Edit).
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setTabPosition(QTabWidget.TabPosition.South)
 
@@ -2863,7 +3500,11 @@ class MainWindow(QMainWindow):
         self._set_torrent_edit_enabled(False, "Select one torrent to edit.")
 
     def _create_filter_bar(self) -> QWidget:
-        """Create the filter bar above the torrents table"""
+        """Create the filter bar above the torrents table.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         widget = QFrame()
         widget.setFrameShape(QFrame.Shape.StyledPanel)
         widget.setSizePolicy(QSizePolicy.Policy.Preferred,
@@ -2900,7 +3541,11 @@ class MainWindow(QMainWindow):
         return widget
 
     def _create_left_panel(self) -> QWidget:
-        """Create the left filter panel as a single tree with collapsible sections."""
+        """Create the left filter panel as a single tree with collapsible sections.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.tree_filters = QTreeWidget()
         self.tree_filters.setHeaderLabel("Filters")
         self.tree_filters.setRootIsDecorated(True)
@@ -2967,7 +3612,11 @@ class MainWindow(QMainWindow):
         return self.tree_filters
 
     def _is_filter_item_active(self, kind: str, value) -> bool:
-        """Return whether a filter tree item is currently active."""
+        """Return whether a filter tree item is currently active.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if kind == 'status':
             return value == self.current_status_filter
         if kind == 'category':
@@ -2980,8 +3629,12 @@ class MainWindow(QMainWindow):
             return value == self.current_tracker_filter
         return False
 
-    def _refresh_filter_tree_highlights(self):
-        """Highlight all currently active filters in the unified tree."""
+    def _refresh_filter_tree_highlights(self) -> None:
+        """Highlight all currently active filters in the unified tree.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if not hasattr(self, 'tree_filters'):
             return
 
@@ -3014,7 +3667,11 @@ class MainWindow(QMainWindow):
                 item.setFont(0, font)
 
     def _create_torrents_table(self) -> QTableWidget:
-        """Create the torrents table widget"""
+        """Create the torrents table widget.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         table = QTableWidget()
         table.setAlternatingRowColors(True)
         table.setSortingEnabled(True)
@@ -3049,8 +3706,12 @@ class MainWindow(QMainWindow):
 
         return table
 
-    def _create_torrent_columns_menu(self, parent_menu: QMenu):
-        """Create View -> Torrent Columns submenu with per-column visibility toggles."""
+    def _create_torrent_columns_menu(self, parent_menu: QMenu) -> None:
+        """Create View -> Torrent Columns submenu with per-column visibility toggles.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         columns_menu = parent_menu.addMenu("Torrent &Columns")
         action_basic_view = QAction("Basic View", self)
         action_basic_view.triggered.connect(self._apply_basic_torrent_view)
@@ -3086,8 +3747,12 @@ class MainWindow(QMainWindow):
         action_show_all.triggered.connect(self._show_all_torrent_columns)
         columns_menu.addAction(action_show_all)
 
-    def _set_torrent_column_visible(self, column_key: str, visible: bool):
-        """Show or hide one torrent-table column by stable column key."""
+    def _set_torrent_column_visible(self, column_key: str, visible: bool) -> None:
+        """Show or hide one torrent-table column by stable column key.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         idx = self.torrent_column_index.get(column_key)
         if idx is None:
             return
@@ -3095,15 +3760,23 @@ class MainWindow(QMainWindow):
         self._sync_torrent_column_actions()
         self._save_settings()
 
-    def _show_all_torrent_columns(self):
-        """Make every torrent-table column visible."""
+    def _show_all_torrent_columns(self) -> None:
+        """Make every torrent-table column visible.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         for idx in range(self.tbl_torrents.columnCount()):
             self.tbl_torrents.setColumnHidden(idx, False)
         self._sync_torrent_column_actions()
         self._save_settings()
 
-    def _sync_torrent_column_actions(self):
-        """Refresh column visibility action checked states from current table state."""
+    def _sync_torrent_column_actions(self) -> None:
+        """Refresh column visibility action checked states from current table state.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not getattr(self, "column_visibility_actions", None):
             return
         for key, action in self.column_visibility_actions.items():
@@ -3115,8 +3788,12 @@ class MainWindow(QMainWindow):
             action.setChecked(state)
             action.blockSignals(prev)
 
-    def _apply_hidden_columns_by_keys(self, hidden_keys: List[str]):
-        """Apply hidden column state from stable key list."""
+    def _apply_hidden_columns_by_keys(self, hidden_keys: List[str]) -> None:
+        """Apply hidden column state from stable key list.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         hidden = {str(k) for k in hidden_keys}
         for idx, col in enumerate(self.torrent_columns):
             self.tbl_torrents.setColumnHidden(idx, col["key"] in hidden)
@@ -3126,8 +3803,12 @@ class MainWindow(QMainWindow):
         self,
         visible_keys: List[str],
         widths: Optional[Dict[str, Any]] = None,
-    ):
-        """Apply a torrent-table view by visible column keys and optional widths."""
+    ) -> None:
+        """Apply a torrent-table view by visible column keys and optional widths.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         visible_set = {str(key) for key in list(visible_keys or [])}
         known_keys = set(self.torrent_column_index.keys())
         visible_set = {key for key in visible_set if key in known_keys}
@@ -3150,7 +3831,11 @@ class MainWindow(QMainWindow):
         self._save_settings()
 
     def _current_torrent_view_payload(self) -> Dict[str, Any]:
-        """Return visible columns + widths for the current torrent-table view."""
+        """Return visible columns + widths for the current torrent-table view.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         visible_columns: List[str] = []
         widths: Dict[str, int] = {}
         for idx, column in enumerate(self.torrent_columns):
@@ -3165,7 +3850,11 @@ class MainWindow(QMainWindow):
         }
 
     def _saved_torrent_views(self) -> Dict[str, Dict[str, Any]]:
-        """Load named torrent-table views from QSettings."""
+        """Load named torrent-table views from QSettings.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         settings = self._new_settings()
         raw_json = settings.value("torrentColumnNamedViewsJson", "")
         if isinstance(raw_json, (bytes, bytearray)):
@@ -3217,8 +3906,12 @@ class MainWindow(QMainWindow):
 
         return cleaned
 
-    def _store_saved_torrent_views(self, views: Dict[str, Dict[str, Any]]):
-        """Store named torrent-table views into QSettings."""
+    def _store_saved_torrent_views(self, views: Dict[str, Dict[str, Any]]) -> None:
+        """Store named torrent-table views into QSettings.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         settings = self._new_settings()
         payload = views if isinstance(views, dict) else {}
         settings.setValue(
@@ -3227,8 +3920,12 @@ class MainWindow(QMainWindow):
         )
         settings.sync()
 
-    def _refresh_saved_torrent_views_menu(self):
-        """Rebuild the Saved Views submenu from QSettings."""
+    def _refresh_saved_torrent_views_menu(self) -> None:
+        """Rebuild the Saved Views submenu from QSettings.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         menu = getattr(self, "saved_torrent_views_menu", None)
         if menu is None:
             return
@@ -3248,8 +3945,12 @@ class MainWindow(QMainWindow):
             )
             menu.addAction(action)
 
-    def _apply_saved_torrent_view(self, view_name: str):
-        """Apply one named saved torrent-table view."""
+    def _apply_saved_torrent_view(self, view_name: str) -> None:
+        """Apply one named saved torrent-table view.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         name = str(view_name or "").strip()
         if not name:
             return
@@ -3263,8 +3964,12 @@ class MainWindow(QMainWindow):
         self._apply_torrent_view(visible_columns, widths=widths if isinstance(widths, dict) else {})
         self._set_status(f"Applied view: {name}")
 
-    def _save_current_torrent_view(self):
-        """Prompt for a name and save current column visibility/widths as a named view."""
+    def _save_current_torrent_view(self) -> None:
+        """Prompt for a name and save current column visibility/widths as a named view.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         name, ok = QInputDialog.getText(
             self,
             "Save Torrent View",
@@ -3288,22 +3993,38 @@ class MainWindow(QMainWindow):
         self._refresh_saved_torrent_views_menu()
         self._set_status(f"Saved view: {view_name}")
 
-    def _apply_basic_torrent_view(self):
-        """Apply built-in Basic torrent-table view preset."""
+    def _apply_basic_torrent_view(self) -> None:
+        """Apply built-in Basic torrent-table view preset.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._apply_torrent_view(list(BASIC_TORRENT_VIEW_KEYS))
         self._set_status("Applied view: Basic")
 
-    def _apply_medium_torrent_view(self):
-        """Apply built-in Medium torrent-table view preset."""
+    def _apply_medium_torrent_view(self) -> None:
+        """Apply built-in Medium torrent-table view preset.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._apply_torrent_view(list(MEDIUM_TORRENT_VIEW_KEYS))
         self._set_status("Applied view: Medium")
 
-    def _fit_torrent_columns(self):
-        """Resize visible torrent table columns to fit their contents."""
+    def _fit_torrent_columns(self) -> None:
+        """Resize visible torrent table columns to fit their contents.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self.tbl_torrents.resizeColumnsToContents()
 
-    def _create_menus(self):
-        """Create menu bar"""
+    def _create_menus(self) -> None:
+        """Create menu bar.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         menubar = self.menuBar()
         self._build_file_menu(menubar)
         self._build_edit_menu(menubar)
@@ -3311,8 +4032,12 @@ class MainWindow(QMainWindow):
         self._build_tools_menu(menubar)
         self._build_help_menu(menubar)
 
-    def _build_file_menu(self, menubar):
-        """Create File menu."""
+    def _build_file_menu(self, menubar) -> None:
+        """Create File menu.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         file_menu = menubar.addMenu("&File")
 
         add_action = QAction("&Add Torrent...", self)
@@ -3340,8 +4065,12 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-    def _build_edit_menu(self, menubar):
-        """Create Edit menu."""
+    def _build_edit_menu(self, menubar) -> None:
+        """Create Edit menu.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         edit_menu = menubar.addMenu("&Edit")
 
         action_start = QAction("&Start", self)
@@ -3422,8 +4151,12 @@ class MainWindow(QMainWindow):
         action_resume_session.triggered.connect(self._resume_session)
         edit_menu.addAction(action_resume_session)
 
-    def _build_view_menu(self, menubar):
-        """Create View menu."""
+    def _build_view_menu(self, menubar) -> None:
+        """Create View menu.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         view_menu = menubar.addMenu("&View")
 
         action_open_log = QAction("Open &Log File", self)
@@ -3486,8 +4219,12 @@ class MainWindow(QMainWindow):
         action_reset_view.triggered.connect(self._reset_view_defaults)
         view_menu.addAction(action_reset_view)
 
-    def _build_tools_menu(self, menubar):
-        """Create Tools menu."""
+    def _build_tools_menu(self, menubar) -> None:
+        """Create Tools menu.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         tools_menu = menubar.addMenu("&Tools")
 
         self.action_clipboard_monitor = QAction("Enable &Clipboard Monitor", self)
@@ -3538,16 +4275,24 @@ class MainWindow(QMainWindow):
         action_session_timeline.triggered.connect(self._show_session_timeline)
         tools_menu.addAction(action_session_timeline)
 
-    def _build_help_menu(self, menubar):
-        """Create Help menu."""
+    def _build_help_menu(self, menubar) -> None:
+        """Create Help menu.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         help_menu = menubar.addMenu("&Help")
 
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
-    def _create_statusbar(self):
-        """Create status bar"""
+    def _create_statusbar(self) -> None:
+        """Create status bar.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
 
@@ -3582,7 +4327,11 @@ class MainWindow(QMainWindow):
         self._update_statusbar_transfer_summary()
 
     def _statusbar_instance_identity_text(self) -> str:
-        """Build left-most status bar identity text for current connection/instance."""
+        """Build left-most status bar identity text for current connection/instance.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         user = str(
             self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
             if isinstance(self.config, dict)
@@ -3617,12 +4366,8 @@ class MainWindow(QMainWindow):
     def _build_connection_info(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Build qBittorrent connection info from TOML config with env var fallback.
 
-        Supports HTTP basic auth (separate from qBittorrent API auth) via the
-        host URL (e.g. https://user:password@remote.host.com:12345) or via
-        explicit http_basic_auth_username / http_basic_auth_password config keys.
-        Protocol scheme can be forced via optional http_protocol_scheme (http/https).
-        HTTP timeout defaults to 300 seconds and can be set via optional
-        http_timeout in TOML.
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         # Host URL ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â may contain scheme, basic-auth credentials, and port
         raw_host = (
@@ -3712,7 +4457,11 @@ class MainWindow(QMainWindow):
         return conn
 
     def _create_client(self) -> qbittorrentapi.Client:
-        """Create and authenticate a qBittorrent API client."""
+        """Create and authenticate a qBittorrent API client.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         qb_client = qbittorrentapi.Client(**self.qb_conn_info)
         qb = (
             _DebugAPIClientProxy(qb_client, self)
@@ -3726,8 +4475,12 @@ class MainWindow(QMainWindow):
     # Content Cache
     # ========================================================================
 
-    def _remove_expired_cache_file(self):
-        """Delete cache file when older than configured maximum age."""
+    def _remove_expired_cache_file(self) -> None:
+        """Delete cache file when older than configured maximum age.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             if not self.cache_file_path.exists():
                 return
@@ -3747,8 +4500,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.warning("Failed to remove expired content cache %s: %s", self.cache_file_path, e)
 
-    def _load_content_cache(self):
-        """Load persistent content cache from JSON file."""
+    def _load_content_cache(self) -> None:
+        """Load persistent content cache from JSON file.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         self.content_cache = {}
         try:
             if not self.cache_file_path.exists():
@@ -3780,8 +4537,12 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to load content cache from %s: %s", self.cache_file_path, e)
             self.content_cache = {}
 
-    def _save_content_cache(self):
-        """Persist content cache to disk as JSON."""
+    def _save_content_cache(self) -> None:
+        """Persist content cache to disk as JSON.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self.cache_file_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = Path(f"{self.cache_file_path}.tmp")
@@ -3795,6 +4556,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _safe_int(value, default: int = 0) -> int:
+        """Convert value to int and return default when conversion fails.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             return int(value)
         except Exception:
@@ -3802,13 +4568,22 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _safe_float(value, default: float = 0.0) -> float:
+        """Convert value to float and return default when conversion fails.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             return float(value)
         except Exception:
             return default
 
     def _normalize_cached_file(self, entry: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize one cached file entry."""
+        """Normalize one cached file entry.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         return {
             'name': str(entry.get('name', '') or ''),
             'size': self._safe_int(entry.get('size', 0), 0),
@@ -3817,7 +4592,11 @@ class MainWindow(QMainWindow):
         }
 
     def _serialize_file_for_cache(self, file_obj) -> Dict[str, Any]:
-        """Serialize API file object to cache-safe dict."""
+        """Serialize API file object to cache-safe dict.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         return self._normalize_cached_file({
             'name': getattr(file_obj, 'name', '') or '',
             'size': getattr(file_obj, 'size', 0),
@@ -3826,7 +4605,11 @@ class MainWindow(QMainWindow):
         })
 
     def _get_cached_files(self, torrent_hash: str) -> List[Dict[str, Any]]:
-        """Return cached files for torrent hash, or empty list."""
+        """Return cached files for torrent hash, or empty list.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not torrent_hash:
             return []
         entry = self.content_cache.get(torrent_hash, {})
@@ -3834,7 +4617,11 @@ class MainWindow(QMainWindow):
         return files if isinstance(files, list) else []
 
     def _get_cache_refresh_candidates(self) -> Dict[str, str]:
-        """Return torrent hashes that need cache refresh (new/missing/status change)."""
+        """Return torrent hashes that need cache refresh (new/missing/status change).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         candidates: Dict[str, str] = {}
         for torrent in self.all_torrents:
             torrent_hash = getattr(torrent, 'hash', '') or ''
@@ -3850,7 +4637,11 @@ class MainWindow(QMainWindow):
         return candidates
 
     def _matches_file_filter(self, torrent_hash: str, pattern: str) -> bool:
-        """Return True when any cached file name/path matches the pattern."""
+        """Return True when any cached file name/path matches the pattern.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         cached_files = self._get_cached_files(torrent_hash)
         if not cached_files:
             return False
@@ -3866,14 +4657,22 @@ class MainWindow(QMainWindow):
     # Settings Management
     # ========================================================================
 
-    def _capture_default_view_state(self):
-        """Capture baseline splitter/header states for Reset View."""
+    def _capture_default_view_state(self) -> None:
+        """Capture baseline splitter/header states for Reset View.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._default_main_splitter_state = self.main_splitter.saveState()
         self._default_right_splitter_state = self.right_splitter.saveState()
         self._default_torrent_header_state = self.tbl_torrents.horizontalHeader().saveState()
 
-    def _apply_default_main_splitter_width(self):
-        """Apply default left-panel width in pixels on current splitter geometry."""
+    def _apply_default_main_splitter_width(self) -> None:
+        """Apply default left-panel width in pixels on current splitter geometry.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         total_width = self.main_splitter.width()
         if total_width <= 0:
             total_width = self.width()
@@ -3884,8 +4683,12 @@ class MainWindow(QMainWindow):
         right_width = max(1, total_width - left_width)
         self.main_splitter.setSizes([left_width, right_width])
 
-    def _apply_default_torrent_header_layout(self):
-        """Apply default torrent-table column order/widths/sort indicator."""
+    def _apply_default_torrent_header_layout(self) -> None:
+        """Apply default torrent-table column order/widths/sort indicator.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         header = self.tbl_torrents.horizontalHeader()
 
         # Restore natural logical->visual order.
@@ -3902,8 +4705,12 @@ class MainWindow(QMainWindow):
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self._sync_torrent_column_actions()
 
-    def _restore_default_view_state(self):
-        """Restore baseline splitter/header states for Reset View."""
+    def _restore_default_view_state(self) -> None:
+        """Restore baseline splitter/header states for Reset View.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self._apply_default_main_splitter_width()
         except Exception:
@@ -3929,7 +4736,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _to_bool(value, default: bool = False) -> bool:
-        """Convert QSettings-like values to bool."""
+        """Convert QSettings-like values to bool.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if value is None:
             return default
         if isinstance(value, bool):
@@ -3944,11 +4755,19 @@ class MainWindow(QMainWindow):
         return default
 
     def _settings_app_name(self) -> str:
-        """Return per-instance QSettings app name."""
+        """Return per-instance QSettings app name.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         return settings_app_name_for_instance(self.instance_id)
 
     def _new_settings(self) -> QSettings:
-        """Create QSettings configured to use INI backend."""
+        """Create QSettings configured to use INI backend.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         return QSettings(
             QSettings.Format.IniFormat,
             QSettings.Scope.UserScope,
@@ -3957,21 +4776,33 @@ class MainWindow(QMainWindow):
         )
 
     def _settings_ini_path(self) -> Path:
-        """Return the current INI file path used by QSettings."""
+        """Return the current INI file path used by QSettings.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         settings = self._new_settings()
         settings.sync()
         file_name = str(settings.fileName() or "").strip()
         fallback_name = f"{self._settings_app_name()}.ini"
         return Path(file_name) if file_name else Path(fallback_name).resolve()
 
-    def _save_refresh_settings(self):
-        """Persist only auto-refresh runtime settings."""
+    def _save_refresh_settings(self) -> None:
+        """Persist only auto-refresh runtime settings.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         settings = self._new_settings()
         settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
         settings.setValue("refreshIntervalSec", int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)))
 
-    def _setup_clipboard_monitor(self):
-        """Attach clipboard change listener for optional auto-add behavior."""
+    def _setup_clipboard_monitor(self) -> None:
+        """Attach clipboard change listener for optional auto-add behavior.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self._clipboard = QApplication.clipboard()
             if self._clipboard:
@@ -3981,7 +4812,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_magnet_link(text: str) -> str:
-        """Extract first magnet link from arbitrary clipboard text."""
+        """Extract first magnet link from arbitrary clipboard text.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not text:
             return ""
         match = re.search(r"(magnet:\?[^\s]+)", text, flags=re.IGNORECASE)
@@ -3989,7 +4824,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_torrent_hash(text: str) -> str:
-        """Extract first torrent hash (hex/base32 BTIH forms) from text."""
+        """Extract first torrent hash (hex/base32 BTIH forms) from text.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not text:
             return ""
         match = re.search(
@@ -4000,12 +4839,20 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _magnet_from_hash(torrent_hash: str) -> str:
-        """Build magnet URI from torrent infohash."""
+        """Build magnet URI from torrent infohash.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         normalized = str(torrent_hash or "").strip().lower()
         return f"magnet:?xt=urn:btih:{normalized}"
 
-    def _remember_clipboard_key(self, key: str):
-        """Remember processed clipboard key and evict oldest entries."""
+    def _remember_clipboard_key(self, key: str) -> None:
+        """Remember processed clipboard key and evict oldest entries.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not key or key in self._clipboard_seen_keys:
             return
         self._clipboard_seen_keys.add(key)
@@ -4014,8 +4861,12 @@ class MainWindow(QMainWindow):
             evicted = self._clipboard_seen_order.popleft()
             self._clipboard_seen_keys.discard(evicted)
 
-    def _queue_add_torrent_from_clipboard(self, magnet_url: str, source: str):
-        """Queue add-torrent task for clipboard-derived magnet url."""
+    def _queue_add_torrent_from_clipboard(self, magnet_url: str, source: str) -> None:
+        """Queue add-torrent task for clipboard-derived magnet url.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._log("INFO", f"Clipboard monitor detected {source}; adding torrent")
         self._set_status("Clipboard monitor: adding torrent...")
         self.api_queue.add_task(
@@ -4026,7 +4877,11 @@ class MainWindow(QMainWindow):
         )
 
     def _process_clipboard_text(self, text: str) -> bool:
-        """Process clipboard text and auto-add torrent when magnet/hash appears."""
+        """Process clipboard text and auto-add torrent when magnet/hash appears.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not text:
             return False
 
@@ -4054,8 +4909,12 @@ class MainWindow(QMainWindow):
 
         return False
 
-    def _on_clipboard_changed(self):
-        """Clipboard signal handler used by monitor toggle."""
+    def _on_clipboard_changed(self) -> None:
+        """Clipboard signal handler used by monitor toggle.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if not self.clipboard_monitor_enabled or not self._clipboard:
             return
         try:
@@ -4067,8 +4926,12 @@ class MainWindow(QMainWindow):
         self._last_clipboard_text = text
         self._process_clipboard_text(text)
 
-    def _toggle_clipboard_monitor(self, enabled: bool):
-        """Enable or disable clipboard monitor."""
+    def _toggle_clipboard_monitor(self, enabled: bool) -> None:
+        """Enable or disable clipboard monitor.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.clipboard_monitor_enabled = bool(enabled)
         self._save_settings()
         state = "enabled" if self.clipboard_monitor_enabled else "disabled"
@@ -4077,8 +4940,12 @@ class MainWindow(QMainWindow):
         if self.clipboard_monitor_enabled:
             self._on_clipboard_changed()
 
-    def _edit_settings_ini_file(self):
-        """Open QSettings INI file in system default editor."""
+    def _edit_settings_ini_file(self) -> None:
+        """Open QSettings INI file in system default editor.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             ini_path = self._settings_ini_path()
             ini_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4092,7 +4959,11 @@ class MainWindow(QMainWindow):
             self._set_status(f"Failed to open INI file: {e}")
 
     def _web_ui_browser_url(self) -> str:
-        """Build Web UI URL for the current qBittorrent connection."""
+        """Build Web UI URL for the current qBittorrent connection.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         user = str(
             self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
             if isinstance(self.config, dict)
@@ -4142,8 +5013,12 @@ class MainWindow(QMainWindow):
             host_text = f"[{host_text}]"
         return f"{scheme}://{encoded_user}@{host_text}:{port}"
 
-    def _open_web_ui_in_browser(self):
-        """Open qBittorrent Web UI URL in default browser."""
+    def _open_web_ui_in_browser(self) -> None:
+        """Open qBittorrent Web UI URL in default browser.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             url = self._web_ui_browser_url()
             _open_file_in_default_app(url)
@@ -4153,9 +5028,12 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Failed to open qBittorrent Web UI: {e}")
             self._set_status(f"Failed to open Web UI: {e}")
 
-    def _load_settings(self):
-        """Load window geometry, splitter sizes, column widths, sort order,
-        and filter selection from QSettings."""
+    def _load_settings(self) -> None:
+        """Load window geometry, splitter sizes, column widths, sort order,.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         settings = self._new_settings()
 
         # Window geometry
@@ -4271,9 +5149,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "action_debug_logging"):
             self.action_debug_logging.setChecked(self.debug_logging_enabled)
 
-    def _save_settings(self):
-        """Save window geometry, splitter sizes, column widths, sort order,
-        and filter selection to QSettings."""
+    def _save_settings(self) -> None:
+        """Save window geometry, splitter sizes, column widths, sort order,.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         settings = self._new_settings()
 
         # Window geometry
@@ -4314,8 +5195,12 @@ class MainWindow(QMainWindow):
     # Initial Data Loading
     # ========================================================================
 
-    def _initial_load(self):
-        """Initial data load on startup"""
+    def _initial_load(self) -> None:
+        """Initial data load on startup.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self._log("INFO", "Starting initial data load...")
             self._log("INFO", f"Connecting to qBittorrent at {self.qb_conn_info['host']}:{self.qb_conn_info['port']}")
@@ -4336,32 +5221,44 @@ class MainWindow(QMainWindow):
     # API Fetch Functions
     # ========================================================================
 
-    def _fetch_categories(self, **_kw) -> Dict:
-        """Fetch categories from qBittorrent"""
+    def _fetch_categories(self, **_kw) -> APITaskResult:
+        """Fetch categories from qBittorrent.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 result = qb.torrents_categories()
             elapsed = time.time() - start_time
-            return {'data': result, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=result, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': None, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=None, elapsed=elapsed, success=False, error=str(e))
 
-    def _fetch_tags(self, **_kw) -> List[str]:
-        """Fetch tags from qBittorrent"""
+    def _fetch_tags(self, **_kw) -> APITaskResult:
+        """Fetch tags from qBittorrent.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 result = qb.torrents_tags()
             elapsed = time.time() - start_time
-            return {'data': sorted(result), 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=sorted(result), elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
     def _selected_remote_torrent_filters(self) -> Dict[str, Any]:
-        """Build remote API filter kwargs from selected status/category/tag/private filters."""
+        """Build remote API filter kwargs from selected status/category/tag/private filters.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         filters: Dict[str, Any] = {}
 
         status = str(self.current_status_filter or "").strip()
@@ -4379,8 +5276,12 @@ class MainWindow(QMainWindow):
 
         return filters
 
-    def _fetch_torrents(self, **_kw) -> List:
-        """Fetch torrents via incremental sync/maindata and return current full list."""
+    def _fetch_torrents(self, **_kw) -> APITaskResult:
+        """Fetch torrents via incremental sync/maindata and return current full list.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
 
         try:
@@ -4449,10 +5350,14 @@ class MainWindow(QMainWindow):
             }
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
     def _merge_sync_maindata(self, maindata: Any) -> List[Any]:
-        """Merge one sync/maindata payload into local torrent map and return ordered list."""
+        """Merge one sync/maindata payload into local torrent map and return ordered list.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         payload = self._entry_to_dict(maindata)
         full_update = bool(payload.get("full_update", False))
         rid = self._safe_int(payload.get("rid", self._sync_rid), self._sync_rid)
@@ -4495,7 +5400,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _entry_to_dict(entry: Any) -> Dict[str, Any]:
-        """Convert qBittorrent API list/dict entry objects to plain dict."""
+        """Convert qBittorrent API list/dict entry objects to plain dict.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if isinstance(entry, dict):
             return dict(entry)
         if hasattr(entry, "items"):
@@ -4516,8 +5425,12 @@ class MainWindow(QMainWindow):
             result[str(key)] = value
         return result
 
-    def _fetch_selected_torrent_trackers(self, torrent_hash: str, **_kw) -> Dict:
-        """Fetch all tracker rows for one torrent."""
+    def _fetch_selected_torrent_trackers(self, torrent_hash: str, **_kw) -> APITaskResult:
+        """Fetch all tracker rows for one torrent.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
@@ -4525,13 +5438,17 @@ class MainWindow(QMainWindow):
 
             rows = [self._entry_to_dict(entry) for entry in list(trackers or [])]
             elapsed = time.time() - start_time
-            return {'data': rows, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=rows, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
-    def _fetch_selected_torrent_peers(self, torrent_hash: str, **_kw) -> Dict:
-        """Fetch all peer rows for one torrent."""
+    def _fetch_selected_torrent_peers(self, torrent_hash: str, **_kw) -> APITaskResult:
+        """Fetch all peer rows for one torrent.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
@@ -4553,14 +5470,18 @@ class MainWindow(QMainWindow):
                     rows.append(row)
 
             elapsed = time.time() - start_time
-            return {'data': rows, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=rows, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
     @staticmethod
     def _tracker_host_from_url(url: str) -> str:
-        """Extract tracker hostname from URL where possible."""
+        """Extract tracker hostname from URL where possible.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         text = str(url or "").strip()
         if not text:
             return ""
@@ -4572,7 +5493,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _classify_tracker_health_status(status_code: int, message: str) -> str:
-        """Classify one tracker row into working/failing/unknown buckets."""
+        """Classify one tracker row into working/failing/unknown buckets.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         msg = str(message or "").strip().lower()
         if status_code in {2, 3, 5}:
             return "working"
@@ -4592,8 +5517,12 @@ class MainWindow(QMainWindow):
             return "failing"
         return "unknown"
 
-    def _fetch_tracker_health_data(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Fetch and aggregate tracker health metrics across provided torrents."""
+    def _fetch_tracker_health_data(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Fetch and aggregate tracker health metrics across provided torrents.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             stats: Dict[str, Dict[str, Any]] = {}
@@ -4682,13 +5611,17 @@ class MainWindow(QMainWindow):
                 )
             )
             elapsed = time.time() - start_time
-            return {'data': rows, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=rows, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
-    def _refresh_content_cache_for_torrents(self, torrent_states: Dict[str, str], **_kw) -> Dict:
-        """Refresh cached file trees for provided torrent hashes."""
+    def _refresh_content_cache_for_torrents(self, torrent_states: Dict[str, str], **_kw) -> APITaskResult:
+        """Refresh cached file trees for provided torrent hashes.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         start_time = time.time()
         try:
             updates: Dict[str, Dict[str, Any]] = {}
@@ -4714,8 +5647,12 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': {}, 'errors': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _add_torrent_api(self, torrent_data: Dict, **_kw) -> Dict[str, Any]:
-        """Add a torrent via API"""
+    def _add_torrent_api(self, torrent_data: Dict, **_kw) -> APITaskResult:
+        """Add a torrent via API.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         start_time = time.time()
         data = dict(torrent_data)  # avoid mutating caller's dict
         try:
@@ -4781,7 +5718,7 @@ class MainWindow(QMainWindow):
             }
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_export_torrents(
         self,
@@ -4789,8 +5726,12 @@ class MainWindow(QMainWindow):
         export_dir: str,
         name_map: Dict[str, str],
         **_kw,
-    ) -> Dict:
-        """Export selected torrents into .torrent files in the target directory."""
+    ) -> APITaskResult:
+        """Export selected torrents into .torrent files in the target directory.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             destination_text = str(export_dir or "").strip()
@@ -4844,109 +5785,145 @@ class MainWindow(QMainWindow):
                 'error': str(e),
             }
 
-    def _api_pause_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Pause one or more torrents via API."""
+    def _api_pause_torrent(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Pause one or more torrents via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_pause(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_resume_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Resume one or more torrents via API."""
+    def _api_resume_torrent(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Resume one or more torrents via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_resume(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_force_start_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Enable force start for one or more torrents via API."""
+    def _api_force_start_torrent(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Enable force start for one or more torrents via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_set_force_start(enable=True, torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_recheck_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Recheck one or more torrents via API."""
+    def _api_recheck_torrent(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Recheck one or more torrents via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_recheck(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_increase_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Increase queue priority for one or more torrents via API."""
+    def _api_increase_torrent_priority(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Increase queue priority for one or more torrents via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_increase_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_decrease_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Decrease queue priority for one or more torrents via API."""
+    def _api_decrease_torrent_priority(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Decrease queue priority for one or more torrents via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_decrease_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_top_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Move one or more torrents to top queue priority via API."""
+    def _api_top_torrent_priority(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Move one or more torrents to top queue priority via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_top_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_minimum_torrent_priority(self, torrent_hashes: List[str], **_kw) -> Dict:
-        """Move one or more torrents to minimum queue priority via API."""
+    def _api_minimum_torrent_priority(self, torrent_hashes: List[str], **_kw) -> APITaskResult:
+        """Move one or more torrents to minimum queue priority via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_bottom_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_apply_selected_torrent_edits(
         self,
         torrent_hash: str,
         updates: Dict[str, Any],
         **_kw,
-    ) -> Dict:
-        """Apply editable properties for a single torrent."""
+    ) -> APITaskResult:
+        """Apply editable properties for a single torrent.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             normalized_hash = str(torrent_hash or "").strip()
@@ -5028,13 +6005,17 @@ class MainWindow(QMainWindow):
                     )
 
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_set_torrent_download_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw) -> Dict:
-        """Set per-torrent download limit (bytes/sec) for selected torrents."""
+    def _api_set_torrent_download_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw) -> APITaskResult:
+        """Set per-torrent download limit (bytes/sec) for selected torrents.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
@@ -5043,13 +6024,17 @@ class MainWindow(QMainWindow):
                     limit=max(0, int(limit_bytes))
                 )
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_set_torrent_upload_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw) -> Dict:
-        """Set per-torrent upload limit (bytes/sec) for selected torrents."""
+    def _api_set_torrent_upload_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw) -> APITaskResult:
+        """Set per-torrent upload limit (bytes/sec) for selected torrents.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
@@ -5058,49 +6043,65 @@ class MainWindow(QMainWindow):
                     limit=max(0, int(limit_bytes))
                 )
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_set_global_download_limit(self, limit_bytes: int, **_kw) -> Dict:
-        """Set global download limit (bytes/sec)."""
+    def _api_set_global_download_limit(self, limit_bytes: int, **_kw) -> APITaskResult:
+        """Set global download limit (bytes/sec).
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.transfer_set_download_limit(limit=max(0, int(limit_bytes)))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_set_global_upload_limit(self, limit_bytes: int, **_kw) -> Dict:
-        """Set global upload limit (bytes/sec)."""
+    def _api_set_global_upload_limit(self, limit_bytes: int, **_kw) -> APITaskResult:
+        """Set global upload limit (bytes/sec).
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.transfer_set_upload_limit(limit=max(0, int(limit_bytes)))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_toggle_alt_speed_mode(self, **_kw) -> Dict:
-        """Toggle alternative/global speed-limit mode."""
+    def _api_toggle_alt_speed_mode(self, **_kw) -> APITaskResult:
+        """Toggle alternative/global speed-limit mode.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.transfer_toggle_speed_limits_mode()
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_fetch_speed_limits_profile(self, **_kw) -> Dict:
-        """Fetch normal/alternative speed limits and current alt-speed mode."""
+    def _api_fetch_speed_limits_profile(self, **_kw) -> APITaskResult:
+        """Fetch normal/alternative speed limits and current alt-speed mode.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
@@ -5135,7 +6136,7 @@ class MainWindow(QMainWindow):
             }
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data={}, elapsed=elapsed, success=False, error=str(e))
 
     def _api_apply_speed_limits_profile(
         self,
@@ -5145,8 +6146,12 @@ class MainWindow(QMainWindow):
         alt_ul: int,
         alt_enabled: bool,
         **_kw,
-    ) -> Dict:
-        """Apply normal/alternative speed limits and desired alt-speed mode."""
+    ) -> APITaskResult:
+        """Apply normal/alternative speed limits and desired alt-speed mode.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
@@ -5168,26 +6173,34 @@ class MainWindow(QMainWindow):
                     qb.transfer_toggle_speed_limits_mode()
 
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_fetch_app_preferences(self, **_kw) -> Dict:
-        """Fetch raw qBittorrent application preferences."""
+    def _api_fetch_app_preferences(self, **_kw) -> APITaskResult:
+        """Fetch raw qBittorrent application preferences.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 prefs_raw = qb.app_preferences()
             prefs = self._entry_to_dict(prefs_raw)
             elapsed = time.time() - start_time
-            return {'data': prefs, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=prefs, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data={}, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_apply_app_preferences(self, updates: Dict[str, Any], **_kw) -> Dict:
-        """Apply only changed application preferences."""
+    def _api_apply_app_preferences(self, updates: Dict[str, Any], **_kw) -> APITaskResult:
+        """Apply only changed application preferences.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             normalized_updates = dict(updates or {})
@@ -5213,8 +6226,12 @@ class MainWindow(QMainWindow):
         is_file: bool,
         priority: int,
         **_kw,
-    ) -> Dict:
-        """Set file priority for one file or a whole folder subtree."""
+    ) -> APITaskResult:
+        """Set file priority for one file or a whole folder subtree.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             normalized = str(relative_path or "").replace("\\", "/").strip("/")
@@ -5254,7 +6271,7 @@ class MainWindow(QMainWindow):
             }
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data={}, elapsed=elapsed, success=False, error=str(e))
 
     def _api_rename_content_path(
         self,
@@ -5263,8 +6280,12 @@ class MainWindow(QMainWindow):
         new_relative_path: str,
         is_file: bool,
         **_kw,
-    ) -> Dict:
-        """Rename one file or folder inside a torrent."""
+    ) -> APITaskResult:
+        """Rename one file or folder inside a torrent.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             old_path = str(old_relative_path or "").replace("\\", "/").strip("/")
@@ -5286,10 +6307,10 @@ class MainWindow(QMainWindow):
                         new_path=new_path,
                     )
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_create_category(
         self,
@@ -5298,8 +6319,12 @@ class MainWindow(QMainWindow):
         incomplete_path: str,
         use_incomplete_path: bool,
         **_kw,
-    ) -> Dict:
-        """Create a new category."""
+    ) -> APITaskResult:
+        """Create a new category.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             normalized_save = str(save_path or "").strip()
@@ -5313,10 +6338,10 @@ class MainWindow(QMainWindow):
                     enable_download_path=enable_download_path,
                 )
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_edit_category(
         self,
@@ -5325,8 +6350,12 @@ class MainWindow(QMainWindow):
         incomplete_path: str,
         use_incomplete_path: bool,
         **_kw,
-    ) -> Dict:
-        """Edit one existing category."""
+    ) -> APITaskResult:
+        """Edit one existing category.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             normalized_save = str(save_path or "").strip()
@@ -5340,85 +6369,113 @@ class MainWindow(QMainWindow):
                     enable_download_path=enable_download_path,
                 )
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_delete_category(self, name: str, **_kw) -> Dict:
-        """Delete one category."""
+    def _api_delete_category(self, name: str, **_kw) -> APITaskResult:
+        """Delete one category.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_remove_categories(categories=[name])
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_create_tags(self, tags: List[str], **_kw) -> Dict:
-        """Create one or more tags."""
+    def _api_create_tags(self, tags: List[str], **_kw) -> APITaskResult:
+        """Create one or more tags.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_create_tags(tags=list(tags))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_delete_tags(self, tags: List[str], **_kw) -> Dict:
-        """Delete one or more tags."""
+    def _api_delete_tags(self, tags: List[str], **_kw) -> APITaskResult:
+        """Delete one or more tags.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_delete_tags(tags=list(tags))
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_pause_session(self, **_kw) -> Dict:
-        """Pause all torrents in current qBittorrent session."""
+    def _api_pause_session(self, **_kw) -> APITaskResult:
+        """Pause all torrents in current qBittorrent session.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_pause(torrent_hashes="all")
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_resume_session(self, **_kw) -> Dict:
-        """Resume all torrents in current qBittorrent session."""
+    def _api_resume_session(self, **_kw) -> APITaskResult:
+        """Resume all torrents in current qBittorrent session.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_resume(torrent_hashes="all")
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_delete_torrent(self, torrent_hashes: List[str], delete_files: bool, **_kw) -> Dict:
-        """Delete one or more torrents via API."""
+    def _api_delete_torrent(self, torrent_hashes: List[str], delete_files: bool, **_kw) -> APITaskResult:
+        """Delete one or more torrents via API.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 qb.torrents_delete(torrent_hashes=list(torrent_hashes), delete_files=delete_files)
             elapsed = time.time() - start_time
-            return {'data': True, 'elapsed': elapsed, 'success': True}
+            return api_task_result(data=True, elapsed=elapsed, success=True)
         except Exception as e:
             elapsed = time.time() - start_time
-            return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+            return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
-    def _api_ban_peers(self, peers: List[str], **_kw) -> Dict:
-        """Ban one or more peer endpoints (IP:port) globally in qBittorrent."""
+    def _api_ban_peers(self, peers: List[str], **_kw) -> APITaskResult:
+        """Ban one or more peer endpoints (IP:port) globally in qBittorrent.
+
+        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
+        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
+        """
         start_time = time.time()
         try:
             endpoints = [
@@ -5440,8 +6497,12 @@ class MainWindow(QMainWindow):
     # API Callbacks
     # ========================================================================
 
-    def _set_categories_from_payload(self, payload: Any):
-        """Normalize categories payload and update category state/tree."""
+    def _set_categories_from_payload(self, payload: Any) -> None:
+        """Normalize categories payload and update category state/tree.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         category_details: Dict[str, Dict[str, Any]] = {}
         if isinstance(payload, dict):
             for raw_name, raw_entry in payload.items():
@@ -5458,7 +6519,11 @@ class MainWindow(QMainWindow):
         self._sync_taxonomy_dialog_data()
 
     def _category_save_path_by_name(self, category_name: str) -> str:
-        """Resolve default save path for one category from cached details."""
+        """Resolve default save path for one category from cached details.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         details = self.category_details.get(str(category_name or ""), {})
         if not isinstance(details, dict):
             return ""
@@ -5469,7 +6534,11 @@ class MainWindow(QMainWindow):
         return ""
 
     def _category_incomplete_path_by_name(self, category_name: str) -> str:
-        """Resolve incomplete path for one category from cached details."""
+        """Resolve incomplete path for one category from cached details.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         details = self.category_details.get(str(category_name or ""), {})
         if not isinstance(details, dict):
             return ""
@@ -5480,7 +6549,11 @@ class MainWindow(QMainWindow):
         return ""
 
     def _category_use_incomplete_path_by_name(self, category_name: str) -> bool:
-        """Resolve whether incomplete path is enabled for one category."""
+        """Resolve whether incomplete path is enabled for one category.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         details = self.category_details.get(str(category_name or ""), {})
         if not isinstance(details, dict):
             return False
@@ -5495,7 +6568,11 @@ class MainWindow(QMainWindow):
         return bool(self._category_incomplete_path_by_name(category_name))
 
     def _taxonomy_category_data(self) -> Dict[str, Dict[str, Any]]:
-        """Build category metadata mapping for manager dialog."""
+        """Build category metadata mapping for manager dialog.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         return {
             name: {
                 "save_path": self._category_save_path_by_name(name),
@@ -5505,8 +6582,12 @@ class MainWindow(QMainWindow):
             for name in self.categories
         }
 
-    def _sync_taxonomy_dialog_data(self):
-        """Refresh taxonomy dialog data when open."""
+    def _sync_taxonomy_dialog_data(self) -> None:
+        """Refresh taxonomy dialog data when open.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         dialog = self._taxonomy_dialog
         if dialog is None:
             return
@@ -5514,8 +6595,12 @@ class MainWindow(QMainWindow):
             return
         dialog.set_taxonomy_data(self._taxonomy_category_data(), list(self.tags))
 
-    def _on_categories_loaded(self, result: Dict):
-        """Handle categories loaded"""
+    def _on_categories_loaded(self, result: Dict) -> None:
+        """Handle categories loaded.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             if not result.get('success', False):
                 error = result.get('error', 'Unknown error')
@@ -5555,8 +6640,12 @@ class MainWindow(QMainWindow):
             self._hide_progress()
             self._set_status(f"Error loading categories: {e}")
 
-    def _on_tags_loaded(self, result: Dict):
-        """Handle tags loaded"""
+    def _on_tags_loaded(self, result: Dict) -> None:
+        """Handle tags loaded.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             if not result.get('success', False):
                 error = result.get('error', 'Unknown error')
@@ -5591,8 +6680,12 @@ class MainWindow(QMainWindow):
             self._hide_progress()
             self._set_status(f"Error loading tags: {e}")
 
-    def _on_torrents_loaded(self, result: Dict):
-        """Handle torrents loaded"""
+    def _on_torrents_loaded(self, result: Dict) -> None:
+        """Handle torrents loaded.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             if not result.get('success', False):
                 self._latest_torrent_fetch_remote_filtered = False
@@ -5681,8 +6774,12 @@ class MainWindow(QMainWindow):
         finally:
             self._set_refresh_torrents_in_progress(False)
 
-    def _select_first_torrent_after_refresh(self, previous_selected_hash: Optional[str] = None):
-        """Select/restore one row after refresh without overriding a valid existing selection."""
+    def _select_first_torrent_after_refresh(self, previous_selected_hash: Optional[str] = None) -> None:
+        """Select/restore one row after refresh without overriding a valid existing selection.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if self.tbl_torrents.rowCount() <= 0:
             return
 
@@ -5717,8 +6814,12 @@ class MainWindow(QMainWindow):
         self.tbl_torrents.selectRow(previous_row)
 
 
-    def _on_content_cache_refreshed(self, result: Dict):
-        """Handle background refresh of cached torrent content trees."""
+    def _on_content_cache_refreshed(self, result: Dict) -> None:
+        """Handle background refresh of cached torrent content trees.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             if not result.get('success', False):
                 error = result.get('error', 'Unknown error')
@@ -5757,8 +6858,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Exception in _on_content_cache_refreshed: {e}")
 
-    def _on_add_torrent_complete(self, result: Dict):
-        """Handle torrent add completion"""
+    def _on_add_torrent_complete(self, result: Dict) -> None:
+        """Handle torrent add completion.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         details = result.get("details", {}) if isinstance(result, dict) else {}
         if isinstance(details, dict):
             added_count = (
@@ -5797,8 +6902,12 @@ class MainWindow(QMainWindow):
         if final_status_text:
             self._set_status(final_status_text)
 
-    def _on_apply_selected_torrent_edits_done(self, result: Dict):
-        """Handle completion of selected torrent edit apply action."""
+    def _on_apply_selected_torrent_edits_done(self, result: Dict) -> None:
+        """Handle completion of selected torrent edit apply action.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._log("INFO", "Torrent edits applied", result.get("elapsed", 0))
             self._set_status("Torrent edits applied")
@@ -5809,8 +6918,12 @@ class MainWindow(QMainWindow):
             self._set_status(f"Failed to apply torrent edits: {error}")
         self._hide_progress()
 
-    def _populate_content_tree(self, files: List[Dict[str, Any]]):
-        """Populate the content tab from cached/serialized file entries."""
+    def _populate_content_tree(self, files: List[Dict[str, Any]]) -> None:
+        """Populate the content tab from cached/serialized file entries.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self.tree_files.clear()
 
@@ -5871,13 +6984,21 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Error populating file tree: {e}")
 
-    def _on_content_filter_changed(self, text: str):
-        """Apply in-tab content filter for selected torrent files."""
+    def _on_content_filter_changed(self, text: str) -> None:
+        """Apply in-tab content filter for selected torrent files.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.current_content_filter = normalize_filter_pattern(text)
         self._apply_content_filter()
 
-    def _apply_content_filter(self):
-        """Apply content-file filter to currently loaded selected torrent files."""
+    def _apply_content_filter(self) -> None:
+        """Apply content-file filter to currently loaded selected torrent files.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             files = self.current_content_files or []
             pattern = self.current_content_filter
@@ -5911,8 +7032,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Error applying content filter: {e}")
 
-    def _show_cached_torrent_content(self, torrent_hash: str):
-        """Display content tree from local cache for selected torrent."""
+    def _show_cached_torrent_content(self, torrent_hash: str) -> None:
+        """Display content tree from local cache for selected torrent.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.current_content_files = self._get_cached_files(torrent_hash)
         self._apply_content_filter()
 
@@ -5920,13 +7045,21 @@ class MainWindow(QMainWindow):
     # Task Queue Event Handlers
     # ========================================================================
 
-    def _on_task_completed(self, task_name: str, result):
-        """Handle task completion"""
+    def _on_task_completed(self, task_name: str, result) -> None:
+        """Handle task completion.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._maybe_bump_auto_refresh_interval_from_api_elapsed(task_name, result)
         self._log("DEBUG", f"Task completed: {task_name}")
 
-    def _maybe_bump_auto_refresh_interval_from_api_elapsed(self, task_name: str, result: Any):
-        """Increase auto-refresh interval when one API task exceeds current interval."""
+    def _maybe_bump_auto_refresh_interval_from_api_elapsed(self, task_name: str, result: Any) -> None:
+        """Increase auto-refresh interval when one API task exceeds current interval.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if not isinstance(result, dict):
             return
         elapsed_seconds = self._safe_float(result.get("elapsed", 0.0), 0.0)
@@ -5954,16 +7087,24 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def _on_task_failed(self, task_name: str, error_msg: str):
-        """Handle task failure"""
+    def _on_task_failed(self, task_name: str, error_msg: str) -> None:
+        """Handle task failure.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if task_name == "refresh_torrents":
             self._set_refresh_torrents_in_progress(False)
         self._log("ERROR", f"Task failed: {task_name} - {error_msg}")
         self._set_status(f"Error: {error_msg}")
         self._hide_progress()
 
-    def _on_task_cancelled(self, task_name: str):
-        """Handle task cancellation"""
+    def _on_task_cancelled(self, task_name: str) -> None:
+        """Handle task cancellation.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if task_name == "refresh_torrents":
             self._set_refresh_torrents_in_progress(False)
         self._log("INFO", f"Task cancelled: {task_name}")
@@ -5973,7 +7114,11 @@ class MainWindow(QMainWindow):
     # ========================================================================
 
     def _count_status_filter_matches(self, status_filter: str) -> int:
-        """Count torrents matching one status filter using current in-memory torrent list."""
+        """Count torrents matching one status filter using current in-memory torrent list.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrents = list(self.all_torrents or [])
         if not torrents:
             return 0
@@ -5983,7 +7128,11 @@ class MainWindow(QMainWindow):
         return sum(1 for torrent in torrents if self._torrent_matches_status_filter(torrent, status))
 
     def _count_category_filter_matches(self, category_filter: Any) -> int:
-        """Count torrents matching one category filter using current in-memory torrent list."""
+        """Count torrents matching one category filter using current in-memory torrent list.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrents = list(self.all_torrents or [])
         if not torrents:
             return 0
@@ -5996,7 +7145,11 @@ class MainWindow(QMainWindow):
         )
 
     def _count_tag_filter_matches(self, tag_filter: Any) -> int:
-        """Count torrents matching one tag filter using current in-memory torrent list."""
+        """Count torrents matching one tag filter using current in-memory torrent list.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrents = list(self.all_torrents or [])
         if not torrents:
             return 0
@@ -6005,14 +7158,22 @@ class MainWindow(QMainWindow):
         return sum(1 for torrent in torrents if self._torrent_matches_tag_filter(torrent, tag_filter))
 
     def _status_filter_item_text(self, status_filter: str) -> str:
-        """Build display text for one status filter row with live torrent count."""
+        """Build display text for one status filter row with live torrent count.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         status = str(status_filter or "all").strip().lower() or "all"
         label = status.replace("_", " ").title()
         count = self._count_status_filter_matches(status)
         return f"{label} ({count})"
 
     def _category_filter_item_text(self, category_filter: Any) -> str:
-        """Build display text for one category filter row with live torrent count."""
+        """Build display text for one category filter row with live torrent count.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if category_filter is None:
             label = "All"
         else:
@@ -6022,7 +7183,11 @@ class MainWindow(QMainWindow):
         return f"{label} ({count})"
 
     def _tag_filter_item_text(self, tag_filter: Any) -> str:
-        """Build display text for one tag filter row with live torrent count."""
+        """Build display text for one tag filter row with live torrent count.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if tag_filter is None:
             label = "All"
         else:
@@ -6031,8 +7196,12 @@ class MainWindow(QMainWindow):
         count = self._count_tag_filter_matches(tag_filter)
         return f"{label} ({count})"
 
-    def _update_filter_tree_count_labels(self):
-        """Refresh status/category/tag tree labels using latest in-memory torrent snapshot."""
+    def _update_filter_tree_count_labels(self) -> None:
+        """Refresh status/category/tag tree labels using latest in-memory torrent snapshot.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if not hasattr(self, "tree_filters"):
             return
         try:
@@ -6057,8 +7226,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Error updating filter tree counts: {e}")
 
-    def _update_category_tree(self):
-        """Update category section in the unified filter tree."""
+    def _update_category_tree(self) -> None:
+        """Update category section in the unified filter tree.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             # Remove existing children
             while self._section_category.childCount():
@@ -6082,8 +7255,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Error updating category tree: {e}")
 
-    def _update_tag_tree(self):
-        """Update tag section in the unified filter tree."""
+    def _update_tag_tree(self) -> None:
+        """Update tag section in the unified filter tree.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             while self._section_tag.childCount():
                 self._section_tag.removeChild(self._section_tag.child(0))
@@ -6106,8 +7283,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Error updating tag tree: {e}")
 
-    def _calculate_size_buckets(self):
-        """Calculate dynamic size buckets"""
+    def _calculate_size_buckets(self) -> None:
+        """Calculate dynamic size buckets.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             if not self.all_torrents:
                 self.size_buckets = []
@@ -6125,8 +7306,12 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Error calculating size buckets: {e}")
             self.size_buckets = []
 
-    def _update_size_tree(self):
-        """Update size section in the unified filter tree."""
+    def _update_size_tree(self) -> None:
+        """Update size section in the unified filter tree.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             while self._section_size.childCount():
                 self._section_size.removeChild(self._section_size.child(0))
@@ -6149,8 +7334,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Error updating size tree: {e}")
 
-    def _extract_trackers(self):
-        """Extract unique tracker hostnames from loaded torrents."""
+    def _extract_trackers(self) -> None:
+        """Extract unique tracker hostnames from loaded torrents.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             tracker_set = set()
             for t in self.all_torrents:
@@ -6167,8 +7356,12 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Error extracting trackers: {e}")
             self.trackers = []
 
-    def _update_tracker_tree(self):
-        """Update tracker section in the unified filter tree."""
+    def _update_tracker_tree(self) -> None:
+        """Update tracker section in the unified filter tree.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             while self._section_tracker.childCount():
                 self._section_tracker.removeChild(self._section_tracker.child(0))
@@ -6191,12 +7384,20 @@ class MainWindow(QMainWindow):
     # Filter Application
     # ========================================================================
 
-    def _on_quick_filter_changed(self, *_args):
-        """Apply filter-bar changes immediately."""
+    def _on_quick_filter_changed(self, *_args) -> None:
+        """Apply filter-bar changes immediately.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._apply_filters()
 
-    def _on_filter_changed(self):
-        """Handle filter change from filter bar"""
+    def _on_filter_changed(self) -> None:
+        """Handle filter change from filter bar.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         # Store current filter values
         private_text = self.cmb_private.currentText()
         if private_text == "Yes":
@@ -6209,8 +7410,12 @@ class MainWindow(QMainWindow):
         self.current_text_filter = normalize_filter_pattern(self.txt_name_filter.text())
         self.current_file_filter = normalize_filter_pattern(self.txt_file_filter.text())
 
-    def _apply_filters(self):
-        """Apply all current filters to torrents"""
+    def _apply_filters(self) -> None:
+        """Apply all current filters to torrents.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self._on_filter_changed()
 
@@ -6294,7 +7499,11 @@ class MainWindow(QMainWindow):
             self._update_torrents_table()
 
     def _torrent_matches_status_filter(self, torrent, status_filter: str) -> bool:
-        """Approximate qBittorrent status filters from torrent state/speeds."""
+        """Approximate qBittorrent status filters from torrent state/speeds.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         state = str(getattr(torrent, "state", "") or "").strip().lower()
         status = str(status_filter or "").strip().lower()
 
@@ -6342,20 +7551,32 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _torrent_matches_category_filter(torrent, category_filter: Any) -> bool:
-        """Match one torrent against selected category filter."""
+        """Match one torrent against selected category filter.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrent_category = str(getattr(torrent, "category", "") or "")
         return torrent_category == str(category_filter or "")
 
     def _torrent_matches_tag_filter(self, torrent, tag_filter: Any) -> bool:
-        """Match one torrent against selected tag filter."""
+        """Match one torrent against selected tag filter.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         tag = str(tag_filter or "")
         tags = parse_tags(getattr(torrent, "tags", None))
         if tag == "":
             return len(tags) == 0
         return tag in tags
 
-    def _clear_filters(self):
-        """Clear all filters"""
+    def _clear_filters(self) -> None:
+        """Clear all filters.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.current_status_filter = 'all'
         self._clear_non_status_filters()
 
@@ -6365,8 +7586,12 @@ class MainWindow(QMainWindow):
 
         self._refresh_torrents()
 
-    def _clear_non_status_filters(self):
-        """Clear non-status torrent filters from quick bar and tree sections."""
+    def _clear_non_status_filters(self) -> None:
+        """Clear non-status torrent filters from quick bar and tree sections.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         private_signals = self.cmb_private.blockSignals(True)
         self.cmb_private.setCurrentIndex(0)
         self.cmb_private.blockSignals(private_signals)
@@ -6385,8 +7610,12 @@ class MainWindow(QMainWindow):
         self.current_size_bucket = None
         self.current_tracker_filter = None
 
-    def _show_status_filter_only(self, status_filter: str):
-        """Show one status bucket and clear all other torrent filters."""
+    def _show_status_filter_only(self, status_filter: str) -> None:
+        """Show one status bucket and clear all other torrent filters.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         status = str(status_filter or "all").strip().lower()
         if status not in STATUS_FILTERS:
             status = "all"
@@ -6399,20 +7628,36 @@ class MainWindow(QMainWindow):
 
         self._refresh_torrents()
 
-    def _show_active_torrents_only(self):
-        """Show only active torrents and clear all non-status filters."""
+    def _show_active_torrents_only(self) -> None:
+        """Show only active torrents and clear all non-status filters.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._show_status_filter_only("active")
 
-    def _show_completed_torrents_only(self):
-        """Show only completed torrents and clear all non-status filters."""
+    def _show_completed_torrents_only(self) -> None:
+        """Show only completed torrents and clear all non-status filters.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._show_status_filter_only("completed")
 
-    def _show_all_torrents_only(self):
-        """Show all torrents and clear all non-status filters."""
+    def _show_all_torrents_only(self) -> None:
+        """Show all torrents and clear all non-status filters.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._show_status_filter_only("all")
 
-    def _on_filter_tree_clicked(self, item: QTreeWidgetItem, column: int):
-        """Handle click on the unified filter tree."""
+    def _on_filter_tree_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        """Handle click on the unified filter tree.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data is None and item.childCount() > 0:
             # Section header clicked ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â just toggle expand/collapse
@@ -6451,7 +7696,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _torrent_matches_tracker(torrent, tracker_hostname: str) -> bool:
-        """Check if a torrent's tracker matches the given hostname."""
+        """Check if a torrent's tracker matches the given hostname.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         tracker_url = getattr(torrent, 'tracker', '') or ''
         if not tracker_url:
             return False
@@ -6466,7 +7715,11 @@ class MainWindow(QMainWindow):
     # ========================================================================
 
     def _tracker_display_text(self, tracker_url: str) -> str:
-        """Render tracker URL as hostname where possible."""
+        """Render tracker URL as hostname where possible.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         text = str(tracker_url or "")
         if not text:
             return ""
@@ -6476,16 +7729,34 @@ class MainWindow(QMainWindow):
         except Exception:
             return text
 
-    def _format_torrent_table_cell(self, torrent, column_key: str) -> Tuple[str, Qt.AlignmentFlag, Optional[float]]:
-        """Return display text, alignment, and optional numeric sort value."""
+    def _format_torrent_table_cell(
+        self,
+        torrent: Any,
+        column_key: str,
+    ) -> Tuple[str, Qt.AlignmentFlag, Optional[float]]:
+        """Return display text, alignment, and optional numeric sort value.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         align_left = Qt.AlignmentFlag.AlignLeft
         align_right = Qt.AlignmentFlag.AlignRight
         align_center = Qt.AlignmentFlag.AlignCenter
 
         def _raw_value(key: str, default: Any = None) -> Any:
+            """Read one attribute from torrent object with fallback.
+
+            Side effects: None.
+            Failure modes: None.
+            """
             return getattr(torrent, key, default)
 
         def _as_bool(value: Any) -> Optional[bool]:
+            """Normalize bool-like values, returning None when undecidable.
+
+            Side effects: None.
+            Failure modes: None.
+            """
             if value is None:
                 return None
             if isinstance(value, bool):
@@ -6559,8 +7830,12 @@ class MainWindow(QMainWindow):
 
         return str(_raw_value(column_key, "") or ""), align_left, None
 
-    def _update_torrents_table(self):
-        """Update the torrents table with filtered data"""
+    def _update_torrents_table(self) -> None:
+        """Update the torrents table with filtered data.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self.tbl_torrents.setSortingEnabled(False)
             self.tbl_torrents.setRowCount(len(self.filtered_torrents))
@@ -6586,8 +7861,12 @@ class MainWindow(QMainWindow):
 
     def _set_table_item(self, row: int, col: int, text: str,
                         align=Qt.AlignmentFlag.AlignLeft,
-                        sort_value: Optional[float] = None):
-        """Helper to set table item with alignment and optional numeric sort."""
+                        sort_value: Optional[float] = None) -> None:
+        """Helper to set table item with alignment and optional numeric sort.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if sort_value is not None:
             item = NumericTableWidgetItem(str(text), sort_value)
         else:
@@ -6595,8 +7874,12 @@ class MainWindow(QMainWindow):
         item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
         self.tbl_torrents.setItem(row, col, item)
 
-    def _copy_general_details(self):
-        """Copy general details panel content to clipboard."""
+    def _copy_general_details(self) -> None:
+        """Copy general details panel content to clipboard.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         text = self.txt_general_details.toPlainText().strip()
         if not text:
             return
@@ -6605,7 +7888,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _details_table_has_data_rows(table: QTableWidget) -> bool:
-        """Return True when details table contains actual data rows (not info placeholder)."""
+        """Return True when details table contains actual data rows (not info placeholder).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if table.rowCount() <= 0 or table.columnCount() <= 0:
             return False
         if table.columnCount() == 1:
@@ -6616,7 +7903,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _details_table_column_index(table: QTableWidget, column_name: str) -> int:
-        """Find one details-table column index by header name (case-insensitive)."""
+        """Find one details-table column index by header name (case-insensitive).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         target = str(column_name or "").strip().lower()
         if not target:
             return -1
@@ -6630,7 +7921,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _selected_table_row(table: QTableWidget) -> Optional[int]:
-        """Return first selected row index for table, if any."""
+        """Return first selected row index for table, if any.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         sel_model = table.selectionModel()
         if sel_model:
             selected_rows = sel_model.selectedRows()
@@ -6640,7 +7935,11 @@ class MainWindow(QMainWindow):
         return current if current >= 0 else None
 
     def _details_table_to_tsv(self, table: QTableWidget, row_indexes: Optional[List[int]] = None) -> str:
-        """Serialize one details table subset to TSV (header + rows)."""
+        """Serialize one details table subset to TSV (header + rows).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         headers: List[str] = []
         for col_idx in range(table.columnCount()):
             header = table.horizontalHeaderItem(col_idx)
@@ -6657,7 +7956,11 @@ class MainWindow(QMainWindow):
         return "\n".join(lines)
 
     def _selected_peer_endpoint(self) -> str:
-        """Return selected peer endpoint as IP:port."""
+        """Return selected peer endpoint as IP:port.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not self._details_table_has_data_rows(self.tbl_peers):
             return ""
         row_idx = self._selected_table_row(self.tbl_peers)
@@ -6676,8 +7979,12 @@ class MainWindow(QMainWindow):
             return ""
         return f"{ip_text}:{port_text}"
 
-    def _copy_all_peers_info(self):
-        """Copy all currently visible peers rows (including headers) to clipboard."""
+    def _copy_all_peers_info(self) -> None:
+        """Copy all currently visible peers rows (including headers) to clipboard.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not self._details_table_has_data_rows(self.tbl_peers):
             self._set_status("No peers info to copy")
             return
@@ -6685,8 +7992,12 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(text)
         self._set_status("All peers info copied to clipboard")
 
-    def _copy_selected_peer_info(self):
-        """Copy selected peer row (including headers) to clipboard."""
+    def _copy_selected_peer_info(self) -> None:
+        """Copy selected peer row (including headers) to clipboard.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not self._details_table_has_data_rows(self.tbl_peers):
             self._set_status("No peers info to copy")
             return
@@ -6698,8 +8009,12 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(text)
         self._set_status("Peer info copied to clipboard")
 
-    def _copy_selected_peer_ip_port(self):
-        """Copy selected peer endpoint to clipboard."""
+    def _copy_selected_peer_ip_port(self) -> None:
+        """Copy selected peer endpoint to clipboard.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         endpoint = self._selected_peer_endpoint()
         if not endpoint:
             self._set_status("Select one peer with valid IP and port")
@@ -6708,7 +8023,11 @@ class MainWindow(QMainWindow):
         self._set_status("Peer IP:port copied to clipboard")
 
     def _build_peers_context_menu(self) -> QMenu:
-        """Build context menu for peers table."""
+        """Build context menu for peers table.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         menu = QMenu(self)
         has_data = self._details_table_has_data_rows(self.tbl_peers)
         has_selection = has_data and self._selected_table_row(self.tbl_peers) is not None
@@ -6734,16 +8053,24 @@ class MainWindow(QMainWindow):
         action_ban.setEnabled(has_endpoint)
         return menu
 
-    def _show_peers_context_menu(self, pos):
-        """Show peers context menu and keep right-clicked row selected."""
+    def _show_peers_context_menu(self, pos) -> None:
+        """Show peers context menu and keep right-clicked row selected.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         row_idx = self.tbl_peers.rowAt(pos.y())
         if row_idx >= 0:
             self.tbl_peers.selectRow(row_idx)
         menu = self._build_peers_context_menu()
         menu.exec(self.tbl_peers.viewport().mapToGlobal(pos))
 
-    def _ban_selected_peer(self):
-        """Ban selected peer endpoint via qBittorrent API."""
+    def _ban_selected_peer(self) -> None:
+        """Ban selected peer endpoint via qBittorrent API.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         endpoint = self._selected_peer_endpoint()
         if not endpoint:
             self._set_status("Select one peer with valid IP and port")
@@ -6769,7 +8096,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _display_detail_value(value: Any, fallback: str = "N/A") -> str:
-        """Normalize one detail value for display."""
+        """Normalize one detail value for display.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if value is None:
             return fallback
         if isinstance(value, str):
@@ -6778,7 +8109,11 @@ class MainWindow(QMainWindow):
         return str(value)
 
     def _build_general_details_html(self, sections: List[Tuple[str, List[Tuple[str, Any]]]]) -> str:
-        """Build rich read-only HTML layout for the General details panel."""
+        """Build rich read-only HTML layout for the General details panel.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         chunks = ["<html><body>"]
         for title, rows in sections:
             chunks.append(f"<h3>{html.escape(str(title))}</h3>")
@@ -6793,8 +8128,12 @@ class MainWindow(QMainWindow):
         chunks.append("</body></html>")
         return "".join(chunks)
 
-    def _set_torrent_edit_enabled(self, enabled: bool, message: str):
-        """Enable/disable torrent edit controls and update state message."""
+    def _set_torrent_edit_enabled(self, enabled: bool, message: str) -> None:
+        """Enable/disable torrent edit controls and update state message.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.lbl_torrent_edit_state.setText(str(message or ""))
         enabled_flag = bool(enabled)
         self.txt_torrent_edit_name.setEnabled(enabled_flag)
@@ -6811,8 +8150,12 @@ class MainWindow(QMainWindow):
         self.btn_torrent_edit_apply.setEnabled(enabled_flag)
         self._update_torrent_edit_path_browse_buttons()
 
-    def _clear_torrent_edit_panel(self, message: str):
-        """Reset editable torrent fields."""
+    def _clear_torrent_edit_panel(self, message: str) -> None:
+        """Reset editable torrent fields.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._torrent_edit_original = {}
         self.txt_torrent_edit_name.clear()
         self.chk_torrent_edit_auto_tmm.setCheckState(Qt.CheckState.PartiallyChecked)
@@ -6827,8 +8170,12 @@ class MainWindow(QMainWindow):
         self.txt_torrent_edit_incomplete_path.clear()
         self._set_torrent_edit_enabled(False, message)
 
-    def _refresh_torrent_edit_categories(self, current_category: str = ""):
-        """Refresh category combo options while preserving text selection."""
+    def _refresh_torrent_edit_categories(self, current_category: str = "") -> None:
+        """Refresh category combo options while preserving text selection.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         current_text = str(current_category or self.cmb_torrent_edit_category.currentText() or "").strip()
         self.cmb_torrent_edit_category.blockSignals(True)
         self.cmb_torrent_edit_category.clear()
@@ -6842,7 +8189,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _torrent_auto_management_value(torrent: Any) -> Optional[bool]:
-        """Extract automatic torrent management state when available."""
+        """Extract automatic torrent management state when available.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         for key in (
             "auto_tmm",
             "auto_management",
@@ -6863,8 +8214,12 @@ class MainWindow(QMainWindow):
                 return False
         return None
 
-    def _populate_torrent_edit_panel(self, torrent: Any):
-        """Populate the editable torrent panel from selected torrent data."""
+    def _populate_torrent_edit_panel(self, torrent: Any) -> None:
+        """Populate the editable torrent panel from selected torrent data.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_name = str(getattr(torrent, "name", "") or "").strip()
         auto_tmm = self._torrent_auto_management_value(torrent)
         category = str(getattr(torrent, "category", "") or "").strip()
@@ -6908,11 +8263,19 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _normalize_tags_csv(value: str) -> str:
-        """Normalize tag CSV to comma-separated string without extra spaces."""
+        """Normalize tag CSV to comma-separated string without extra spaces.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         return ",".join(parse_tags(value))
 
-    def _add_tags_to_torrent_edit(self):
-        """Append selected tags from a multi-select dialog into edit tags field."""
+    def _add_tags_to_torrent_edit(self) -> None:
+        """Append selected tags from a multi-select dialog into edit tags field.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         available_tags = sorted(
             {str(tag).strip() for tag in list(self.tags or []) if str(tag).strip()},
             key=lambda value: value.lower(),
@@ -6934,7 +8297,11 @@ class MainWindow(QMainWindow):
         self.txt_torrent_edit_tags.setText(", ".join(merged_tags))
 
     def _pick_tags_for_torrent_edit(self, available_tags: List[str], selected_tags: List[str]) -> Optional[List[str]]:
-        """Show multi-select picker for known tags and return selected values."""
+        """Show multi-select picker for known tags and return selected values.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Tags")
         parent_rect = self.frameGeometry()
@@ -6971,7 +8338,11 @@ class MainWindow(QMainWindow):
         return [item.text().strip() for item in list_widget.selectedItems() if item.text().strip()]
 
     def _path_exists_on_local_machine(self, raw_path: Any) -> bool:
-        """Return True when a provided path exists on this machine."""
+        """Return True when a provided path exists on this machine.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         candidate = self._expand_local_path(raw_path)
         if candidate is None:
             return False
@@ -6980,19 +8351,31 @@ class MainWindow(QMainWindow):
         except Exception:
             return False
 
-    def _update_torrent_edit_path_browse_buttons(self):
-        """Show browse buttons only for paths that exist on this machine."""
+    def _update_torrent_edit_path_browse_buttons(self) -> None:
+        """Show browse buttons only for paths that exist on this machine.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         save_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_save_path.text())
         incomplete_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_incomplete_path.text())
         self.btn_torrent_edit_browse_save_path.setVisible(save_exists)
         self.btn_torrent_edit_browse_incomplete_path.setVisible(incomplete_exists)
 
-    def _on_detail_tab_changed(self, _index: int):
-        """React to details tab switches that affect auto-refresh policy."""
+    def _on_detail_tab_changed(self, _index: int) -> None:
+        """React to details tab switches that affect auto-refresh policy.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._sync_auto_refresh_timer_state()
 
     def _is_torrent_edit_tab_active(self) -> bool:
-        """Return True when Edit tab is selected and active for editing."""
+        """Return True when Edit tab is selected and active for editing.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not self.detail_tabs.isEnabled():
             return False
         if self.tab_torrent_edit is None:
@@ -7001,8 +8384,12 @@ class MainWindow(QMainWindow):
             return False
         return self.btn_torrent_edit_apply.isEnabled()
 
-    def _sync_auto_refresh_timer_state(self):
-        """Start/stop refresh timer based on settings and current details context."""
+    def _sync_auto_refresh_timer_state(self) -> None:
+        """Start/stop refresh timer based on settings and current details context.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not hasattr(self, "refresh_timer"):
             return
         should_run = (
@@ -7016,16 +8403,24 @@ class MainWindow(QMainWindow):
         else:
             self.refresh_timer.stop()
 
-    def _set_refresh_torrents_in_progress(self, in_progress: bool):
-        """Set refresh-in-progress state and re-evaluate auto-refresh timer."""
+    def _set_refresh_torrents_in_progress(self, in_progress: bool) -> None:
+        """Set refresh-in-progress state and re-evaluate auto-refresh timer.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         active = bool(in_progress)
         if self._refresh_torrents_in_progress == active:
             return
         self._refresh_torrents_in_progress = active
         self._sync_auto_refresh_timer_state()
 
-    def _update_auto_refresh_action_text(self):
-        """Refresh auto-refresh menu label to include current interval."""
+    def _update_auto_refresh_action_text(self) -> None:
+        """Refresh auto-refresh menu label to include current interval.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if not hasattr(self, "action_auto_refresh"):
             return
         interval_seconds = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
@@ -7033,7 +8428,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _detail_cell_text(value: Any) -> str:
-        """Render one trackers/peers cell value to text."""
+        """Render one trackers/peers cell value to text.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if value is None:
             return ""
         if isinstance(value, (dict, list, tuple, set)):
@@ -7045,7 +8444,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _detail_sort_value(value: Any) -> Optional[float]:
-        """Return numeric sort value when possible."""
+        """Return numeric sort value when possible.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if isinstance(value, bool):
             return 1.0 if value else 0.0
         if isinstance(value, (int, float)):
@@ -7062,7 +8465,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _build_details_columns(rows: List[Dict[str, Any]], preferred: List[str]) -> List[str]:
-        """Build ordered column list with preferred first, then remaining keys."""
+        """Build ordered column list with preferred first, then remaining keys.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         key_set = set()
         for row in rows:
             key_set.update(str(k) for k in row.keys())
@@ -7071,8 +8478,12 @@ class MainWindow(QMainWindow):
         remainder = sorted(k for k in key_set if k not in ordered)
         return ordered + remainder
 
-    def _set_details_table_message(self, table: QTableWidget, message: str):
-        """Show one-line status message inside details table."""
+    def _set_details_table_message(self, table: QTableWidget, message: str) -> None:
+        """Show one-line status message inside details table.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         table.setSortingEnabled(False)
         table.clearContents()
         table.setRowCount(1)
@@ -7084,8 +8495,12 @@ class MainWindow(QMainWindow):
         table.horizontalHeader().setStretchLastSection(True)
 
     def _populate_details_table(self, table: QTableWidget, rows: List[Dict[str, Any]],
-                                preferred_columns: List[str]):
-        """Populate one details table (trackers/peers) with dynamic columns."""
+                                preferred_columns: List[str]) -> None:
+        """Populate one details table (trackers/peers) with dynamic columns.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if not rows:
             self._set_details_table_message(table, "No data available.")
             return
@@ -7117,11 +8532,20 @@ class MainWindow(QMainWindow):
         table.horizontalHeader().setStretchLastSection(True)
 
     def _selected_torrent_hash(self) -> str:
+        """Return selected torrent hash, or empty string when none selected.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         selected = getattr(self, "_selected_torrent", None)
         return str(getattr(selected, "hash", "") or "")
 
-    def _load_selected_torrent_network_details(self, torrent_hash: str):
-        """Load full trackers and peers information for selected torrent."""
+    def _load_selected_torrent_network_details(self, torrent_hash: str) -> None:
+        """Load full trackers and peers information for selected torrent.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._set_details_table_message(self.tbl_trackers, "Loading trackers...")
         self._set_details_table_message(self.tbl_peers, "Loading peers...")
 
@@ -7132,8 +8556,12 @@ class MainWindow(QMainWindow):
             torrent_hash
         )
 
-    def _on_selected_trackers_loaded(self, torrent_hash: str, result: Dict):
-        """Populate Trackers table and then load Peers for same selection."""
+    def _on_selected_trackers_loaded(self, torrent_hash: str, result: Dict) -> None:
+        """Populate Trackers table and then load Peers for same selection.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._selected_torrent_hash() != torrent_hash:
             return
 
@@ -7155,8 +8583,12 @@ class MainWindow(QMainWindow):
             torrent_hash
         )
 
-    def _on_selected_peers_loaded(self, torrent_hash: str, result: Dict):
-        """Populate Peers table for currently selected torrent."""
+    def _on_selected_peers_loaded(self, torrent_hash: str, result: Dict) -> None:
+        """Populate Peers table for currently selected torrent.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._selected_torrent_hash() != torrent_hash:
             return
 
@@ -7176,13 +8608,21 @@ class MainWindow(QMainWindow):
             error = result.get('error', 'Unknown error')
             self._set_details_table_message(self.tbl_peers, f"Failed to load peers: {error}")
 
-    def _set_details_panels_enabled(self, enabled: bool):
-        """Enable/disable bottom details tabs."""
+    def _set_details_panels_enabled(self, enabled: bool) -> None:
+        """Enable/disable bottom details tabs.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.detail_tabs.setEnabled(bool(enabled))
         self._sync_auto_refresh_timer_state()
 
-    def _clear_details_panels(self, reason: str):
-        """Clear all details panels with a reason message for trackers/peers."""
+    def _clear_details_panels(self, reason: str) -> None:
+        """Clear all details panels with a reason message for trackers/peers.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.txt_general_details.clear()
         self._set_details_table_message(self.tbl_trackers, reason)
         self._set_details_table_message(self.tbl_peers, reason)
@@ -7194,8 +8634,12 @@ class MainWindow(QMainWindow):
         self.txt_content_filter.clear()
         self.txt_content_filter.blockSignals(previous)
 
-    def _on_torrent_selected(self):
-        """Handle torrent selection in table"""
+    def _on_torrent_selected(self) -> None:
+        """Handle torrent selection in table.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         selected_hashes = self._get_selected_torrent_hashes()
         if not selected_hashes:
             self._selected_torrent = None
@@ -7223,8 +8667,12 @@ class MainWindow(QMainWindow):
         if torrent:
             self._display_torrent_details(torrent)
 
-    def _display_torrent_details(self, torrent):
-        """Display detailed information about selected torrent."""
+    def _display_torrent_details(self, torrent: Any) -> None:
+        """Display detailed information about selected torrent.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         self._selected_torrent = torrent
         self._set_details_panels_enabled(True)
         try:
@@ -7296,8 +8744,12 @@ class MainWindow(QMainWindow):
     # Actions
     # ========================================================================
 
-    def _copy_torrent_hash(self):
-        """Copy selected torrent hash to clipboard."""
+    def _copy_torrent_hash(self) -> None:
+        """Copy selected torrent hash to clipboard.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         hashes = self._get_selected_torrent_hashes()
         if hashes:
             QApplication.clipboard().setText("\n".join(hashes))
@@ -7306,22 +8758,34 @@ class MainWindow(QMainWindow):
             else:
                 self._set_status(f"{len(hashes)} hashes copied to clipboard")
 
-    def _browse_torrent_edit_save_path(self):
-        """Browse for a new torrent save path."""
+    def _browse_torrent_edit_save_path(self) -> None:
+        """Browse for a new torrent save path.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         initial = self.txt_torrent_edit_save_path.text().strip()
         selected = QFileDialog.getExistingDirectory(self, "Select Save Path", initial)
         if selected:
             self.txt_torrent_edit_save_path.setText(selected)
 
-    def _browse_torrent_edit_incomplete_path(self):
-        """Browse for a new torrent incomplete save path."""
+    def _browse_torrent_edit_incomplete_path(self) -> None:
+        """Browse for a new torrent incomplete save path.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         initial = self.txt_torrent_edit_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(self, "Select Incomplete Save Path", initial)
         if selected:
             self.txt_torrent_edit_incomplete_path.setText(selected)
 
     def _collect_selected_torrent_edit_updates(self) -> Dict[str, Any]:
-        """Collect changed edit fields for currently selected torrent."""
+        """Collect changed edit fields for currently selected torrent.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         original = dict(self._torrent_edit_original or {})
         updates: Dict[str, Any] = {}
 
@@ -7367,8 +8831,12 @@ class MainWindow(QMainWindow):
 
         return updates
 
-    def _apply_selected_torrent_edits(self):
-        """Apply torrent edits for exactly one selected torrent."""
+    def _apply_selected_torrent_edits(self) -> None:
+        """Apply torrent edits for exactly one selected torrent.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         selected_hashes = self._get_selected_torrent_hashes()
         if len(selected_hashes) != 1:
             self._set_status("Select exactly one torrent to apply edits")
@@ -7405,8 +8873,12 @@ class MainWindow(QMainWindow):
             updates,
         )
 
-    def _refresh_torrents(self):
-        """Refresh torrent list"""
+    def _refresh_torrents(self) -> None:
+        """Refresh torrent list.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         if self._refresh_torrents_in_progress:
             self._log("DEBUG", "Refresh skipped: refresh_torrents already in progress")
             return
@@ -7451,7 +8923,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _build_new_instance_command(config_file_path: str, instance_counter: Optional[int] = None) -> List[str]:
-        """Build command line used to spawn one new application instance."""
+        """Build command line used to spawn one new application instance.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         config_path = str(Path(str(config_file_path)).expanduser().resolve())
         command = [
             sys.executable,
@@ -7469,8 +8945,12 @@ class MainWindow(QMainWindow):
         self,
         config_file_path: str,
         instance_counter: Optional[int] = None,
-    ):
-        """Spawn one new process instance with the provided config path."""
+    ) -> None:
+        """Spawn one new process instance with the provided config path.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             command = self._build_new_instance_command(config_file_path, instance_counter)
             subprocess.Popen(command)
@@ -7480,8 +8960,12 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Failed to launch new instance: {e}")
             self._set_status(f"Failed to launch new instance: {e}")
 
-    def _launch_new_instance_current_config(self):
-        """Launch a new app instance using the currently loaded config file."""
+    def _launch_new_instance_current_config(self) -> None:
+        """Launch a new app instance using the currently loaded config file.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         raw_config_path = str(
             (self.config.get("_config_file_path") if isinstance(self.config, dict) else "")
             or ""
@@ -7496,8 +8980,12 @@ class MainWindow(QMainWindow):
         )
         self._launch_new_instance_with_config_path(config_path, counter)
 
-    def _launch_new_instance_from_config(self):
-        """Launch a new app instance after selecting a .toml config file."""
+    def _launch_new_instance_from_config(self) -> None:
+        """Launch a new app instance after selecting a .toml config file.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         current_config_path = str(
             (self.config.get("_config_file_path") if isinstance(self.config, dict) else "")
             or ""
@@ -7516,8 +9004,12 @@ class MainWindow(QMainWindow):
             return
         self._launch_new_instance_with_config_path(selected_path, 1)
 
-    def _show_add_torrent_dialog(self):
-        """Show add torrent dialog"""
+    def _show_add_torrent_dialog(self) -> None:
+        """Show add torrent dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._add_torrent_dialog is not None and self._add_torrent_dialog.isVisible():
             self._add_torrent_dialog.raise_()
             self._add_torrent_dialog.activateWindow()
@@ -7535,12 +9027,20 @@ class MainWindow(QMainWindow):
         dialog.raise_()
         dialog.activateWindow()
 
-    def _on_add_torrent_dialog_closed(self, _result: int):
-        """Clear cached Add Torrent dialog reference."""
+    def _on_add_torrent_dialog_closed(self, _result: int) -> None:
+        """Clear cached Add Torrent dialog reference.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._add_torrent_dialog = None
 
-    def _on_add_torrent_dialog_accepted(self):
-        """Queue torrent add task when Add Torrent dialog is accepted."""
+    def _on_add_torrent_dialog_accepted(self) -> None:
+        """Queue torrent add task when Add Torrent dialog is accepted.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._add_torrent_dialog
         if dialog is None:
             return
@@ -7558,7 +9058,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _sanitize_export_filename(name: Any, fallback: str = "torrent") -> str:
-        """Sanitize one torrent name for safe local .torrent filenames."""
+        """Sanitize one torrent name for safe local .torrent filenames.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         text = str(name or "").strip()
         text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", text)
         text = text.strip().strip(".")
@@ -7567,7 +9071,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _unique_export_file_path(export_dir: Path, base_name: str, torrent_hash: str, used_names: set) -> Path:
-        """Return a unique destination file path for one exported torrent file."""
+        """Return a unique destination file path for one exported torrent file.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         sanitized_base = MainWindow._sanitize_export_filename(base_name, fallback=torrent_hash[:12] or "torrent")
         candidate_name = f"{sanitized_base}.torrent"
         candidate_path = export_dir / candidate_name
@@ -7587,15 +9095,23 @@ class MainWindow(QMainWindow):
         return candidate_path
 
     def _build_selected_torrent_name_map(self, torrent_hashes: List[str]) -> Dict[str, str]:
-        """Build hash->name mapping for selected torrents to name exported files."""
+        """Build hash->name mapping for selected torrents to name exported files.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         name_map: Dict[str, str] = {}
         for torrent_hash in list(torrent_hashes or []):
             torrent = self._find_torrent_by_hash(str(torrent_hash or ""))
             name_map[str(torrent_hash or "")] = str(getattr(torrent, "name", "") or "")
         return name_map
 
-    def _export_selected_torrents(self):
-        """Prompt destination directory and export selected torrents as .torrent files."""
+    def _export_selected_torrents(self) -> None:
+        """Prompt destination directory and export selected torrents as .torrent files.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             self._set_status("Select at least one torrent to export")
@@ -7627,8 +9143,12 @@ class MainWindow(QMainWindow):
             name_map,
         )
 
-    def _on_export_selected_torrents_done(self, result: Dict):
-        """Handle completion of selected-torrent export action."""
+    def _on_export_selected_torrents_done(self, result: Dict) -> None:
+        """Handle completion of selected-torrent export action.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         data = result.get("data", {}) or {}
         exported = list(data.get("exported", []) or [])
         failed = dict(data.get("failed", {}) or {})
@@ -7652,8 +9172,12 @@ class MainWindow(QMainWindow):
                 self._set_status(f"Export Torrent failed: {error}")
         self._hide_progress()
 
-    def _find_torrent_by_hash(self, torrent_hash: str):
-        """Find one torrent object by hash, preferring the currently filtered list."""
+    def _find_torrent_by_hash(self, torrent_hash: str) -> Optional[Any]:
+        """Find one torrent object by hash, preferring the currently filtered list.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not torrent_hash:
             return None
 
@@ -7667,7 +9191,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _expand_local_path(raw_path: Any) -> Optional[Path]:
-        """Expand user/env vars for a local path string."""
+        """Expand user/env vars for a local path string.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         text = str(raw_path or "").strip().strip('"').strip("'")
         if not text:
             return None
@@ -7677,7 +9205,11 @@ class MainWindow(QMainWindow):
         return Path(expanded)
 
     def _resolve_local_torrent_directory(self, torrent) -> Optional[Path]:
-        """Return an existing local directory for a torrent, if available."""
+        """Return an existing local directory for a torrent, if available.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if torrent is None:
             return None
 
@@ -7696,8 +9228,12 @@ class MainWindow(QMainWindow):
 
         return None
 
-    def _open_selected_torrent_location(self):
-        """Open selected torrent local directory when it exists on this machine."""
+    def _open_selected_torrent_location(self) -> None:
+        """Open selected torrent local directory when it exists on this machine.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         selected_hashes = self._get_selected_torrent_hashes()
         if len(selected_hashes) != 1:
             if selected_hashes:
@@ -7706,8 +9242,12 @@ class MainWindow(QMainWindow):
 
         self._open_torrent_location_by_hash(selected_hashes[0])
 
-    def _open_torrent_location_by_hash(self, torrent_hash: str):
-        """Open local torrent directory for one hash when available."""
+    def _open_torrent_location_by_hash(self, torrent_hash: str) -> None:
+        """Open local torrent directory for one hash when available.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if not torrent_hash:
             self._set_status("Selected torrent was not found")
             return
@@ -7725,20 +9265,32 @@ class MainWindow(QMainWindow):
         _open_file_in_default_app(str(local_dir))
         self._set_status(f"Opened local directory: {local_dir}")
 
-    def _on_torrent_table_item_double_clicked(self, item: QTableWidgetItem):
-        """Open local torrent directory for the row that was double-clicked."""
+    def _on_torrent_table_item_double_clicked(self, item: QTableWidgetItem) -> None:
+        """Open local torrent directory for the row that was double-clicked.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if item is None:
             return
         hash_item = self.tbl_torrents.item(item.row(), 0)
         torrent_hash = hash_item.text().strip() if hash_item else ""
         self._open_torrent_location_by_hash(torrent_hash)
 
-    def _on_content_tree_item_activated(self, item: QTreeWidgetItem, _column: int):
-        """Open activated content-tree item (Enter/double-click behavior)."""
+    def _on_content_tree_item_activated(self, item: QTreeWidgetItem, _column: int) -> None:
+        """Open activated content-tree item (Enter/double-click behavior).
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._open_selected_content_path(item=item)
 
-    def _open_selected_content_path(self, item: Optional[QTreeWidgetItem] = None):
-        """Open selected content-tree item in the local filesystem when available."""
+    def _open_selected_content_path(self, item: Optional[QTreeWidgetItem] = None) -> None:
+        """Open selected content-tree item in the local filesystem when available.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if item is None:
             item = self.tree_files.currentItem()
         if item is None:
@@ -7807,14 +9359,22 @@ class MainWindow(QMainWindow):
         self._set_status(f"Opened local {target_type}: {candidate}")
 
     def _get_selected_torrent_hash(self) -> Optional[str]:
-        """Get the hash of the currently selected torrent, or None."""
+        """Get the hash of the currently selected torrent, or None.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         hashes = self._get_selected_torrent_hashes()
         if not hashes:
             return None
         return hashes[0]
 
     def _get_selected_torrent_hashes(self) -> List[str]:
-        """Get unique selected torrent hashes preserving current row order."""
+        """Get unique selected torrent hashes preserving current row order.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         hashes: List[str] = []
         seen = set()
 
@@ -7828,8 +9388,12 @@ class MainWindow(QMainWindow):
                     hashes.append(torrent_hash)
         return hashes
 
-    def _on_torrent_action_done(self, action_name: str, result: Dict):
-        """Generic callback for pause/resume/delete actions."""
+    def _on_torrent_action_done(self, action_name: str, result: Dict) -> None:
+        """Generic callback for pause/resume/delete actions.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get('success'):
             self._log("INFO", f"{action_name} succeeded", result.get('elapsed', 0))
             QTimer.singleShot(500, self._refresh_torrents)
@@ -7839,8 +9403,12 @@ class MainWindow(QMainWindow):
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
 
-    def _on_ban_peer_done(self, endpoint: str, result: Dict):
-        """Callback for peer ban action."""
+    def _on_ban_peer_done(self, endpoint: str, result: Dict) -> None:
+        """Callback for peer ban action.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._log("INFO", f"Ban Peer succeeded: {endpoint}", result.get("elapsed", 0))
             self._set_status(f"Banned peer: {endpoint}")
@@ -7856,9 +9424,19 @@ class MainWindow(QMainWindow):
             self._set_status(f"Ban Peer failed: {error}")
         self._hide_progress()
 
-    def _queue_bulk_torrent_action(self, task_name: str, api_method, action_name: str,
-                                   singular_progress: str, plural_progress: str):
-        """Queue a bulk action for currently selected torrents."""
+    def _queue_bulk_torrent_action(
+        self,
+        task_name: str,
+        api_method: Callable[..., APITaskResult],
+        action_name: str,
+        singular_progress: str,
+        plural_progress: str,
+    ) -> None:
+        """Queue a bulk action for currently selected torrents.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -7872,8 +9450,12 @@ class MainWindow(QMainWindow):
             torrent_hashes
         )
 
-    def _pause_torrent(self):
-        """Pause selected torrent(s)."""
+    def _pause_torrent(self) -> None:
+        """Pause selected torrent(s).
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "pause_torrent",
             self._api_pause_torrent,
@@ -7882,8 +9464,12 @@ class MainWindow(QMainWindow):
             "Pausing {count} torrents...",
         )
 
-    def _resume_torrent(self):
-        """Resume selected torrent(s)."""
+    def _resume_torrent(self) -> None:
+        """Resume selected torrent(s).
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "resume_torrent",
             self._api_resume_torrent,
@@ -7892,8 +9478,12 @@ class MainWindow(QMainWindow):
             "Resuming {count} torrents...",
         )
 
-    def _force_start_torrent(self):
-        """Force-start selected torrent(s)."""
+    def _force_start_torrent(self) -> None:
+        """Force-start selected torrent(s).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "force_start_torrent",
             self._api_force_start_torrent,
@@ -7902,8 +9492,12 @@ class MainWindow(QMainWindow):
             "Force-starting {count} torrents...",
         )
 
-    def _recheck_torrent(self):
-        """Recheck selected torrent(s)."""
+    def _recheck_torrent(self) -> None:
+        """Recheck selected torrent(s).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "recheck_torrent",
             self._api_recheck_torrent,
@@ -7912,8 +9506,12 @@ class MainWindow(QMainWindow):
             "Rechecking {count} torrents...",
         )
 
-    def _increase_torrent_priority(self):
-        """Increase queue priority for selected torrent(s)."""
+    def _increase_torrent_priority(self) -> None:
+        """Increase queue priority for selected torrent(s).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "increase_torrent_priority",
             self._api_increase_torrent_priority,
@@ -7922,8 +9520,12 @@ class MainWindow(QMainWindow):
             "Increasing queue priority for {count} torrents...",
         )
 
-    def _decrease_torrent_priority(self):
-        """Decrease queue priority for selected torrent(s)."""
+    def _decrease_torrent_priority(self) -> None:
+        """Decrease queue priority for selected torrent(s).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "decrease_torrent_priority",
             self._api_decrease_torrent_priority,
@@ -7932,8 +9534,12 @@ class MainWindow(QMainWindow):
             "Decreasing queue priority for {count} torrents...",
         )
 
-    def _top_torrent_priority(self):
-        """Set top queue priority for selected torrent(s)."""
+    def _top_torrent_priority(self) -> None:
+        """Set top queue priority for selected torrent(s).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "top_torrent_priority",
             self._api_top_torrent_priority,
@@ -7942,8 +9548,12 @@ class MainWindow(QMainWindow):
             "Setting top queue priority for {count} torrents...",
         )
 
-    def _minimum_torrent_priority(self):
-        """Set minimum queue priority for selected torrent(s)."""
+    def _minimum_torrent_priority(self) -> None:
+        """Set minimum queue priority for selected torrent(s).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._queue_bulk_torrent_action(
             "minimum_torrent_priority",
             self._api_minimum_torrent_priority,
@@ -7954,19 +9564,31 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _kib_to_bytes(limit_kib: int) -> int:
-        """Convert KiB/s to bytes/s for API calls."""
+        """Convert KiB/s to bytes/s for API calls.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         return max(0, int(limit_kib)) * 1024
 
     @staticmethod
     def _bytes_to_kib(limit_bytes: Any) -> int:
-        """Convert bytes/s to KiB/s for UI controls."""
+        """Convert bytes/s to KiB/s for UI controls.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             return max(0, int(limit_bytes)) // 1024
         except Exception:
             return 0
 
     def _prompt_limit_kib(self, title: str, label: str) -> Optional[int]:
-        """Prompt for a speed limit in KiB/s (0 means unlimited)."""
+        """Prompt for a speed limit in KiB/s (0 means unlimited).
+
+        Side effects: None.
+        Failure modes: None.
+        """
         value, ok = QInputDialog.getInt(
             self,
             title,
@@ -7980,8 +9602,12 @@ class MainWindow(QMainWindow):
             return None
         return int(value)
 
-    def _set_torrent_download_limit(self):
-        """Prompt and set download limit for selected torrents."""
+    def _set_torrent_download_limit(self) -> None:
+        """Prompt and set download limit for selected torrents.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -8007,8 +9633,12 @@ class MainWindow(QMainWindow):
             f"Setting download limit for {count} torrent(s) to {limit_kib} KiB/s"
         )
 
-    def _set_torrent_upload_limit(self):
-        """Prompt and set upload limit for selected torrents."""
+    def _set_torrent_upload_limit(self) -> None:
+        """Prompt and set upload limit for selected torrents.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -8034,8 +9664,12 @@ class MainWindow(QMainWindow):
             f"Setting upload limit for {count} torrent(s) to {limit_kib} KiB/s"
         )
 
-    def _on_global_bandwidth_action_done(self, action_name: str, result: Dict):
-        """Handle global bandwidth action completion."""
+    def _on_global_bandwidth_action_done(self, action_name: str, result: Dict) -> None:
+        """Handle global bandwidth action completion.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
             self._set_status(f"{action_name} applied")
@@ -8046,8 +9680,12 @@ class MainWindow(QMainWindow):
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
 
-    def _show_app_preferences_editor(self):
-        """Open application preferences editor dialog."""
+    def _show_app_preferences_editor(self) -> None:
+        """Open application preferences editor dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._app_preferences_dialog is not None and self._app_preferences_dialog.isVisible():
             self._app_preferences_dialog.raise_()
             self._app_preferences_dialog.activateWindow()
@@ -8061,12 +9699,20 @@ class MainWindow(QMainWindow):
         dialog.show()
         self._request_app_preferences_refresh()
 
-    def _on_app_preferences_dialog_closed(self, _result: int):
-        """Clear cached app-preferences dialog reference."""
+    def _on_app_preferences_dialog_closed(self, _result: int) -> None:
+        """Clear cached app-preferences dialog reference.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._app_preferences_dialog = None
 
-    def _set_app_preferences_dialog_busy(self, busy: bool, message: str = ""):
-        """Set app-preferences dialog busy state when open."""
+    def _set_app_preferences_dialog_busy(self, busy: bool, message: str = "") -> None:
+        """Set app-preferences dialog busy state when open.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._app_preferences_dialog
         if dialog is None:
             return
@@ -8074,8 +9720,12 @@ class MainWindow(QMainWindow):
             return
         dialog.set_busy(bool(busy), message)
 
-    def _request_app_preferences_refresh(self):
-        """Load raw app preferences into editor dialog."""
+    def _request_app_preferences_refresh(self) -> None:
+        """Load raw app preferences into editor dialog.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._show_progress("Loading app preferences...")
         self._set_app_preferences_dialog_busy(True, "Loading application preferences...")
         self.api_queue.add_task(
@@ -8084,8 +9734,12 @@ class MainWindow(QMainWindow):
             self._on_app_preferences_loaded,
         )
 
-    def _on_app_preferences_loaded(self, result: Dict):
-        """Populate app-preferences dialog from API response."""
+    def _on_app_preferences_loaded(self, result: Dict) -> None:
+        """Populate app-preferences dialog from API response.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._app_preferences_dialog
         if result.get("success"):
             data = result.get("data", {}) or {}
@@ -8100,8 +9754,12 @@ class MainWindow(QMainWindow):
             self._set_status(f"Failed to load app preferences: {error}")
         self._hide_progress()
 
-    def _on_app_preferences_apply_requested(self, changed_preferences: Dict[str, Any]):
-        """Queue changed app preferences from editor dialog."""
+    def _on_app_preferences_apply_requested(self, changed_preferences: Dict[str, Any]) -> None:
+        """Queue changed app preferences from editor dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         updates = dict(changed_preferences or {})
         if not updates:
             self._set_status("No app preference changes to apply")
@@ -8116,8 +9774,12 @@ class MainWindow(QMainWindow):
             updates,
         )
 
-    def _on_app_preferences_applied(self, result: Dict):
-        """Handle completion of app preferences apply."""
+    def _on_app_preferences_applied(self, result: Dict) -> None:
+        """Handle completion of app preferences apply.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._set_status("App preferences applied")
             self._set_app_preferences_dialog_busy(False, "Applied")
@@ -8128,8 +9790,12 @@ class MainWindow(QMainWindow):
         self._set_app_preferences_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
 
-    def _show_friendly_add_preferences_editor(self):
-        """Open friendly editor for commonly used app preferences."""
+    def _show_friendly_add_preferences_editor(self) -> None:
+        """Open friendly editor for commonly used app preferences.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if (
             self._friendly_add_preferences_dialog is not None
             and self._friendly_add_preferences_dialog.isVisible()
@@ -8146,12 +9812,20 @@ class MainWindow(QMainWindow):
         dialog.show()
         self._request_friendly_add_preferences_refresh()
 
-    def _on_friendly_add_preferences_dialog_closed(self, _result: int):
-        """Clear cached friendly add-preferences dialog reference."""
+    def _on_friendly_add_preferences_dialog_closed(self, _result: int) -> None:
+        """Clear cached friendly add-preferences dialog reference.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._friendly_add_preferences_dialog = None
 
-    def _set_friendly_add_preferences_dialog_busy(self, busy: bool, message: str = ""):
-        """Set busy state for friendly add-preferences dialog when open."""
+    def _set_friendly_add_preferences_dialog_busy(self, busy: bool, message: str = "") -> None:
+        """Set busy state for friendly add-preferences dialog when open.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._friendly_add_preferences_dialog
         if dialog is None:
             return
@@ -8159,8 +9833,12 @@ class MainWindow(QMainWindow):
             return
         dialog.set_busy(bool(busy), message)
 
-    def _request_friendly_add_preferences_refresh(self):
-        """Load app preferences into friendly add-preferences editor."""
+    def _request_friendly_add_preferences_refresh(self) -> None:
+        """Load app preferences into friendly add-preferences editor.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._show_progress("Loading add preferences...")
         self._set_friendly_add_preferences_dialog_busy(True, "Loading add preferences...")
         self.api_queue.add_task(
@@ -8169,8 +9847,12 @@ class MainWindow(QMainWindow):
             self._on_friendly_add_preferences_loaded,
         )
 
-    def _on_friendly_add_preferences_loaded(self, result: Dict):
-        """Populate friendly add-preferences dialog from API response."""
+    def _on_friendly_add_preferences_loaded(self, result: Dict) -> None:
+        """Populate friendly add-preferences dialog from API response.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._friendly_add_preferences_dialog
         if result.get("success"):
             data = result.get("data", {}) or {}
@@ -8185,8 +9867,12 @@ class MainWindow(QMainWindow):
             self._set_status(f"Failed to load add preferences: {error}")
         self._hide_progress()
 
-    def _on_friendly_add_preferences_apply_requested(self, changed_preferences: Dict[str, Any]):
-        """Queue changed friendly add-preferences values for API apply."""
+    def _on_friendly_add_preferences_apply_requested(self, changed_preferences: Dict[str, Any]) -> None:
+        """Queue changed friendly add-preferences values for API apply.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         updates = dict(changed_preferences or {})
         if not updates:
             self._set_status("No add preference changes to apply")
@@ -8201,8 +9887,12 @@ class MainWindow(QMainWindow):
             updates,
         )
 
-    def _on_friendly_add_preferences_applied(self, result: Dict):
-        """Handle completion of friendly add-preferences apply."""
+    def _on_friendly_add_preferences_applied(self, result: Dict) -> None:
+        """Handle completion of friendly add-preferences apply.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._set_status("Add preferences applied")
             self._set_friendly_add_preferences_dialog_busy(False, "Applied")
@@ -8213,8 +9903,12 @@ class MainWindow(QMainWindow):
         self._set_friendly_add_preferences_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
 
-    def _show_speed_limits_manager(self):
-        """Open speed limits manager dialog."""
+    def _show_speed_limits_manager(self) -> None:
+        """Open speed limits manager dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._speed_limits_dialog is not None and self._speed_limits_dialog.isVisible():
             self._speed_limits_dialog.raise_()
             self._speed_limits_dialog.activateWindow()
@@ -8229,12 +9923,20 @@ class MainWindow(QMainWindow):
         dialog.show()
         self._request_speed_limits_profile()
 
-    def _on_speed_limits_dialog_closed(self, _result: int):
-        """Clear cached speed limits dialog reference."""
+    def _on_speed_limits_dialog_closed(self, _result: int) -> None:
+        """Clear cached speed limits dialog reference.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._speed_limits_dialog = None
 
-    def _set_speed_limits_dialog_busy(self, busy: bool, message: str = ""):
-        """Set speed dialog controls busy state when dialog is open."""
+    def _set_speed_limits_dialog_busy(self, busy: bool, message: str = "") -> None:
+        """Set speed dialog controls busy state when dialog is open.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._speed_limits_dialog
         if dialog is None:
             return
@@ -8242,8 +9944,12 @@ class MainWindow(QMainWindow):
             return
         dialog.set_busy(bool(busy), message)
 
-    def _request_speed_limits_profile(self):
-        """Load current speed limits into manager dialog."""
+    def _request_speed_limits_profile(self) -> None:
+        """Load current speed limits into manager dialog.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self._show_progress("Loading speed limits...")
         self._set_speed_limits_dialog_busy(True, "Loading speed limits...")
         self.api_queue.add_task(
@@ -8252,8 +9958,12 @@ class MainWindow(QMainWindow):
             self._on_speed_limits_profile_loaded,
         )
 
-    def _on_speed_limits_profile_loaded(self, result: Dict):
-        """Populate speed limits dialog from API response."""
+    def _on_speed_limits_profile_loaded(self, result: Dict) -> None:
+        """Populate speed limits dialog from API response.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             data = result.get("data", {}) or {}
             self._last_alt_speed_mode = bool(data.get("alt_enabled", self._last_alt_speed_mode))
@@ -8297,8 +10007,12 @@ class MainWindow(QMainWindow):
         alt_dl_kib: int,
         alt_ul_kib: int,
         alt_enabled: bool,
-    ):
-        """Queue apply operation from speed limits dialog values."""
+    ) -> None:
+        """Queue apply operation from speed limits dialog values.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._show_progress("Applying speed limits...")
         self._set_speed_limits_dialog_busy(True, "Applying speed limits...")
         self.api_queue.add_task(
@@ -8312,8 +10026,12 @@ class MainWindow(QMainWindow):
             bool(alt_enabled),
         )
 
-    def _on_speed_limits_profile_applied(self, result: Dict):
-        """Handle completion of speed limits apply."""
+    def _on_speed_limits_profile_applied(self, result: Dict) -> None:
+        """Handle completion of speed limits apply.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._set_status("Speed limits applied")
             self._set_speed_limits_dialog_busy(False, "Applied")
@@ -8324,8 +10042,12 @@ class MainWindow(QMainWindow):
         self._set_speed_limits_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
 
-    def _record_session_timeline_sample(self, alt_enabled: Optional[bool] = None):
-        """Record one session timeline sample from current torrent list."""
+    def _record_session_timeline_sample(self, alt_enabled: Optional[bool] = None) -> None:
+        """Record one session timeline sample from current torrent list.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         total_down = 0
         total_up = 0
         active_count = 0
@@ -8351,8 +10073,12 @@ class MainWindow(QMainWindow):
         if dialog is not None and dialog.isVisible():
             dialog.set_samples(list(self.session_timeline_history))
 
-    def _show_session_timeline(self):
-        """Open session timeline dialog."""
+    def _show_session_timeline(self) -> None:
+        """Open session timeline dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._session_timeline_dialog is not None and self._session_timeline_dialog.isVisible():
             self._session_timeline_dialog.raise_()
             self._session_timeline_dialog.activateWindow()
@@ -8367,19 +10093,31 @@ class MainWindow(QMainWindow):
         self._session_timeline_dialog = dialog
         dialog.show()
 
-    def _on_session_timeline_dialog_closed(self, _result: int):
-        """Clear timeline dialog reference on close."""
+    def _on_session_timeline_dialog_closed(self, _result: int) -> None:
+        """Clear timeline dialog reference on close.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._session_timeline_dialog = None
 
-    def _clear_session_timeline_history(self):
-        """Clear stored session timeline samples."""
+    def _clear_session_timeline_history(self) -> None:
+        """Clear stored session timeline samples.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.session_timeline_history.clear()
         dialog = self._session_timeline_dialog
         if dialog is not None and dialog.isVisible():
             dialog.set_samples([])
 
-    def _show_tracker_health_dashboard(self):
-        """Open tracker health dashboard dialog."""
+    def _show_tracker_health_dashboard(self) -> None:
+        """Open tracker health dashboard dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._tracker_health_dialog is not None and self._tracker_health_dialog.isVisible():
             self._tracker_health_dialog.raise_()
             self._tracker_health_dialog.activateWindow()
@@ -8393,12 +10131,20 @@ class MainWindow(QMainWindow):
         dialog.show()
         self._request_tracker_health_refresh()
 
-    def _on_tracker_health_dialog_closed(self, _result: int):
-        """Clear tracker-health dialog reference on close."""
+    def _on_tracker_health_dialog_closed(self, _result: int) -> None:
+        """Clear tracker-health dialog reference on close.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._tracker_health_dialog = None
 
-    def _set_tracker_health_dialog_busy(self, busy: bool, message: str = ""):
-        """Set tracker-health dialog busy state."""
+    def _set_tracker_health_dialog_busy(self, busy: bool, message: str = "") -> None:
+        """Set tracker-health dialog busy state.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._tracker_health_dialog
         if dialog is None:
             return
@@ -8406,8 +10152,12 @@ class MainWindow(QMainWindow):
             return
         dialog.set_busy(bool(busy), message)
 
-    def _request_tracker_health_refresh(self):
-        """Queue tracker health aggregation for all currently known torrents."""
+    def _request_tracker_health_refresh(self) -> None:
+        """Queue tracker health aggregation for all currently known torrents.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrent_hashes = [
             str(getattr(torrent, "hash", "") or "").strip()
             for torrent in self.all_torrents
@@ -8422,8 +10172,12 @@ class MainWindow(QMainWindow):
             torrent_hashes,
         )
 
-    def _on_tracker_health_loaded(self, result: Dict):
-        """Render tracker health dashboard data."""
+    def _on_tracker_health_loaded(self, result: Dict) -> None:
+        """Render tracker health dashboard data.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._tracker_health_dialog
         if result.get("success"):
             rows = result.get("data", [])
@@ -8438,8 +10192,12 @@ class MainWindow(QMainWindow):
             self._set_status(f"Tracker health failed: {error}")
         self._hide_progress()
 
-    def _set_global_download_limit(self):
-        """Prompt and set global download limit."""
+    def _set_global_download_limit(self) -> None:
+        """Prompt and set global download limit.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         limit_kib = self._prompt_limit_kib(
             "Set Global Download Limit",
             "Global download limit (KiB/s, 0 = unlimited):",
@@ -8455,8 +10213,12 @@ class MainWindow(QMainWindow):
             limit_bytes,
         )
 
-    def _set_global_upload_limit(self):
-        """Prompt and set global upload limit."""
+    def _set_global_upload_limit(self) -> None:
+        """Prompt and set global upload limit.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         limit_kib = self._prompt_limit_kib(
             "Set Global Upload Limit",
             "Global upload limit (KiB/s, 0 = unlimited):",
@@ -8472,8 +10234,12 @@ class MainWindow(QMainWindow):
             limit_bytes,
         )
 
-    def _toggle_alt_speed_mode(self):
-        """Toggle alternative speed mode."""
+    def _toggle_alt_speed_mode(self) -> None:
+        """Toggle alternative speed mode.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._show_progress("Toggling alternative speed mode...")
         self.api_queue.add_task(
             "toggle_alt_speed_mode",
@@ -8482,7 +10248,11 @@ class MainWindow(QMainWindow):
         )
 
     def _get_selected_content_item_info(self) -> Optional[Dict[str, Any]]:
-        """Return selected content tree item metadata."""
+        """Return selected content tree item metadata.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         item = self.tree_files.currentItem()
         if item is None:
             selected = self.tree_files.selectedItems()
@@ -8509,7 +10279,11 @@ class MainWindow(QMainWindow):
         }
 
     def _selected_torrent_hash_for_content_action(self) -> Optional[str]:
-        """Return currently selected torrent hash for content actions."""
+        """Return currently selected torrent hash for content actions.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrent = getattr(self, "_selected_torrent", None)
         torrent_hash = str(getattr(torrent, "hash", "") or "").strip() if torrent else ""
         if not torrent_hash:
@@ -8517,8 +10291,12 @@ class MainWindow(QMainWindow):
             return None
         return torrent_hash
 
-    def _on_content_action_done(self, action_name: str, result: Dict):
-        """Callback for content actions (priority/rename)."""
+    def _on_content_action_done(self, action_name: str, result: Dict) -> None:
+        """Callback for content actions (priority/rename).
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
             QTimer.singleShot(500, self._refresh_torrents)
@@ -8528,8 +10306,12 @@ class MainWindow(QMainWindow):
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
 
-    def _set_selected_content_priority(self, priority: int):
-        """Set priority for selected content item (file/folder)."""
+    def _set_selected_content_priority(self, priority: int) -> None:
+        """Set priority for selected content item (file/folder).
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hash = self._selected_torrent_hash_for_content_action()
         if not torrent_hash:
             return
@@ -8549,8 +10331,12 @@ class MainWindow(QMainWindow):
             int(priority),
         )
 
-    def _rename_selected_content_item(self):
-        """Rename selected file/folder in content tree via API."""
+    def _rename_selected_content_item(self) -> None:
+        """Rename selected file/folder in content tree via API.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         torrent_hash = self._selected_torrent_hash_for_content_action()
         if not torrent_hash:
             return
@@ -8590,7 +10376,11 @@ class MainWindow(QMainWindow):
         )
 
     def _prompt_content_rename_name(self, label: str, old_name: str) -> Tuple[str, bool]:
-        """Prompt for a new content file/folder name with persistent dialog size."""
+        """Prompt for a new content file/folder name with persistent dialog size.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Rename {str(label or '').title()}")
         dialog.setMinimumWidth(600)
@@ -8635,8 +10425,12 @@ class MainWindow(QMainWindow):
             return "", False
         return str(txt_name.text() or ""), True
 
-    def _on_taxonomy_action_done(self, action_name: str, result: Dict):
-        """Callback for create/edit/delete category/tag actions."""
+    def _on_taxonomy_action_done(self, action_name: str, result: Dict) -> None:
+        """Callback for create/edit/delete category/tag actions.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
             self._reload_taxonomy_data(action_name)
@@ -8648,8 +10442,12 @@ class MainWindow(QMainWindow):
             self._set_taxonomy_dialog_busy(False, f"{action_name} failed: {error}")
         self._hide_progress()
 
-    def _set_taxonomy_dialog_busy(self, busy: bool, message: str = ""):
-        """Set taxonomy dialog busy state when open."""
+    def _set_taxonomy_dialog_busy(self, busy: bool, message: str = "") -> None:
+        """Set taxonomy dialog busy state when open.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = self._taxonomy_dialog
         if dialog is None:
             return
@@ -8657,16 +10455,24 @@ class MainWindow(QMainWindow):
             return
         dialog.set_busy(bool(busy), message)
 
-    def _reload_taxonomy_data(self, action_name: str):
-        """Reload categories+tags after taxonomy mutation."""
+    def _reload_taxonomy_data(self, action_name: str) -> None:
+        """Reload categories+tags after taxonomy mutation.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self.api_queue.add_task(
             "reload_categories_for_taxonomy",
             self._fetch_categories,
             lambda r: self._on_taxonomy_categories_reloaded(action_name, r),
         )
 
-    def _on_taxonomy_categories_reloaded(self, action_name: str, result: Dict):
-        """Handle category reload in taxonomy post-action chain."""
+    def _on_taxonomy_categories_reloaded(self, action_name: str, result: Dict) -> None:
+        """Handle category reload in taxonomy post-action chain.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self._set_categories_from_payload(result.get("data", {}))
         else:
@@ -8679,8 +10485,12 @@ class MainWindow(QMainWindow):
             lambda r: self._on_taxonomy_tags_reloaded(action_name, r),
         )
 
-    def _on_taxonomy_tags_reloaded(self, action_name: str, result: Dict):
-        """Finalize taxonomy reload and update UI/dialog."""
+    def _on_taxonomy_tags_reloaded(self, action_name: str, result: Dict) -> None:
+        """Finalize taxonomy reload and update UI/dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if result.get("success"):
             self.tags = result.get("data", [])
             self._update_tag_tree()
@@ -8693,8 +10503,18 @@ class MainWindow(QMainWindow):
         self._hide_progress()
         self._set_status(f"{action_name} succeeded")
 
-    def _queue_taxonomy_action(self, task_name: str, api_method, action_name: str, *args):
-        """Queue taxonomy mutation from manager dialog."""
+    def _queue_taxonomy_action(
+        self,
+        task_name: str,
+        api_method: Callable[..., APITaskResult],
+        action_name: str,
+        *args: Any,
+    ) -> None:
+        """Queue taxonomy mutation from manager dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._show_progress(f"{action_name}...")
         self._set_taxonomy_dialog_busy(True, f"{action_name}...")
         self.api_queue.add_task(
@@ -8704,8 +10524,12 @@ class MainWindow(QMainWindow):
             *args,
         )
 
-    def _show_taxonomy_manager(self):
-        """Open taxonomy manager dialog (categories + tags)."""
+    def _show_taxonomy_manager(self) -> None:
+        """Open taxonomy manager dialog (categories + tags).
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._taxonomy_dialog is not None and self._taxonomy_dialog.isVisible():
             self._sync_taxonomy_dialog_data()
             self._taxonomy_dialog.raise_()
@@ -8723,8 +10547,12 @@ class MainWindow(QMainWindow):
         self._taxonomy_dialog = dialog
         dialog.show()
 
-    def _on_taxonomy_dialog_closed(self, _result: int):
-        """Clear dialog reference when closed."""
+    def _on_taxonomy_dialog_closed(self, _result: int) -> None:
+        """Clear dialog reference when closed.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._taxonomy_dialog = None
 
     def _on_taxonomy_create_category_requested(
@@ -8733,8 +10561,12 @@ class MainWindow(QMainWindow):
         save_path: str,
         incomplete_path: str,
         use_incomplete_path: bool,
-    ):
-        """Handle create-category request from manager dialog."""
+    ) -> None:
+        """Handle create-category request from manager dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         normalized_name = str(name or "").strip()
         normalized_save = str(save_path or "").strip()
         normalized_incomplete = str(incomplete_path or "").strip()
@@ -8761,8 +10593,12 @@ class MainWindow(QMainWindow):
         save_path: str,
         incomplete_path: str,
         use_incomplete_path: bool,
-    ):
-        """Handle edit-category request from manager dialog."""
+    ) -> None:
+        """Handle edit-category request from manager dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         normalized_name = str(name or "").strip()
         normalized_save = str(save_path or "").strip()
         normalized_incomplete = str(incomplete_path or "").strip()
@@ -8783,8 +10619,12 @@ class MainWindow(QMainWindow):
             use_incomplete,
         )
 
-    def _on_taxonomy_delete_category_requested(self, name: str):
-        """Handle delete-category request from manager dialog."""
+    def _on_taxonomy_delete_category_requested(self, name: str) -> None:
+        """Handle delete-category request from manager dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         normalized_name = str(name or "").strip()
         if not normalized_name:
             self._set_taxonomy_dialog_busy(False, "Select a category to delete.")
@@ -8807,8 +10647,12 @@ class MainWindow(QMainWindow):
             normalized_name,
         )
 
-    def _on_taxonomy_create_tags_requested(self, tags: List[str]):
-        """Handle create-tags request from manager dialog."""
+    def _on_taxonomy_create_tags_requested(self, tags: List[str]) -> None:
+        """Handle create-tags request from manager dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         normalized = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
         if not normalized:
             self._set_taxonomy_dialog_busy(False, "Enter at least one tag.")
@@ -8820,8 +10664,12 @@ class MainWindow(QMainWindow):
             normalized,
         )
 
-    def _on_taxonomy_delete_tags_requested(self, tags: List[str]):
-        """Handle delete-tags request from manager dialog."""
+    def _on_taxonomy_delete_tags_requested(self, tags: List[str]) -> None:
+        """Handle delete-tags request from manager dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         normalized = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
         if not normalized:
             self._set_taxonomy_dialog_busy(False, "Select at least one tag to delete.")
@@ -8845,8 +10693,12 @@ class MainWindow(QMainWindow):
             normalized,
         )
 
-    def _pause_session(self):
-        """Pause all torrents in current session."""
+    def _pause_session(self) -> None:
+        """Pause all torrents in current session.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._log("INFO", "Pausing session")
         self._show_progress("Pausing session...")
         self.api_queue.add_task(
@@ -8855,8 +10707,12 @@ class MainWindow(QMainWindow):
             lambda r: self._on_torrent_action_done("Pause Session", r),
         )
 
-    def _resume_session(self):
-        """Resume all torrents in current session."""
+    def _resume_session(self) -> None:
+        """Resume all torrents in current session.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._log("INFO", "Resuming session")
         self._show_progress("Resuming session...")
         self.api_queue.add_task(
@@ -8866,8 +10722,12 @@ class MainWindow(QMainWindow):
         )
 
     def _queue_delete_torrents(self, torrent_hashes: List[str], delete_files: bool,
-                               action_name: str, progress_text: str):
-        """Queue deletion for selected torrent(s) with explicit delete-files mode."""
+                               action_name: str, progress_text: str) -> None:
+        """Queue deletion for selected torrent(s) with explicit delete-files mode.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self._log(
             "INFO",
             f"{action_name}: {len(torrent_hashes)} torrent(s) (files={delete_files})"
@@ -8881,8 +10741,12 @@ class MainWindow(QMainWindow):
             torrent_hashes, delete_files
         )
 
-    def _remove_torrent(self):
-        """Remove selected torrent(s) and keep data on disk."""
+    def _remove_torrent(self) -> None:
+        """Remove selected torrent(s) and keep data on disk.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -8902,8 +10766,12 @@ class MainWindow(QMainWindow):
             progress_text="Removing torrent..." if len(torrent_hashes) == 1 else f"Removing {len(torrent_hashes)} torrents..."
         )
 
-    def _remove_torrent_and_delete_data(self):
-        """Remove selected torrent(s) and delete data from disk."""
+    def _remove_torrent_and_delete_data(self) -> None:
+        """Remove selected torrent(s) and delete data from disk.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -8927,8 +10795,12 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def _remove_torrent_no_confirmation(self):
-        """Remove selected torrent(s) and keep data on disk, without confirmation."""
+    def _remove_torrent_no_confirmation(self) -> None:
+        """Remove selected torrent(s) and keep data on disk, without confirmation.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -8939,8 +10811,12 @@ class MainWindow(QMainWindow):
             progress_text="Removing torrent..." if len(torrent_hashes) == 1 else f"Removing {len(torrent_hashes)} torrents...",
         )
 
-    def _remove_torrent_and_delete_data_no_confirmation(self):
-        """Remove selected torrent(s) and delete data, without confirmation."""
+    def _remove_torrent_and_delete_data_no_confirmation(self) -> None:
+        """Remove selected torrent(s) and delete data, without confirmation.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -8955,8 +10831,12 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def _delete_torrent(self):
-        """Delete selected torrent(s) with confirmation."""
+    def _delete_torrent(self) -> None:
+        """Delete selected torrent(s) with confirmation.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             return
@@ -8980,8 +10860,12 @@ class MainWindow(QMainWindow):
     # Menu Actions
     # ========================================================================
 
-    def _clear_cache_and_refresh(self):
-        """Clear local content cache and refresh torrents."""
+    def _clear_cache_and_refresh(self) -> None:
+        """Clear local content cache and refresh torrents.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self._suppress_next_cache_save = True
             self.content_cache = {}
@@ -9003,8 +10887,12 @@ class MainWindow(QMainWindow):
 
         self._refresh_torrents()
 
-    def _reset_view_defaults(self):
-        """Reset view/layout/filter/refresh options back to startup defaults."""
+    def _reset_view_defaults(self) -> None:
+        """Reset view/layout/filter/refresh options back to startup defaults.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         reply = QMessageBox.question(
             self,
             "Reset View",
@@ -9082,8 +10970,12 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Failed to reset view defaults: {e}")
             self._set_status(f"Failed to reset view: {e}")
 
-    def _open_log_file(self):
-        """Open the log file in the OS default application."""
+    def _open_log_file(self) -> None:
+        """Open the log file in the OS default application.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         log_path = os.path.abspath(self.log_file_path)
         try:
             if not _open_file_in_default_app(log_path):
@@ -9092,8 +10984,12 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Failed to open log file: {e}")
             self._set_status(f"Failed to open log file: {e}")
 
-    def _set_auto_refresh_interval(self):
-        """Prompt user to set auto-refresh frequency in seconds."""
+    def _set_auto_refresh_interval(self) -> None:
+        """Prompt user to set auto-refresh frequency in seconds.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             current = self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)
             if current < 1:
@@ -9122,8 +11018,12 @@ class MainWindow(QMainWindow):
             self._log("ERROR", f"Failed to set auto-refresh interval: {e}")
             self._set_status(f"Failed to set auto-refresh interval: {e}")
 
-    def _toggle_auto_refresh(self, checked: bool):
-        """Toggle auto-refresh"""
+    def _toggle_auto_refresh(self, checked: bool) -> None:
+        """Toggle auto-refresh.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.auto_refresh_enabled = checked
         if checked:
             self._sync_auto_refresh_timer_state()
@@ -9136,8 +11036,12 @@ class MainWindow(QMainWindow):
             self._log("INFO", "Auto-refresh disabled")
         self._save_refresh_settings()
 
-    def _toggle_debug_logging(self, checked: bool):
-        """Enable/disable comprehensive debug logging including API calls/responses."""
+    def _toggle_debug_logging(self, checked: bool) -> None:
+        """Enable/disable comprehensive debug logging including API calls/responses.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.debug_logging_enabled = bool(checked)
         if self.debug_logging_enabled:
             self._log("INFO", "Debug logging enabled (API calls/responses)")
@@ -9147,8 +11051,12 @@ class MainWindow(QMainWindow):
             self._set_status("Debug logging disabled")
         self._save_settings()
 
-    def _toggle_human_readable(self, checked: bool):
-        """Toggle display of size/speed values between human-readable and bytes."""
+    def _toggle_human_readable(self, checked: bool) -> None:
+        """Toggle display of size/speed values between human-readable and bytes.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         mode = "human_readable" if checked else "bytes"
         self.display_size_mode = mode
         self.display_speed_mode = mode
@@ -9171,7 +11079,11 @@ class MainWindow(QMainWindow):
         self._set_status(f"Display mode: {mode_label}")
 
     def _about_dialog_text(self) -> str:
-        """Build full about dialog text including runtime file paths."""
+        """Build full about dialog text including runtime file paths.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         instance_text = str(getattr(self, "instance_id", "") or "").strip()
         if not instance_text:
             instance_text = "N/A"
@@ -9214,8 +11126,12 @@ class MainWindow(QMainWindow):
             "(c) 2025"
         )
 
-    def _show_about(self):
-        """Show about dialog."""
+    def _show_about(self) -> None:
+        """Show about dialog.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dialog = QDialog(self)
         dialog.setWindowTitle("About qBiremo Enhanced")
         dialog.resize(1100, 360)
@@ -9239,23 +11155,39 @@ class MainWindow(QMainWindow):
     # UI Helper Methods
     # ========================================================================
 
-    def _show_progress(self, message: str):
-        """Show progress indicator"""
+    def _show_progress(self, message: str) -> None:
+        """Show progress indicator.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.progress_bar.setRange(0, 0)  # Indeterminate
         self._set_status(message)
 
-    def _hide_progress(self):
-        """Hide progress indicator"""
+    def _hide_progress(self) -> None:
+        """Hide progress indicator.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
         self._set_status("Ready")
 
-    def _set_status(self, message: str):
-        """Set status bar message"""
+    def _set_status(self, message: str) -> None:
+        """Set status bar message.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         self.lbl_status.setText(message)
 
-    def _update_statusbar_transfer_summary(self):
-        """Render aggregate transfer summary in the status bar."""
+    def _update_statusbar_transfer_summary(self) -> None:
+        """Render aggregate transfer summary in the status bar.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         dht_label = getattr(self, "lbl_dht_nodes", None)
         down_label = getattr(self, "lbl_download_summary", None)
         up_label = getattr(self, "lbl_upload_summary", None)
@@ -9304,8 +11236,12 @@ class MainWindow(QMainWindow):
             f"U: {up_speed_text} [{up_limit_text}] ({session_up_text})"
         )
 
-    def _bring_to_front_startup(self):
-        """Bring the main window to front shortly after startup."""
+    def _bring_to_front_startup(self) -> None:
+        """Bring the main window to front shortly after startup.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             self.raise_()
             self.activateWindow()
@@ -9313,7 +11249,11 @@ class MainWindow(QMainWindow):
             pass
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """Handle Enter in content tree consistently across Qt styles/platforms."""
+        """Handle Enter in content tree consistently across Qt styles/platforms.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if (
             watched is getattr(self, "tree_files", None)
             and event.type() == QEvent.Type.KeyPress
@@ -9323,8 +11263,12 @@ class MainWindow(QMainWindow):
             return True
         return super().eventFilter(watched, event)
 
-    def _update_window_title_speeds(self):
-        """Show aggregate up/down speeds in the window title."""
+    def _update_window_title_speeds(self) -> None:
+        """Show aggregate up/down speeds in the window title.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             total_down = 0
             total_up = 0
@@ -9351,7 +11295,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _safe_debug_repr(value: Any, max_len: Optional[int] = 2000) -> str:
-        """Build bounded repr for debug log messages."""
+        """Build bounded repr for debug log messages.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             text = repr(value)
         except Exception:
@@ -9360,8 +11308,12 @@ class MainWindow(QMainWindow):
             return text[:max_len] + "...<truncated>"
         return text
 
-    def _debug_log_api_call(self, method_name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]):
-        """Log one qBittorrent API call invocation when debug logging is enabled."""
+    def _debug_log_api_call(self, method_name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> None:
+        """Log one qBittorrent API call invocation when debug logging is enabled.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not self.debug_logging_enabled:
             return
         logger.debug(
@@ -9371,8 +11323,12 @@ class MainWindow(QMainWindow):
             self._safe_debug_repr(kwargs),
         )
 
-    def _debug_log_api_response(self, method_name: str, result: Any, elapsed: float):
-        """Log one qBittorrent API call response when debug logging is enabled."""
+    def _debug_log_api_response(self, method_name: str, result: Any, elapsed: float) -> None:
+        """Log one qBittorrent API call response when debug logging is enabled.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not self.debug_logging_enabled:
             return
         logger.debug(
@@ -9382,8 +11338,12 @@ class MainWindow(QMainWindow):
             self._safe_debug_repr(result, max_len=None),
         )
 
-    def _debug_log_api_error(self, method_name: str, error: Exception, elapsed: float):
-        """Log one qBittorrent API call failure when debug logging is enabled."""
+    def _debug_log_api_error(self, method_name: str, error: Exception, elapsed: float) -> None:
+        """Log one qBittorrent API call failure when debug logging is enabled.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if not self.debug_logging_enabled:
             return
         logger.debug(
@@ -9393,8 +11353,12 @@ class MainWindow(QMainWindow):
             self._safe_debug_repr(error),
         )
 
-    def _log(self, level: str, message: str, elapsed: Optional[float] = None):
-        """Write to Python file logger."""
+    def _log(self, level: str, message: str, elapsed: Optional[float] = None) -> None:
+        """Write to Python file logger.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         elapsed_str = f" [{elapsed:.3f}s]" if elapsed is not None else ""
         log_msg = f"{message}{elapsed_str}"
         log_level = getattr(logging, level.upper(), logging.INFO)
@@ -9404,8 +11368,12 @@ class MainWindow(QMainWindow):
     # Window Events
     # ========================================================================
 
-    def closeEvent(self, event):
-        """Handle window close event"""
+    def closeEvent(self, event) -> None:
+        """Handle window close event.
+
+        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+        Failure modes: None.
+        """
         if self._add_torrent_dialog is not None and self._add_torrent_dialog.isVisible():
             self._add_torrent_dialog.close()
         self._save_settings()
@@ -9418,7 +11386,11 @@ class MainWindow(QMainWindow):
 # ============================================================================
 
 def load_config(config_file: str) -> Dict[str, Any]:
-    """Load configuration from TOML file"""
+    """Load configuration from TOML file.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     if os.path.exists(config_file):
         try:
             import tomllib
@@ -9431,7 +11403,11 @@ def load_config(config_file: str) -> Dict[str, Any]:
 
 
 def load_config_with_issues(config_file: str) -> Tuple[Dict[str, Any], List[str]]:
-    """Load TOML config and collect load-time issues without requiring logging."""
+    """Load TOML config and collect load-time issues without requiring logging.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     issues: List[str] = []
     if not os.path.exists(config_file):
         issues.append(
@@ -9490,21 +11466,33 @@ CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS = (
 )
 
 
-def _config_validation_warn(message: str):
-    """Log one configuration validation warning message."""
+def _config_validation_warn(message: str) -> None:
+    """Log one configuration validation warning message.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     logger.warning("Config validation: %s", message)
 
 
 def _config_validation_coerce_int(value: Any, default: int) -> int:
-    """Coerce one value to int with fallback default."""
+    """Coerce one value to int with fallback default.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     try:
         return int(value)
     except Exception:
         return default
 
 
-def _apply_legacy_config_mappings(normalized: Dict[str, Any]):
-    """Map legacy config keys to current keys with warnings."""
+def _apply_legacy_config_mappings(normalized: Dict[str, Any]) -> None:
+    """Map legacy config keys to current keys with warnings.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: None.
+    """
     for old_key, new_key in CONFIG_VALIDATION_LEGACY_MAP.items():
         if new_key not in normalized and old_key in normalized:
             normalized[new_key] = normalized.get(old_key)
@@ -9514,16 +11502,24 @@ def _apply_legacy_config_mappings(normalized: Dict[str, Any]):
             )
 
 
-def _remove_settings_managed_config_keys(normalized: Dict[str, Any]):
-    """Drop config keys that are intentionally managed by QSettings."""
+def _remove_settings_managed_config_keys(normalized: Dict[str, Any]) -> None:
+    """Drop config keys that are intentionally managed by QSettings.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: None.
+    """
     for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
         if key in normalized:
             _config_validation_warn(f"'{key}' is ignored in TOML; managed via QSettings.")
             normalized.pop(key, None)
 
 
-def _normalize_qb_host_value(normalized: Dict[str, Any]):
-    """Normalize qb_host value."""
+def _normalize_qb_host_value(normalized: Dict[str, Any]) -> None:
+    """Normalize qb_host value.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     host_val = normalized.get("qb_host", "localhost")
     if not isinstance(host_val, str) or not host_val.strip():
         _config_validation_warn(f"'qb_host' invalid ({host_val!r}); using 'localhost'.")
@@ -9532,8 +11528,12 @@ def _normalize_qb_host_value(normalized: Dict[str, Any]):
         normalized["qb_host"] = host_val.strip()
 
 
-def _normalize_qb_port_value(normalized: Dict[str, Any]):
-    """Normalize qb_port value."""
+def _normalize_qb_port_value(normalized: Dict[str, Any]) -> None:
+    """Normalize qb_port value.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     raw_port = normalized.get("qb_port", 8080)
     port = _config_validation_coerce_int(raw_port, 8080)
     if port < 1 or port > 65535:
@@ -9542,8 +11542,12 @@ def _normalize_qb_port_value(normalized: Dict[str, Any]):
     normalized["qb_port"] = port
 
 
-def _normalize_http_protocol_scheme_value(normalized: Dict[str, Any]):
-    """Normalize optional http_protocol_scheme value."""
+def _normalize_http_protocol_scheme_value(normalized: Dict[str, Any]) -> None:
+    """Normalize optional http_protocol_scheme value.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if "http_protocol_scheme" not in normalized:
         return
     raw_scheme = normalized.get("http_protocol_scheme")
@@ -9560,8 +11564,12 @@ def _normalize_http_protocol_scheme_value(normalized: Dict[str, Any]):
     normalized["http_protocol_scheme"] = normalized_scheme
 
 
-def _normalize_http_timeout_value(normalized: Dict[str, Any]):
-    """Normalize optional http_timeout value (seconds)."""
+def _normalize_http_timeout_value(normalized: Dict[str, Any]) -> None:
+    """Normalize optional http_timeout value (seconds).
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     raw_timeout = normalized.get("http_timeout", DEFAULT_HTTP_TIMEOUT_SECONDS)
     try:
         timeout_seconds = int(raw_timeout)
@@ -9578,8 +11586,12 @@ def _normalize_http_timeout_value(normalized: Dict[str, Any]):
     normalized["http_timeout"] = int(timeout_seconds)
 
 
-def _normalize_credential_values(normalized: Dict[str, Any]):
-    """Normalize credential-related string values."""
+def _normalize_credential_values(normalized: Dict[str, Any]) -> None:
+    """Normalize credential-related string values.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     for key, default_value in [
         ("qb_username", "admin"),
         ("qb_password", ""),
@@ -9595,8 +11607,12 @@ def _normalize_credential_values(normalized: Dict[str, Any]):
         normalized[key] = value
 
 
-def _normalize_log_file_value(normalized: Dict[str, Any]):
-    """Normalize optional log_file path value."""
+def _normalize_log_file_value(normalized: Dict[str, Any]) -> None:
+    """Normalize optional log_file path value.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     raw_log_file = normalized.get("log_file", "qbiremo_enhanced.log")
     if not isinstance(raw_log_file, str) or not raw_log_file.strip():
         _config_validation_warn(
@@ -9607,8 +11623,12 @@ def _normalize_log_file_value(normalized: Dict[str, Any]):
         normalized["log_file"] = raw_log_file.strip()
 
 
-def _normalize_title_bar_speed_format_value(normalized: Dict[str, Any]):
-    """Normalize title_bar_speed_format template string."""
+def _normalize_title_bar_speed_format_value(normalized: Dict[str, Any]) -> None:
+    """Normalize title_bar_speed_format template string.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     raw_title_fmt = normalized.get(
         "title_bar_speed_format",
         DEFAULT_TITLE_BAR_SPEED_FORMAT,
@@ -9632,8 +11652,12 @@ def _normalize_title_bar_speed_format_value(normalized: Dict[str, Any]):
     normalized["title_bar_speed_format"] = title_fmt
 
 
-def _warn_unknown_config_keys(normalized: Dict[str, Any]):
-    """Warn for unknown config keys."""
+def _warn_unknown_config_keys(normalized: Dict[str, Any]) -> None:
+    """Warn for unknown config keys.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     unknown_keys = sorted(
         key for key in normalized.keys()
         if key not in CONFIG_VALIDATION_KNOWN_KEYS
@@ -9644,7 +11668,11 @@ def _warn_unknown_config_keys(normalized: Dict[str, Any]):
 
 
 def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> Dict[str, Any]:
-    """Validate config values, log issues, and return a sanitized config dict."""
+    """Validate config values, log issues, and return a sanitized config dict.
+
+    Side effects: None.
+    Failure modes: None.
+    """
     if not isinstance(config, dict):
         logger.warning(
             "Config validation: root config from %s is not a TOML table/object. Using defaults.",
@@ -9669,7 +11697,11 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
 
 
 def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
-    """Configure file logging and return the handler so it can be flushed."""
+    """Configure file logging and return the handler so it can be flushed.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     instance_id = str(config.get("_instance_id", "") or "").strip().lower()
     if not instance_id:
         instance_id = compute_instance_id_from_config(config)
@@ -9711,7 +11743,11 @@ def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
 
 
 def _open_file_in_default_app(path: str) -> bool:
-    """Open a file in the platform default application."""
+    """Open a file in the platform default application.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
     if not path:
         return False
 
@@ -9730,13 +11766,18 @@ def _open_file_in_default_app(path: str) -> bool:
         return False
 
 
-def _install_exception_hooks(file_handler: logging.FileHandler):
+def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
     """Install global hooks so that *every* unhandled exception is logged.
 
-    On Windows GUI apps stderr is often /dev/null, so without this any
-    exception that escapes a PySide6 slot vanishes silently.
-    """
-    def _excepthook(exc_type, exc_value, exc_tb):
+    Side effects: None.
+    Failure modes: None.
+        """
+    def _excepthook(exc_type, exc_value, exc_tb) -> None:
+        """Log unhandled exceptions and flush log handler immediately.
+
+        Side effects: None.
+        Failure modes: None.
+        """
         if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
@@ -9751,9 +11792,18 @@ def _install_exception_hooks(file_handler: logging.FileHandler):
     atexit.register(file_handler.flush)
 
 
-def main():
-    """Main application entry point"""
+def main() -> None:
+    """Main application entry point.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
     def _positive_instance_counter(value: str) -> int:
+        """Validate CLI instance counter argument as positive integer.
+
+        Side effects: None.
+        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+        """
         try:
             parsed = int(value)
         except Exception as e:

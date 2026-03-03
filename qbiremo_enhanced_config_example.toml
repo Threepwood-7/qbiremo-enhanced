@@ -1,44 +1,103 @@
-# qBiremo Enhanced Configuration Example
-# Copy/rename to: qbiremo_enhanced_config.toml
+# qBiremo Enhanced configuration example
+# Copy to: qbiremo_enhanced_config.toml
+#
+# This file is synchronized with validate_and_normalize_config() contracts.
+# If a key is missing or invalid, the app applies the documented defaults below.
 
-# qBittorrent Connection Settings
+# -----------------------------------------------------------------------------
+# qBittorrent API connection
+# -----------------------------------------------------------------------------
 #
-# qb_host can be a plain hostname/IP or a full URL with scheme:
-#   qb_host = "127.0.0.1"
-#   qb_host = "https://qb.example.com:443"
-#   qb_host = "https://httpuser:httppass@qb.example.com:443"
-#
-#
-#   https://qbittorrent-api.readthedocs.io/en/latest/apidoc/client.html
-#   host (str) – hostname for qBittorrent Web API, [http[s]://]hostname[:port][/path]
-#   port (str | int | None) – port number for qBittorrent Web API (ignored if host contains a port)
-#
-#
-# HTTP Basic Auth (for HTTPS/reverse proxy layer, NOT qBittorrent API auth)
-# can be embedded in the qb_host URL above, or set separately:
-# http_basic_auth_username = ""
-# http_basic_auth_password = ""
-#
-# qBittorrent API auth (qb_username/qb_password below) is separate from HTTP basic auth.
-
+# Type: string
+# Default (missing/invalid): "localhost"
+# Allowed:
+# - Plain host/IP: "127.0.0.1", "qb.example.com"
+# - Full URL: "http://qb.example.com:8080", "https://qb.example.com:443"
+# - URL with HTTP basic auth: "https://httpuser:httppass@qb.example.com:443"
 qb_host = "127.0.0.1"
+
+# Type: integer
+# Default (missing/invalid): 8080
+# Allowed range: 1..65535
 qb_port = 8080
+
+# Type: string
+# Default (missing/invalid): "admin"
 qb_username = "admin"
+
+# Type: string
+# Default (missing/invalid): ""
 qb_password = "CHANGE_ME"
 
-# Optional protocol scheme for qBittorrent WebUI/API.
-# Allowed values: "http" or "https" (default: "http")
+# -----------------------------------------------------------------------------
+# Optional reverse-proxy / HTTP basic auth (separate from qb_username/password)
+# -----------------------------------------------------------------------------
+#
+# Type: string
+# Default: ""
+# Notes:
+# - If qb_host contains URL userinfo (user:pass@...), embedded values win.
+# - If still empty, environment fallback is used: X_HTTP_USER / X_HTTP_PASS.
+http_basic_auth_username = ""
+http_basic_auth_password = ""
+
+# -----------------------------------------------------------------------------
+# Protocol and timeout
+# -----------------------------------------------------------------------------
+#
+# Type: string
+# Effective default: "http"
+# Allowed: "http", "https"
 http_protocol_scheme = "http"
 
-# Optional HTTP timeout for qBittorrent API requests, in seconds.
-# Default: 300
+# Type: integer (seconds)
+# Default (missing/invalid/non-positive): 300
 http_timeout = 300
 
-# Optional title-bar speed format
-# Placeholders: {down_text}, {up_text}
+# -----------------------------------------------------------------------------
+# UI title format
+# -----------------------------------------------------------------------------
+#
+# Type: string
+# Default (missing/invalid): "[D: {down_text}, U: {up_text}]"
+# Must format with placeholders: {down_text}, {up_text}
 title_bar_speed_format = "[D: {down_text}, U: {up_text}]"
-# Example (old style): f"U:{up_text} D:{down_text}"
-# title_bar_speed_format = "U:{up_text} D:{down_text}"
 
-# Optional logging target
-# log_file = "qbiremo_enhanced.log"
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+#
+# Type: string
+# Default (missing/invalid): "qbiremo_enhanced.log"
+# Relative or absolute path.
+log_file = "qbiremo_enhanced.log"
+
+# -----------------------------------------------------------------------------
+# Legacy keys (still accepted with deprecation warning)
+# -----------------------------------------------------------------------------
+# host = "127.0.0.1"
+# port = 8080
+# username = "admin"
+# password = "CHANGE_ME"
+# http_user = ""
+# http_password = ""
+
+# -----------------------------------------------------------------------------
+# Runtime-only keys (do not set manually; managed by the app)
+# -----------------------------------------------------------------------------
+# _config_file_path
+# _log_file_path
+# _instance_id
+# _instance_counter
+# _instance_lock_file_path
+
+# -----------------------------------------------------------------------------
+# QSettings-managed keys ignored in TOML (warning if present)
+# -----------------------------------------------------------------------------
+# auto_refresh
+# refresh_interval
+# default_window_width
+# default_window_height
+# default_status_filter
+# display_size_mode
+# display_speed_mode
