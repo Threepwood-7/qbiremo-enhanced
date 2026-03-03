@@ -8,6 +8,12 @@
 #   qb_host = "https://qb.example.com:443"
 #   qb_host = "https://httpuser:httppass@qb.example.com:443"
 #
+#
+#   https://qbittorrent-api.readthedocs.io/en/latest/apidoc/client.html
+#   host (str) – hostname for qBittorrent Web API, [http[s]://]hostname[:port][/path]
+#   port (str | int | None) – port number for qBittorrent Web API (ignored if host contains a port)
+#
+#
 # HTTP Basic Auth (for HTTPS/reverse proxy layer, NOT qBittorrent API auth)
 # can be embedded in the qb_host URL above, or set separately:
 # http_basic_auth_username = ""
@@ -19,6 +25,7 @@ qb_host = "127.0.0.1"
 qb_port = 8080
 qb_username = "admin"
 qb_password = "CHANGE_ME"
+
 # Optional protocol scheme for qBittorrent WebUI/API.
 # Allowed values: "http" or "https" (default: "http")
 http_protocol_scheme = "http"

@@ -76,6 +76,7 @@ CACHE_FILE_NAME = "qbiremo_enhanced.cache"
 CACHE_MAX_AGE_DAYS = 3
 INSTANCE_ID_LENGTH = 8
 CLIPBOARD_SEEN_LIMIT = 256
+APP_ICON_FILE_NAME = "qbiremo_enhanced.ico"
 
 logger = logging.getLogger(G_APP_NAME)
 _INSTANCE_LOCK_HANDLES: Dict[str, Any] = {}
@@ -1968,6 +1969,14 @@ def resolve_instance_lock_file_path(instance_id: str, instance_counter: Any) -> 
     return resolve_cache_file_path("qbiremo_enhanced.lck", lock_key)
 
 
+def load_app_icon() -> QIcon:
+    """Load the application icon from the script directory when available."""
+    icon_path = Path(__file__).resolve().with_name(APP_ICON_FILE_NAME)
+    if not icon_path.exists():
+        return QIcon()
+    return QIcon(str(icon_path))
+
+
 def _instance_lock_key(lock_path: Path) -> str:
     """Build a stable dictionary key for one lock file path."""
     try:
@@ -2161,6 +2170,9 @@ class MainWindow(QMainWindow):
             self.instance_id = compute_instance_id_from_config(config)
         self.base_window_title = "qBiremo Enhanced"
         self.setWindowTitle(self.base_window_title)
+        window_icon = load_app_icon()
+        if not window_icon.isNull():
+            self.setWindowIcon(window_icon)
 
         # Connection info from config (TOML), falling back to env vars
         self.qb_conn_info = self._build_connection_info(config)
@@ -2590,7 +2602,7 @@ class MainWindow(QMainWindow):
         self.tree_filters.addTopLevelItem(self._section_status)
 
         for status in STATUS_FILTERS:
-            item = QTreeWidgetItem([status.replace('_', ' ').title()])
+            item = QTreeWidgetItem([self._status_filter_item_text(status)])
             item.setData(0, Qt.ItemDataRole.UserRole, ('status', status))
             self._section_status.addChild(item)
         self._section_status.setExpanded(True)
@@ -5251,6 +5263,7 @@ class MainWindow(QMainWindow):
                 self._set_status(f"Error: {error}")
                 # Show empty table
                 self.all_torrents = []
+                self._update_filter_tree_count_labels()
                 self.filtered_torrents = []
                 self._update_window_title_speeds()
                 self._update_statusbar_transfer_summary()
@@ -5262,6 +5275,7 @@ class MainWindow(QMainWindow):
                 result.get("remote_filtered", False)
             )
             self.all_torrents = result.get('data', [])
+            self._update_filter_tree_count_labels()
             if "alt_speed_mode" in result:
                 self._last_alt_speed_mode = bool(result.get("alt_speed_mode"))
             if "dht_nodes" in result:
@@ -5320,6 +5334,7 @@ class MainWindow(QMainWindow):
             self._set_status(f"Error loading torrents: {e}")
             # Show empty table
             self.all_torrents = []
+            self._update_filter_tree_count_labels()
             self.filtered_torrents = []
             self._update_window_title_speeds()
             self._update_statusbar_transfer_summary()
@@ -5618,6 +5633,91 @@ class MainWindow(QMainWindow):
     # Filter Updates
     # ========================================================================
 
+    def _count_status_filter_matches(self, status_filter: str) -> int:
+        """Count torrents matching one status filter using current in-memory torrent list."""
+        torrents = list(self.all_torrents or [])
+        if not torrents:
+            return 0
+        status = str(status_filter or "all").strip().lower()
+        if status == "all":
+            return len(torrents)
+        return sum(1 for torrent in torrents if self._torrent_matches_status_filter(torrent, status))
+
+    def _count_category_filter_matches(self, category_filter: Any) -> int:
+        """Count torrents matching one category filter using current in-memory torrent list."""
+        torrents = list(self.all_torrents or [])
+        if not torrents:
+            return 0
+        if category_filter is None:
+            return len(torrents)
+        return sum(
+            1
+            for torrent in torrents
+            if self._torrent_matches_category_filter(torrent, category_filter)
+        )
+
+    def _count_tag_filter_matches(self, tag_filter: Any) -> int:
+        """Count torrents matching one tag filter using current in-memory torrent list."""
+        torrents = list(self.all_torrents or [])
+        if not torrents:
+            return 0
+        if tag_filter is None:
+            return len(torrents)
+        return sum(1 for torrent in torrents if self._torrent_matches_tag_filter(torrent, tag_filter))
+
+    def _status_filter_item_text(self, status_filter: str) -> str:
+        """Build display text for one status filter row with live torrent count."""
+        status = str(status_filter or "all").strip().lower() or "all"
+        label = status.replace("_", " ").title()
+        count = self._count_status_filter_matches(status)
+        return f"{label} ({count})"
+
+    def _category_filter_item_text(self, category_filter: Any) -> str:
+        """Build display text for one category filter row with live torrent count."""
+        if category_filter is None:
+            label = "All"
+        else:
+            category_text = str(category_filter or "")
+            label = category_text if category_text else "Uncategorized"
+        count = self._count_category_filter_matches(category_filter)
+        return f"{label} ({count})"
+
+    def _tag_filter_item_text(self, tag_filter: Any) -> str:
+        """Build display text for one tag filter row with live torrent count."""
+        if tag_filter is None:
+            label = "All"
+        else:
+            tag_text = str(tag_filter or "")
+            label = tag_text if tag_text else "Untagged"
+        count = self._count_tag_filter_matches(tag_filter)
+        return f"{label} ({count})"
+
+    def _update_filter_tree_count_labels(self):
+        """Refresh status/category/tag tree labels using latest in-memory torrent snapshot."""
+        if not hasattr(self, "tree_filters"):
+            return
+        try:
+            for top_idx in range(self.tree_filters.topLevelItemCount()):
+                section = self.tree_filters.topLevelItem(top_idx)
+                if section is None:
+                    continue
+                for child_idx in range(section.childCount()):
+                    item = section.child(child_idx)
+                    if item is None:
+                        continue
+                    data = item.data(0, Qt.ItemDataRole.UserRole)
+                    if not isinstance(data, tuple) or len(data) != 2:
+                        continue
+                    kind, value = data
+                    if kind == "status":
+                        item.setText(0, self._status_filter_item_text(str(value or "all")))
+                    elif kind == "category":
+                        item.setText(0, self._category_filter_item_text(value))
+                    elif kind == "tag":
+                        item.setText(0, self._tag_filter_item_text(value))
+        except Exception as e:
+            self._log("ERROR", f"Error updating filter tree counts: {e}")
+
     def _update_category_tree(self):
         """Update category section in the unified filter tree."""
         try:
@@ -5625,16 +5725,16 @@ class MainWindow(QMainWindow):
             while self._section_category.childCount():
                 self._section_category.removeChild(self._section_category.child(0))
 
-            all_item = QTreeWidgetItem(["All"])
+            all_item = QTreeWidgetItem([self._category_filter_item_text(None)])
             all_item.setData(0, Qt.ItemDataRole.UserRole, ('category', None))
             self._section_category.addChild(all_item)
 
-            uncategorized = QTreeWidgetItem(["Uncategorized"])
+            uncategorized = QTreeWidgetItem([self._category_filter_item_text("")])
             uncategorized.setData(0, Qt.ItemDataRole.UserRole, ('category', ""))
             self._section_category.addChild(uncategorized)
 
             for category in self.categories:
-                item = QTreeWidgetItem([str(category)])
+                item = QTreeWidgetItem([self._category_filter_item_text(category)])
                 item.setData(0, Qt.ItemDataRole.UserRole, ('category', category))
                 self._section_category.addChild(item)
 
@@ -5649,16 +5749,16 @@ class MainWindow(QMainWindow):
             while self._section_tag.childCount():
                 self._section_tag.removeChild(self._section_tag.child(0))
 
-            all_item = QTreeWidgetItem(["All"])
+            all_item = QTreeWidgetItem([self._tag_filter_item_text(None)])
             all_item.setData(0, Qt.ItemDataRole.UserRole, ('tag', None))
             self._section_tag.addChild(all_item)
 
-            untagged = QTreeWidgetItem(["Untagged"])
+            untagged = QTreeWidgetItem([self._tag_filter_item_text("")])
             untagged.setData(0, Qt.ItemDataRole.UserRole, ('tag', ""))
             self._section_tag.addChild(untagged)
 
             for tag in self.tags:
-                item = QTreeWidgetItem([str(tag)])
+                item = QTreeWidgetItem([self._tag_filter_item_text(tag)])
                 item.setData(0, Qt.ItemDataRole.UserRole, ('tag', tag))
                 self._section_tag.addChild(item)
 
@@ -9254,6 +9354,9 @@ def main():
         app.setOrganizationName(G_ORG_NAME)
         app.setApplicationName(G_APP_NAME)
         app.setApplicationDisplayName("qBiremo Enhanced")
+        app_icon = load_app_icon()
+        if not app_icon.isNull() and hasattr(app, "setWindowIcon"):
+            app.setWindowIcon(app_icon)
 
         # Create and show main window
         window = MainWindow(config)

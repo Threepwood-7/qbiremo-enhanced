@@ -1066,6 +1066,70 @@ def test_filter_tree_highlights_all_active_filters(window):
     assert not _find_filter_item(window.tree_filters, "status", "all").font(0).bold()
 
 
+def test_filter_tree_status_category_tag_labels_include_latest_snapshot_counts(window, make_torrent):
+    window.categories = ["movies", "tv"]
+    window.tags = ["tag1", "tag2"]
+    window._update_category_tree()
+    window._update_tag_tree()
+
+    t1 = make_torrent(
+        hash="h1",
+        state="downloading",
+        dlspeed=200,
+        upspeed=0,
+        category="movies",
+        tags="tag1",
+    )
+    t2 = make_torrent(
+        hash="h2",
+        state="uploading",
+        dlspeed=0,
+        upspeed=150,
+        category="movies",
+        tags="tag2",
+    )
+    t3 = make_torrent(
+        hash="h3",
+        state="pausedDL",
+        dlspeed=0,
+        upspeed=0,
+        category="",
+        tags="",
+    )
+    window.all_torrents = [t1, t2, t3]
+    window._update_filter_tree_count_labels()
+
+    assert _find_filter_item(window.tree_filters, "status", "all").text(0) == "All (3)"
+    assert _find_filter_item(window.tree_filters, "status", "active").text(0) == "Active (2)"
+    assert _find_filter_item(window.tree_filters, "status", "paused").text(0) == "Paused (1)"
+    assert _find_filter_item(window.tree_filters, "category", None).text(0) == "All (3)"
+    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (2)"
+    assert _find_filter_item(window.tree_filters, "category", "").text(0) == "Uncategorized (1)"
+    assert _find_filter_item(window.tree_filters, "tag", None).text(0) == "All (3)"
+    assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (1)"
+    assert _find_filter_item(window.tree_filters, "tag", "").text(0) == "Untagged (1)"
+
+
+def test_filter_tree_count_labels_do_not_invoke_api(window, make_torrent, monkeypatch):
+    window.categories = ["movies"]
+    window.tags = ["tag1"]
+    window._update_category_tree()
+    window._update_tag_tree()
+    window.all_torrents = [
+        make_torrent(hash="h1", state="downloading", dlspeed=100, category="movies", tags="tag1")
+    ]
+
+    def _forbidden_client_call():
+        raise AssertionError("API client must not be used for filter counts")
+
+    monkeypatch.setattr(window, "_create_client", _forbidden_client_call)
+    window._update_filter_tree_count_labels()
+
+    assert _find_filter_item(window.tree_filters, "status", "all").text(0) == "All (1)"
+    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (1)"
+    assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (1)"
+
+
 def test_set_auto_refresh_interval_from_menu(window, monkeypatch):
     monkeypatch.setattr(appmod.QInputDialog, "getInt", lambda *args, **kwargs: (60, True))
     window.auto_refresh_enabled = True
