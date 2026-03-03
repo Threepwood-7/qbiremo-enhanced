@@ -292,12 +292,40 @@ It combines:
 | `Ctrl+Shift+S` | Resume Session (all) |
 | `Enter` / `Return` | Open local torrent directory / content file |
 
+## Project Structure
+
+```
+qbiremo-enhanced/
+├── qbiremo_enhanced.py                  # Main application (single-file, ~9 300 lines)
+├── qb_temp_launch.py                    # Helper: launch a temporary qBittorrent instance
+├── qbiremo_enhanced_config.toml         # Active TOML configuration
+├── qbiremo_enhanced_config_example.toml # Annotated example configuration
+├── requirements.txt                     # Runtime dependencies
+├── requirements-dev.txt                 # Dev/test dependencies
+├── pytest.ini                           # Pytest configuration
+├── qbiremo_enhanced_launch.cmd          # Windows batch launcher
+├── qbiremo_enhanced_test.cmd            # Windows batch test runner
+├── README.md
+├── MEMORY_SPEC.md                       # Architecture reference spec
+└── tests/
+    ├── conftest.py                      # Shared fixtures and mocks
+    ├── test_mainwindow_filters_and_cache.py
+    ├── test_add_torrent_dialog.py
+    ├── test_config_validation_and_startup.py
+    └── test_settings_persistence.py
+```
+
 ## Installation
 
 ### Requirements
+
+- **Python 3.11+** (uses the stdlib `tomllib` module for TOML parsing)
+
 ```bash
 pip install -r requirements.txt
 ```
+
+Runtime dependencies: `PySide6 >=6.6.0`, `qbittorrent-api >=2024.1.54`.
 
 ### Dev/Test Requirements
 ```bash
@@ -368,6 +396,20 @@ python qbiremo_enhanced.py -c path\to\custom.toml
 -h, --help           Show help
 ```
 
+### Helper: Temporary qBittorrent Instance
+
+`qb_temp_launch.py` launches a qBittorrent process with an isolated profile directory (defaults to `C:\tmp\qbittest`).
+Useful for testing without affecting your main qBittorrent installation.
+
+```bash
+python qb_temp_launch.py
+```
+
+The script resolves the qBittorrent executable from (in order):
+1. `QBITTORRENT_EXE` environment variable,
+2. system `PATH`,
+3. common Windows install locations (`Program Files`).
+
 ## Testing
 
 Run the test suite:
@@ -386,17 +428,30 @@ Current tests cover:
 
 ## Architecture Notes
 
-- Single-file application (`qbiremo_enhanced.py`) with a focused test suite under `tests/`.
-- Background API operations run through cancellable worker tasks (`APITaskQueue` using `QRunnable` + `QThreadPool`). Each new task cancels the currently running worker in that queue — latest task wins.
+- Single-file application (`qbiremo_enhanced.py`, ~9 300 lines) with a focused test suite under `tests/`.
+- Background API operations run through cancellable worker tasks (`APITaskQueue` using `QRunnable` + `QThreadPool`). Each new task cancels the currently running worker in that queue — latest task wins (not a FIFO queue).
 - Three independent queue instances reduce contention:
   - `api_queue` — general operations (refresh, mutations, dialogs).
   - `details_api_queue` — selected-torrent trackers/peers loading.
   - `analytics_api_queue` — tracker health dashboard loading.
 - Remote filtering is used when possible to reduce payload size; local post-filtering handles quick text/file/size/tracker filters.
 - Content filter accuracy depends on cached `torrents_files` snapshots.
-- When debug logging is enabled, the API client is wrapped with a transparent proxy that logs call names, args, responses, exceptions, and elapsed time.
-- Instance isolation: every qBittorrent server connection gets its own settings, cache file, and log file, keyed by a deterministic 8-character host+port hash plus `instance_counter` suffix.
+- When debug logging is enabled, the API client is wrapped with a transparent proxy (`_DebugAPIClientProxy`) that logs call names, args, responses, exceptions, and elapsed time.
 - Display modes: sizes and speeds can be shown as raw bytes (with thousands separators) or human-readable units (KB/MB/GB/TB), toggled via `View -> Human Readable`.
+
+### Instance Isolation and Locking
+
+Every qBittorrent server connection is fully isolated:
+
+- A deterministic 8-character hex hash is computed from `host:port`.
+- The `instance_counter` (default `1`) is appended to create the final instance ID.
+- Each instance gets its own:
+  - QSettings INI file (`qBiremoEnhanced_<id>`),
+  - content cache file (JSON, under OS temp),
+  - log file (instance-suffixed filename),
+  - OS-level lock file (`.lck`).
+- On startup, the app acquires an exclusive byte-range lock on the `.lck` file. If the lock is already held (another instance is running with the same counter), the counter auto-increments until a free slot is found.
+- Lock files are released and cleaned up on normal exit via `atexit`.
 
 ## API Documentation References
 
