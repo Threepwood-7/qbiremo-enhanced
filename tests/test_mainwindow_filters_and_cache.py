@@ -306,6 +306,12 @@ def test_app_preferences_dialog_tracks_changes_and_highlights_coral(window):
     assert captured == {"max_active_downloads": 5}
 
 
+def test_app_preferences_dialog_uses_apply_and_cancel_buttons(window):
+    dialog = appmod.AppPreferencesDialog(window)
+    assert dialog.btn_apply.text() == "Apply"
+    assert dialog.btn_cancel.text() == "Cancel"
+
+
 def test_on_app_preferences_apply_requested_queues_api_task(window, monkeypatch):
     captured = {}
 
@@ -323,6 +329,96 @@ def test_on_app_preferences_apply_requested_queues_api_task(window, monkeypatch)
     assert captured["api_method_name"] == "_api_apply_app_preferences"
     assert callable(captured["callback"])
     assert captured["args"] == ({"max_active_downloads": 8},)
+
+
+def test_friendly_add_preferences_dialog_tracks_changed_fields(window):
+    dialog = appmod.FriendlyAddPreferencesDialog(window)
+    dialog.set_preferences(
+        {
+            "save_path": "C:/downloads",
+            "temp_path_enabled": True,
+            "temp_path": "C:/incomplete",
+            "start_paused_enabled": False,
+            "create_subfolder_enabled": True,
+            "auto_tmm_enabled": False,
+            "incomplete_files_ext": True,
+            "preallocate_all": False,
+            "queueing_enabled": True,
+            "max_active_downloads": 3,
+            "max_active_uploads": 4,
+            "max_active_torrents": 5,
+            "max_connec": 600,
+            "max_connec_per_torrent": 60,
+            "max_uploads": 30,
+            "max_uploads_per_torrent": 10,
+            "dht": True,
+            "pex": True,
+            "lsd": False,
+            "upnp": True,
+            "anonymous_mode": False,
+            "encryption": 0,
+            "max_ratio_enabled": False,
+            "max_ratio": 2.0,
+            "max_seeding_time_enabled": False,
+            "max_seeding_time": 120,
+        }
+    )
+
+    dialog.txt_save_path.setText("D:/downloads")
+    dialog.chk_start_paused.setChecked(True)
+    dialog.spn_max_active_downloads.setValue(9)
+    dialog.chk_dht.setChecked(False)
+    dialog.cmb_encryption.setCurrentIndex(dialog.cmb_encryption.findData(1))
+    dialog.chk_max_ratio_enabled.setChecked(True)
+    dialog.spn_max_ratio.setValue(3.5)
+
+    assert dialog.changed_preferences() == {
+        "save_path": "D:/downloads",
+        "start_paused_enabled": True,
+        "max_active_downloads": 9,
+        "dht": False,
+        "encryption": 1,
+        "max_ratio_enabled": True,
+        "max_ratio": 3.5,
+    }
+
+    captured = {}
+    dialog.apply_requested.connect(lambda changes: captured.update(changes))
+    dialog._emit_apply()
+    assert captured == {
+        "save_path": "D:/downloads",
+        "start_paused_enabled": True,
+        "max_active_downloads": 9,
+        "dht": False,
+        "encryption": 1,
+        "max_ratio_enabled": True,
+        "max_ratio": 3.5,
+    }
+
+
+def test_friendly_add_preferences_dialog_uses_apply_and_cancel_buttons(window):
+    dialog = appmod.FriendlyAddPreferencesDialog(window)
+    assert dialog.btn_apply.text() == "Apply"
+    assert dialog.btn_cancel.text() == "Cancel"
+
+
+def test_friendly_add_preferences_apply_requested_queues_api_task(window, monkeypatch):
+    captured = {}
+
+    def _fake_add_task(task_name, api_method, callback, *args):
+        captured["task_name"] = task_name
+        captured["api_method_name"] = getattr(api_method, "__name__", "")
+        captured["callback"] = callback
+        captured["args"] = args
+
+    monkeypatch.setattr(window.api_queue, "add_task", _fake_add_task)
+
+    window._on_friendly_add_preferences_apply_requested({"save_path": "C:/downloads"})
+
+    assert captured["task_name"] == "apply_friendly_add_preferences"
+    assert captured["api_method_name"] == "_api_apply_app_preferences"
+    assert callable(captured["callback"])
+    assert captured["args"] == ({"save_path": "C:/downloads"},)
 
 
 def test_peers_table_uses_custom_context_menu(window):
@@ -1927,6 +2023,9 @@ def test_tools_menu_contains_clipboard_monitor_toggle(window):
     action_debug_logging = _find_menu_action(window, "&Tools", "Enable &Debug logging")
     action_edit_ini = _find_menu_action(window, "&Tools", "&Edit .ini file")
     action_edit_app_preferences = _find_menu_action(window, "&Tools", "Edit App Preferences")
+    action_edit_add_preferences_friendly = _find_menu_action(
+        window, "&Tools", "Edit Add Preferences (friendly)"
+    )
     action_open_web_ui = _find_menu_action(window, "&Tools", "Open Web UI in browser")
     action_speed_limits = _find_menu_action(window, "&Tools", "Manage &Speed Limits...")
     action_manage_taxonomy = _find_menu_action(window, "&Tools", "Manage Tags and Categories")
@@ -1938,6 +2037,7 @@ def test_tools_menu_contains_clipboard_monitor_toggle(window):
     assert action_debug_logging.isCheckable()
     assert action_edit_ini is not None
     assert action_edit_app_preferences is not None
+    assert action_edit_add_preferences_friendly is not None
     assert action_open_web_ui is not None
     assert action_speed_limits is not None
     assert action_manage_taxonomy is not None
@@ -2618,6 +2718,24 @@ def test_show_speed_limits_manager_dialog_queues_profile_load(window, monkeypatc
 
     assert calls[0][0] == "fetch_speed_limits_profile"
     assert calls[0][1] == window._api_fetch_speed_limits_profile
+
+
+def test_show_friendly_add_preferences_dialog_queues_preferences_load(window, monkeypatch, qtbot):
+    calls = []
+    monkeypatch.setattr(
+        window.api_queue,
+        "add_task",
+        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+    )
+
+    window._show_friendly_add_preferences_editor()
+    dialog = window._friendly_add_preferences_dialog
+    assert dialog is not None
+    qtbot.addWidget(dialog)
+    assert dialog.windowTitle() == "Edit Add Preferences (friendly)"
+
+    assert calls[0][0] == "fetch_friendly_add_preferences"
+    assert calls[0][1] == window._api_fetch_app_preferences
 
 
 def test_speed_limits_apply_requested_queues_profile_apply(window, monkeypatch):

@@ -1211,14 +1211,15 @@ class AppPreferencesDialog(QDialog):
         self.lbl_message = QLabel("No preferences loaded.")
         layout.addWidget(self.lbl_message)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Cancel
-            | QDialogButtonBox.StandardButton.Apply
-        )
-        self.btn_apply = buttons.button(QDialogButtonBox.StandardButton.Apply)
+        controls = QHBoxLayout()
+        self.btn_apply = QPushButton("Apply")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_apply.clicked.connect(self._emit_apply)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.btn_cancel.clicked.connect(self.reject)
+        controls.addStretch(1)
+        controls.addWidget(self.btn_apply)
+        controls.addWidget(self.btn_cancel)
+        layout.addLayout(controls)
 
     def set_busy(self, busy: bool, message: str = ""):
         """Enable/disable dialog controls while API operation runs."""
@@ -1491,6 +1492,317 @@ class AppPreferencesDialog(QDialog):
             self.lbl_message.setText("No changed preferences.")
         else:
             self.lbl_message.setText(f"Changed preferences: {change_count}")
+
+    def _emit_apply(self):
+        changes = self.changed_preferences()
+        if not changes:
+            self.lbl_message.setText("No changed preferences to apply.")
+            return
+        self.apply_requested.emit(changes)
+
+
+# ============================================================================
+# Friendly Add Preferences Dialog
+# ============================================================================
+
+class FriendlyAddPreferencesDialog(QDialog):
+    """Dialog to edit common qBittorrent app preferences without raw JSON editing."""
+
+    apply_requested = Signal(dict)
+
+    FRIENDLY_PREF_KEYS = (
+        "save_path",
+        "temp_path_enabled",
+        "temp_path",
+        "start_paused_enabled",
+        "create_subfolder_enabled",
+        "auto_tmm_enabled",
+        "incomplete_files_ext",
+        "preallocate_all",
+        "queueing_enabled",
+        "max_active_downloads",
+        "max_active_uploads",
+        "max_active_torrents",
+        "max_connec",
+        "max_connec_per_torrent",
+        "max_uploads",
+        "max_uploads_per_torrent",
+        "dht",
+        "pex",
+        "lsd",
+        "upnp",
+        "anonymous_mode",
+        "encryption",
+        "max_ratio_enabled",
+        "max_ratio",
+        "max_seeding_time_enabled",
+        "max_seeding_time",
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Add Preferences (friendly)")
+        self.resize(640, 560)
+        self._original_values: Dict[str, Any] = {}
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        self.lbl_summary = QLabel(
+            "Friendly editor for common settings. For advanced keys, use Edit App Preferences."
+        )
+        self.lbl_summary.setWordWrap(True)
+        layout.addWidget(self.lbl_summary)
+
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs, 1)
+
+        tab_downloads = QWidget()
+        downloads_form = QFormLayout(tab_downloads)
+        self.txt_save_path = QLineEdit()
+        self.chk_temp_path_enabled = QCheckBox("Use temporary/incomplete path")
+        self.chk_temp_path_enabled.toggled.connect(self._update_temp_path_enabled_state)
+        self.txt_temp_path = QLineEdit()
+        self.chk_start_paused = QCheckBox("Start new torrents paused")
+        self.chk_create_subfolder = QCheckBox("Create subfolder for torrents with multiple files")
+        self.chk_auto_tmm = QCheckBox("Enable automatic torrent management")
+        self.chk_incomplete_ext = QCheckBox("Append .!qB extension to incomplete files")
+        self.chk_preallocate = QCheckBox("Pre-allocate all disk space")
+        downloads_form.addRow("Default save path:", self.txt_save_path)
+        downloads_form.addRow("", self.chk_temp_path_enabled)
+        downloads_form.addRow("Temporary path:", self.txt_temp_path)
+        downloads_form.addRow("", self.chk_start_paused)
+        downloads_form.addRow("", self.chk_create_subfolder)
+        downloads_form.addRow("", self.chk_auto_tmm)
+        downloads_form.addRow("", self.chk_incomplete_ext)
+        downloads_form.addRow("", self.chk_preallocate)
+        self.tabs.addTab(tab_downloads, "Downloads")
+
+        tab_queueing = QWidget()
+        queue_form = QFormLayout(tab_queueing)
+        self.chk_queueing_enabled = QCheckBox("Enable queueing")
+        self.spn_max_active_downloads = self._make_unlimited_spinbox()
+        self.spn_max_active_uploads = self._make_unlimited_spinbox()
+        self.spn_max_active_torrents = self._make_unlimited_spinbox()
+        self.spn_max_connec = self._make_unlimited_spinbox()
+        self.spn_max_connec_per_torrent = self._make_unlimited_spinbox()
+        self.spn_max_uploads = self._make_unlimited_spinbox()
+        self.spn_max_uploads_per_torrent = self._make_unlimited_spinbox()
+        queue_form.addRow("", self.chk_queueing_enabled)
+        queue_form.addRow("Max active downloads:", self.spn_max_active_downloads)
+        queue_form.addRow("Max active uploads:", self.spn_max_active_uploads)
+        queue_form.addRow("Max active torrents:", self.spn_max_active_torrents)
+        queue_form.addRow("Global maximum connections:", self.spn_max_connec)
+        queue_form.addRow("Maximum connections per torrent:", self.spn_max_connec_per_torrent)
+        queue_form.addRow("Global upload slots:", self.spn_max_uploads)
+        queue_form.addRow("Upload slots per torrent:", self.spn_max_uploads_per_torrent)
+        self.tabs.addTab(tab_queueing, "Queueing")
+
+        tab_network = QWidget()
+        network_form = QFormLayout(tab_network)
+        self.chk_dht = QCheckBox("Enable DHT")
+        self.chk_pex = QCheckBox("Enable Peer Exchange (PeX)")
+        self.chk_lsd = QCheckBox("Enable Local Peer Discovery (LSD)")
+        self.chk_upnp = QCheckBox("Use UPnP / NAT-PMP to forward the listening port")
+        self.chk_anonymous_mode = QCheckBox("Enable anonymous mode")
+        self.cmb_encryption = QComboBox()
+        self.cmb_encryption.addItem("Prefer encryption", 0)
+        self.cmb_encryption.addItem("Require encryption", 1)
+        self.cmb_encryption.addItem("Disable encryption", 2)
+        network_form.addRow("", self.chk_dht)
+        network_form.addRow("", self.chk_pex)
+        network_form.addRow("", self.chk_lsd)
+        network_form.addRow("", self.chk_upnp)
+        network_form.addRow("", self.chk_anonymous_mode)
+        network_form.addRow("Encryption mode:", self.cmb_encryption)
+        self.tabs.addTab(tab_network, "Network")
+
+        tab_share_limits = QWidget()
+        share_form = QFormLayout(tab_share_limits)
+        self.chk_max_ratio_enabled = QCheckBox("Enable default ratio limit")
+        self.chk_max_ratio_enabled.toggled.connect(self._update_ratio_enabled_state)
+        self.spn_max_ratio = QDoubleSpinBox()
+        self.spn_max_ratio.setDecimals(2)
+        self.spn_max_ratio.setRange(0.0, 10_000.0)
+        self.spn_max_ratio.setSingleStep(0.05)
+        self.chk_max_seeding_time_enabled = QCheckBox("Enable default seeding time limit")
+        self.chk_max_seeding_time_enabled.toggled.connect(self._update_seeding_time_enabled_state)
+        self.spn_max_seeding_time = QSpinBox()
+        self.spn_max_seeding_time.setRange(0, 10_000_000)
+        self.spn_max_seeding_time.setSingleStep(10)
+        share_form.addRow("", self.chk_max_ratio_enabled)
+        share_form.addRow("Default ratio limit:", self.spn_max_ratio)
+        share_form.addRow("", self.chk_max_seeding_time_enabled)
+        share_form.addRow("Default seeding time limit (minutes):", self.spn_max_seeding_time)
+        self.tabs.addTab(tab_share_limits, "Seeding Limits")
+
+        self.lbl_message = QLabel("No preferences loaded.")
+        layout.addWidget(self.lbl_message)
+
+        controls = QHBoxLayout()
+        self.btn_apply = QPushButton("Apply")
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_apply.clicked.connect(self._emit_apply)
+        self.btn_cancel.clicked.connect(self.reject)
+        controls.addStretch(1)
+        controls.addWidget(self.btn_apply)
+        controls.addWidget(self.btn_cancel)
+        layout.addLayout(controls)
+
+        self._update_temp_path_enabled_state()
+        self._update_ratio_enabled_state()
+        self._update_seeding_time_enabled_state()
+
+    @staticmethod
+    def _make_unlimited_spinbox() -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(-1, 10_000_000)
+        spin.setSingleStep(1)
+        spin.setSpecialValueText("Unlimited (-1)")
+        return spin
+
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if token in {"1", "true", "yes", "on"}:
+                return True
+            if token in {"0", "false", "no", "off"}:
+                return False
+        return bool(default)
+
+    @staticmethod
+    def _to_int(value: Any, default: int = -1) -> int:
+        if isinstance(value, bool):
+            return int(default)
+        try:
+            return int(value)
+        except Exception:
+            return int(default)
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        if isinstance(value, bool):
+            return float(default)
+        try:
+            return float(value)
+        except Exception:
+            return float(default)
+
+    @staticmethod
+    def _set_combo_data(combo: QComboBox, value: Any, fallback: int = 0):
+        desired = FriendlyAddPreferencesDialog._to_int(value, fallback)
+        idx = combo.findData(desired)
+        if idx < 0:
+            idx = combo.findData(int(fallback))
+        if idx < 0:
+            idx = 0
+        combo.setCurrentIndex(idx)
+
+    def _update_temp_path_enabled_state(self):
+        enabled = bool(self.chk_temp_path_enabled.isChecked())
+        self.txt_temp_path.setEnabled(enabled)
+
+    def _update_ratio_enabled_state(self):
+        self.spn_max_ratio.setEnabled(bool(self.chk_max_ratio_enabled.isChecked()))
+
+    def _update_seeding_time_enabled_state(self):
+        self.spn_max_seeding_time.setEnabled(bool(self.chk_max_seeding_time_enabled.isChecked()))
+
+    def set_busy(self, busy: bool, message: str = ""):
+        """Enable/disable controls while loading/applying preferences."""
+        enabled = not bool(busy)
+        self.tabs.setEnabled(enabled)
+        self.btn_apply.setEnabled(enabled)
+        if enabled:
+            self._update_temp_path_enabled_state()
+            self._update_ratio_enabled_state()
+            self._update_seeding_time_enabled_state()
+        self.lbl_message.setText(str(message or ""))
+
+    def _collect_values(self) -> Dict[str, Any]:
+        values = {
+            "save_path": str(self.txt_save_path.text() or "").strip(),
+            "temp_path_enabled": bool(self.chk_temp_path_enabled.isChecked()),
+            "temp_path": str(self.txt_temp_path.text() or "").strip(),
+            "start_paused_enabled": bool(self.chk_start_paused.isChecked()),
+            "create_subfolder_enabled": bool(self.chk_create_subfolder.isChecked()),
+            "auto_tmm_enabled": bool(self.chk_auto_tmm.isChecked()),
+            "incomplete_files_ext": bool(self.chk_incomplete_ext.isChecked()),
+            "preallocate_all": bool(self.chk_preallocate.isChecked()),
+            "queueing_enabled": bool(self.chk_queueing_enabled.isChecked()),
+            "max_active_downloads": int(self.spn_max_active_downloads.value()),
+            "max_active_uploads": int(self.spn_max_active_uploads.value()),
+            "max_active_torrents": int(self.spn_max_active_torrents.value()),
+            "max_connec": int(self.spn_max_connec.value()),
+            "max_connec_per_torrent": int(self.spn_max_connec_per_torrent.value()),
+            "max_uploads": int(self.spn_max_uploads.value()),
+            "max_uploads_per_torrent": int(self.spn_max_uploads_per_torrent.value()),
+            "dht": bool(self.chk_dht.isChecked()),
+            "pex": bool(self.chk_pex.isChecked()),
+            "lsd": bool(self.chk_lsd.isChecked()),
+            "upnp": bool(self.chk_upnp.isChecked()),
+            "anonymous_mode": bool(self.chk_anonymous_mode.isChecked()),
+            "encryption": self._to_int(self.cmb_encryption.currentData(), 0),
+            "max_ratio_enabled": bool(self.chk_max_ratio_enabled.isChecked()),
+            "max_ratio": float(self.spn_max_ratio.value()),
+            "max_seeding_time_enabled": bool(self.chk_max_seeding_time_enabled.isChecked()),
+            "max_seeding_time": int(self.spn_max_seeding_time.value()),
+        }
+        return values
+
+    def set_preferences(self, preferences: Dict[str, Any]):
+        """Load selected friendly fields from raw app preferences payload."""
+        prefs = dict(preferences or {}) if isinstance(preferences, dict) else {}
+
+        self.txt_save_path.setText(str(prefs.get("save_path", "") or ""))
+        self.chk_temp_path_enabled.setChecked(self._to_bool(prefs.get("temp_path_enabled", False), False))
+        self.txt_temp_path.setText(str(prefs.get("temp_path", "") or ""))
+        self.chk_start_paused.setChecked(self._to_bool(prefs.get("start_paused_enabled", False), False))
+        self.chk_create_subfolder.setChecked(self._to_bool(prefs.get("create_subfolder_enabled", False), False))
+        self.chk_auto_tmm.setChecked(self._to_bool(prefs.get("auto_tmm_enabled", False), False))
+        self.chk_incomplete_ext.setChecked(self._to_bool(prefs.get("incomplete_files_ext", False), False))
+        self.chk_preallocate.setChecked(self._to_bool(prefs.get("preallocate_all", False), False))
+        self.chk_queueing_enabled.setChecked(self._to_bool(prefs.get("queueing_enabled", False), False))
+        self.spn_max_active_downloads.setValue(self._to_int(prefs.get("max_active_downloads", -1), -1))
+        self.spn_max_active_uploads.setValue(self._to_int(prefs.get("max_active_uploads", -1), -1))
+        self.spn_max_active_torrents.setValue(self._to_int(prefs.get("max_active_torrents", -1), -1))
+        self.spn_max_connec.setValue(self._to_int(prefs.get("max_connec", -1), -1))
+        self.spn_max_connec_per_torrent.setValue(self._to_int(prefs.get("max_connec_per_torrent", -1), -1))
+        self.spn_max_uploads.setValue(self._to_int(prefs.get("max_uploads", -1), -1))
+        self.spn_max_uploads_per_torrent.setValue(self._to_int(prefs.get("max_uploads_per_torrent", -1), -1))
+        self.chk_dht.setChecked(self._to_bool(prefs.get("dht", True), True))
+        self.chk_pex.setChecked(self._to_bool(prefs.get("pex", True), True))
+        self.chk_lsd.setChecked(self._to_bool(prefs.get("lsd", True), True))
+        self.chk_upnp.setChecked(self._to_bool(prefs.get("upnp", True), True))
+        self.chk_anonymous_mode.setChecked(self._to_bool(prefs.get("anonymous_mode", False), False))
+        self._set_combo_data(self.cmb_encryption, prefs.get("encryption", 0), 0)
+        self.chk_max_ratio_enabled.setChecked(self._to_bool(prefs.get("max_ratio_enabled", False), False))
+        self.spn_max_ratio.setValue(self._to_float(prefs.get("max_ratio", 0.0), 0.0))
+        self.chk_max_seeding_time_enabled.setChecked(
+            self._to_bool(prefs.get("max_seeding_time_enabled", False), False)
+        )
+        self.spn_max_seeding_time.setValue(self._to_int(prefs.get("max_seeding_time", 0), 0))
+        self._update_temp_path_enabled_state()
+        self._update_ratio_enabled_state()
+        self._update_seeding_time_enabled_state()
+
+        self._original_values = self._collect_values()
+        self.lbl_message.setText("Loaded friendly add preferences.")
+
+    def changed_preferences(self) -> Dict[str, Any]:
+        """Return only friendly fields changed by the user."""
+        current = self._collect_values()
+        changes: Dict[str, Any] = {}
+        for key in self.FRIENDLY_PREF_KEYS:
+            if current.get(key) != self._original_values.get(key):
+                changes[key] = copy.deepcopy(current.get(key))
+        return changes
 
     def _emit_apply(self):
         changes = self.changed_preferences()
@@ -2227,6 +2539,7 @@ class MainWindow(QMainWindow):
         self._taxonomy_dialog: Optional[TaxonomyManagerDialog] = None
         self._speed_limits_dialog: Optional[SpeedLimitsDialog] = None
         self._app_preferences_dialog: Optional[AppPreferencesDialog] = None
+        self._friendly_add_preferences_dialog: Optional[FriendlyAddPreferencesDialog] = None
         self._tracker_health_dialog: Optional[TrackerHealthDialog] = None
         self._session_timeline_dialog: Optional[SessionTimelineDialog] = None
         self._add_torrent_dialog: Optional[AddTorrentDialog] = None
@@ -3196,6 +3509,10 @@ class MainWindow(QMainWindow):
         action_edit_app_preferences = QAction("Edit App Preferences", self)
         action_edit_app_preferences.triggered.connect(self._show_app_preferences_editor)
         tools_menu.addAction(action_edit_app_preferences)
+
+        action_edit_add_preferences_friendly = QAction("Edit Add Preferences (friendly)", self)
+        action_edit_add_preferences_friendly.triggered.connect(self._show_friendly_add_preferences_editor)
+        tools_menu.addAction(action_edit_add_preferences_friendly)
 
         action_open_web_ui = QAction("Open Web UI in browser", self)
         action_open_web_ui.triggered.connect(self._open_web_ui_in_browser)
@@ -7809,6 +8126,91 @@ class MainWindow(QMainWindow):
         error = result.get("error", "Unknown error")
         self._set_status(f"Failed to apply app preferences: {error}")
         self._set_app_preferences_dialog_busy(False, f"Failed: {error}")
+        self._hide_progress()
+
+    def _show_friendly_add_preferences_editor(self):
+        """Open friendly editor for commonly used app preferences."""
+        if (
+            self._friendly_add_preferences_dialog is not None
+            and self._friendly_add_preferences_dialog.isVisible()
+        ):
+            self._friendly_add_preferences_dialog.raise_()
+            self._friendly_add_preferences_dialog.activateWindow()
+            self._request_friendly_add_preferences_refresh()
+            return
+
+        dialog = FriendlyAddPreferencesDialog(self)
+        dialog.apply_requested.connect(self._on_friendly_add_preferences_apply_requested)
+        dialog.finished.connect(self._on_friendly_add_preferences_dialog_closed)
+        self._friendly_add_preferences_dialog = dialog
+        dialog.show()
+        self._request_friendly_add_preferences_refresh()
+
+    def _on_friendly_add_preferences_dialog_closed(self, _result: int):
+        """Clear cached friendly add-preferences dialog reference."""
+        self._friendly_add_preferences_dialog = None
+
+    def _set_friendly_add_preferences_dialog_busy(self, busy: bool, message: str = ""):
+        """Set busy state for friendly add-preferences dialog when open."""
+        dialog = self._friendly_add_preferences_dialog
+        if dialog is None:
+            return
+        if not dialog.isVisible():
+            return
+        dialog.set_busy(bool(busy), message)
+
+    def _request_friendly_add_preferences_refresh(self):
+        """Load app preferences into friendly add-preferences editor."""
+        self._show_progress("Loading add preferences...")
+        self._set_friendly_add_preferences_dialog_busy(True, "Loading add preferences...")
+        self.api_queue.add_task(
+            "fetch_friendly_add_preferences",
+            self._api_fetch_app_preferences,
+            self._on_friendly_add_preferences_loaded,
+        )
+
+    def _on_friendly_add_preferences_loaded(self, result: Dict):
+        """Populate friendly add-preferences dialog from API response."""
+        dialog = self._friendly_add_preferences_dialog
+        if result.get("success"):
+            data = result.get("data", {}) or {}
+            if dialog is not None and dialog.isVisible():
+                dialog.set_preferences(data if isinstance(data, dict) else {})
+                dialog.set_busy(False, "Loaded")
+            self._set_status("Add preferences loaded")
+        else:
+            error = result.get("error", "Unknown error")
+            if dialog is not None and dialog.isVisible():
+                dialog.set_busy(False, f"Failed: {error}")
+            self._set_status(f"Failed to load add preferences: {error}")
+        self._hide_progress()
+
+    def _on_friendly_add_preferences_apply_requested(self, changed_preferences: Dict[str, Any]):
+        """Queue changed friendly add-preferences values for API apply."""
+        updates = dict(changed_preferences or {})
+        if not updates:
+            self._set_status("No add preference changes to apply")
+            self._set_friendly_add_preferences_dialog_busy(False, "No changed preferences to apply.")
+            return
+        self._show_progress("Applying add preferences...")
+        self._set_friendly_add_preferences_dialog_busy(True, "Applying add preferences...")
+        self.api_queue.add_task(
+            "apply_friendly_add_preferences",
+            self._api_apply_app_preferences,
+            self._on_friendly_add_preferences_applied,
+            updates,
+        )
+
+    def _on_friendly_add_preferences_applied(self, result: Dict):
+        """Handle completion of friendly add-preferences apply."""
+        if result.get("success"):
+            self._set_status("Add preferences applied")
+            self._set_friendly_add_preferences_dialog_busy(False, "Applied")
+            self._request_friendly_add_preferences_refresh()
+            return
+        error = result.get("error", "Unknown error")
+        self._set_status(f"Failed to apply add preferences: {error}")
+        self._set_friendly_add_preferences_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
 
     def _show_speed_limits_manager(self):

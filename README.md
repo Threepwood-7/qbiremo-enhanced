@@ -169,6 +169,10 @@ It combines:
   - full preference tree editor with type-aware parsing,
   - changed-value highlighting,
   - apply only changed values.
+- Edit Add Preferences (friendly) dialog:
+  - simplified editor for common settings (downloads, queueing, connections, network/privacy, default seeding limits),
+  - excludes speed limits (managed separately),
+  - applies only changed values.
 - Manage Speed Limits dialog:
   - view/edit normal + alternative global limits,
   - toggle alt speed mode.
@@ -258,6 +262,7 @@ It combines:
 - `Edit .ini file`
 - `Open Web UI in browser`
 - `Edit App Preferences`
+- `Edit Add Preferences (friendly)`
 - `Manage Speed Limits...`
 - `Manage Tags and Categories`
 - `Tracker Health Dashboard...`
