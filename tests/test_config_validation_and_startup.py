@@ -32,7 +32,10 @@ def test_acquire_instance_lock_increments_counter_when_lock_exists(tmp_path, mon
         lambda _instance_id, counter: tmp_path / f"instance_{int(counter)}.lck",
     )
     cfg = {"qb_host": "127.0.0.1", "qb_port": 8080}
-    (tmp_path / "instance_1.lck").write_text("locked", encoding="utf-8")
+    first_counter, first_instance_id, first_lock_path = appmod.acquire_instance_lock(cfg, 1)
+    assert first_counter == 1
+    assert first_lock_path == tmp_path / "instance_1.lck"
+    assert str(first_instance_id).endswith("_1")
 
     counter, instance_id, lock_path = appmod.acquire_instance_lock(cfg, 1)
 
@@ -42,6 +45,8 @@ def test_acquire_instance_lock_increments_counter_when_lock_exists(tmp_path, mon
     assert str(instance_id).endswith("_2")
     appmod.release_instance_lock(lock_path)
     assert not lock_path.exists()
+    appmod.release_instance_lock(first_lock_path)
+    assert not first_lock_path.exists()
 
 
 def test_validate_and_normalize_config_logs_invalid_values(caplog):

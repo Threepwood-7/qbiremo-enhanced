@@ -78,6 +78,7 @@ INSTANCE_ID_LENGTH = 8
 CLIPBOARD_SEEN_LIMIT = 256
 
 logger = logging.getLogger(G_APP_NAME)
+_INSTANCE_LOCK_HANDLES: Dict[str, Any] = {}
 
 # Status filters as per qBittorrent API
 STATUS_FILTERS = [
@@ -315,6 +316,9 @@ class APITaskQueue(QObject):
         if worker is not self.current_worker:
             logger.debug("Ignoring stale task completion: %s", task_name)
             return
+        if getattr(worker, "is_cancelled", False):
+            logger.debug("Ignoring cancelled task completion: %s", task_name)
+            return
         try:
             if callback:
                 callback(result)
@@ -326,6 +330,9 @@ class APITaskQueue(QObject):
         """Handle task failure"""
         if worker is not self.current_worker:
             logger.debug("Ignoring stale task error: %s", task_name)
+            return
+        if getattr(worker, "is_cancelled", False):
+            logger.debug("Ignoring cancelled task error: %s", task_name)
             return
         try:
             exctype, value, trace = error
@@ -1961,11 +1968,54 @@ def resolve_instance_lock_file_path(instance_id: str, instance_counter: Any) -> 
     return resolve_cache_file_path("qbiremo_enhanced.lck", lock_key)
 
 
+def _instance_lock_key(lock_path: Path) -> str:
+    """Build a stable dictionary key for one lock file path."""
+    try:
+        return str(Path(lock_path).resolve())
+    except Exception:
+        return str(Path(lock_path))
+
+
+def _try_acquire_os_file_lock(handle) -> bool:
+    """Try to acquire a non-blocking exclusive lock on one open file handle."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except Exception:
+        return False
+
+
+def _release_os_file_lock(handle):
+    """Best-effort release of an OS-level file lock."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        logger.debug("Failed to release OS file lock", exc_info=True)
+
+
 def acquire_instance_lock(
     config: Dict[str, Any],
     start_counter: Any,
 ) -> Tuple[int, str, Path]:
-    """Create an exclusive .lck file; auto-increment counter when lock exists."""
+    """Acquire an exclusive .lck file lock; auto-increment counter when in use."""
     cfg = config if isinstance(config, dict) else {}
     counter = _normalize_instance_counter(start_counter)
 
@@ -1975,16 +2025,57 @@ def acquire_instance_lock(
         lock_path = resolve_instance_lock_file_path(instance_id, counter)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with lock_path.open("x", encoding="utf-8") as handle:
-                handle.write(f"instance_id={instance_id}\n")
-                handle.write(f"instance_counter={counter}\n")
+            handle = lock_path.open("a+b")
+        except Exception as e:
+            raise RuntimeError(f"Failed to open lock file {lock_path}: {e}") from e
+
+        try:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                # Ensure one lockable byte exists for Windows byte-range locking.
+                handle.write(b"\n")
+                handle.flush()
+            handle.seek(0)
+            if not _try_acquire_os_file_lock(handle):
+                handle.close()
+                counter += 1
+                continue
+
+            payload = (
+                f"instance_id={instance_id}\n"
+                f"instance_counter={counter}\n"
+            ).encode("utf-8")
+            handle.seek(0)
+            handle.truncate(0)
+            handle.write(payload)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except Exception:
+                pass
+
+            _INSTANCE_LOCK_HANDLES[_instance_lock_key(lock_path)] = handle
             return int(counter), str(instance_id), lock_path
-        except FileExistsError:
-            counter += 1
+        except Exception:
+            try:
+                handle.close()
+            except Exception:
+                pass
+            raise
 
 
 def release_instance_lock(lock_path: Path):
-    """Best-effort removal of an instance .lck file on shutdown."""
+    """Best-effort release/removal of an instance .lck file on shutdown."""
+    key = _instance_lock_key(Path(lock_path))
+    handle = _INSTANCE_LOCK_HANDLES.pop(key, None)
+    if handle is not None:
+        try:
+            _release_os_file_lock(handle)
+        finally:
+            try:
+                handle.close()
+            except Exception:
+                pass
     try:
         Path(lock_path).unlink()
     except FileNotFoundError:

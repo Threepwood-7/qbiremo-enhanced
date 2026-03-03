@@ -1124,6 +1124,57 @@ def test_api_task_queue_ignores_stale_worker_error(window):
     assert queue.is_processing is True
 
 
+def test_api_task_queue_ignores_cancelled_worker_completion(window):
+    queue = window.api_queue
+    active_worker = appmod.Worker(lambda **_kwargs: None)
+    active_worker.is_cancelled = True
+    queue.current_worker = active_worker
+    queue.current_task_name = "active"
+    queue.is_processing = True
+
+    callback_calls = {"count": 0}
+    completed_signals = {"count": 0}
+    queue.task_completed.connect(
+        lambda _task_name, _result: completed_signals.__setitem__(
+            "count", completed_signals["count"] + 1
+        )
+    )
+
+    queue._on_task_complete(
+        active_worker,
+        "active",
+        lambda _result: callback_calls.__setitem__("count", callback_calls["count"] + 1),
+        {"success": True},
+    )
+
+    assert callback_calls["count"] == 0
+    assert completed_signals["count"] == 0
+
+
+def test_api_task_queue_ignores_cancelled_worker_error(window):
+    queue = window.api_queue
+    active_worker = appmod.Worker(lambda **_kwargs: None)
+    active_worker.is_cancelled = True
+    queue.current_worker = active_worker
+    queue.current_task_name = "active"
+    queue.is_processing = True
+
+    failed_signals = {"count": 0}
+    queue.task_failed.connect(
+        lambda _task_name, _error: failed_signals.__setitem__(
+            "count", failed_signals["count"] + 1
+        )
+    )
+
+    queue._on_task_error(
+        active_worker,
+        "active",
+        (RuntimeError, RuntimeError("boom"), "trace"),
+    )
+
+    assert failed_signals["count"] == 0
+
+
 def test_api_task_queue_coalesces_latest_task_while_worker_running(window, monkeypatch):
     queue = window.api_queue
     active_worker = appmod.Worker(lambda **_kwargs: None)
