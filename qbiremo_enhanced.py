@@ -13,6 +13,7 @@ import html
 import hashlib
 import json
 import logging
+import math
 import traceback
 import tempfile
 import base64
@@ -62,7 +63,7 @@ DEFAULT_TITLE_BAR_SPEED_FORMAT = "[D: {down_text}, U: {up_text}]"
 CACHE_TEMP_SUBDIR = "qbiremo_enhanced_temp"
 CACHE_FILE_NAME = "qbiremo_enhanced.cache"
 CACHE_MAX_AGE_DAYS = 3
-INSTANCE_ID_LENGTH = 6
+INSTANCE_ID_LENGTH = 8
 CLIPBOARD_SEEN_LIMIT = 256
 
 logger = logging.getLogger(G_APP_NAME)
@@ -135,6 +136,7 @@ BASIC_TORRENT_VIEW_KEYS = (
     "size",
     "dlspeed",
     "upspeed",
+    "ratio",
     "eta",
     "num_seeds",
     "num_leechs",
@@ -1775,7 +1777,21 @@ def _normalize_instance_port(raw_port: Any) -> int:
     return port
 
 
-def compute_instance_id(qb_host: Any, qb_port: Any, length: int = INSTANCE_ID_LENGTH) -> str:
+def _normalize_instance_counter(raw_counter: Any) -> int:
+    """Normalize per-server instance counter used as instance ID suffix."""
+    try:
+        counter = int(raw_counter)
+    except Exception:
+        counter = 1
+    return counter if counter > 0 else 1
+
+
+def compute_instance_id(
+    qb_host: Any,
+    qb_port: Any,
+    length: int = INSTANCE_ID_LENGTH,
+    instance_counter: Any = 1,
+) -> str:
     """Compute a short deterministic ID from qb_host + qb_port."""
     host = _normalize_instance_host(qb_host)
     port = _normalize_instance_port(qb_port)
@@ -1784,7 +1800,9 @@ def compute_instance_id(qb_host: Any, qb_port: Any, length: int = INSTANCE_ID_LE
         max_len = max(1, int(length))
     except Exception:
         max_len = INSTANCE_ID_LENGTH
-    return digest[:max_len]
+    base_id = digest[:max_len]
+    counter = _normalize_instance_counter(instance_counter)
+    return f"{base_id}_{counter}"
 
 
 def compute_instance_id_from_config(config: Dict[str, Any]) -> str:
@@ -1792,7 +1810,8 @@ def compute_instance_id_from_config(config: Dict[str, Any]) -> str:
     cfg = config if isinstance(config, dict) else {}
     host = cfg.get("qb_host", cfg.get("host", "localhost"))
     port = cfg.get("qb_port", cfg.get("port", 8080))
-    return compute_instance_id(host, port)
+    counter = cfg.get("_instance_counter", 1)
+    return compute_instance_id(host, port, instance_counter=counter)
 
 
 def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
@@ -1969,6 +1988,9 @@ class MainWindow(QMainWindow):
         self._session_timeline_dialog: Optional[SessionTimelineDialog] = None
         self.session_timeline_history = deque(maxlen=720)
         self._last_alt_speed_mode = False
+        self._last_dht_nodes = 0
+        self._last_global_download_limit = 0
+        self._last_global_upload_limit = 0
 
         # Persistent per-torrent content cache (JSON file)
         self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME, self.instance_id)
@@ -1996,6 +2018,7 @@ class MainWindow(QMainWindow):
         # Auto-refresh settings
         self.auto_refresh_enabled = self.default_auto_refresh_enabled
         self.refresh_interval = self.default_refresh_interval
+        self._refresh_torrents_in_progress = False
         self.display_size_mode = DEFAULT_DISPLAY_SIZE_MODE
         self.display_speed_mode = DEFAULT_DISPLAY_SPEED_MODE
         self.title_bar_speed_format = str(
@@ -2769,6 +2792,20 @@ class MainWindow(QMainWindow):
         action_remove_delete.triggered.connect(self._remove_torrent_and_delete_data)
         edit_menu.addAction(action_remove_delete)
 
+        action_remove_no_confirm = QAction("Remove (no confirmation)", self)
+        action_remove_no_confirm.setShortcut("Ctrl+Del")
+        action_remove_no_confirm.triggered.connect(self._remove_torrent_no_confirmation)
+        edit_menu.addAction(action_remove_no_confirm)
+
+        action_remove_delete_no_confirm = QAction(
+            "Remove and Delete Data (no confirmation)", self
+        )
+        action_remove_delete_no_confirm.setShortcut("Ctrl+Shift+Del")
+        action_remove_delete_no_confirm.triggered.connect(
+            self._remove_torrent_and_delete_data_no_confirmation
+        )
+        edit_menu.addAction(action_remove_delete_no_confirm)
+
         edit_menu.addSeparator()
 
         action_pause_session = QAction("Pause Sessio&n", self)
@@ -2821,6 +2858,21 @@ class MainWindow(QMainWindow):
         clear_cache_action.setShortcut("Ctrl+F5")
         clear_cache_action.triggered.connect(self._clear_cache_and_refresh)
         view_menu.addAction(clear_cache_action)
+
+        action_show_active = QAction("Show &Active Torrents", self)
+        action_show_active.setShortcut("F6")
+        action_show_active.triggered.connect(self._show_active_torrents_only)
+        view_menu.addAction(action_show_active)
+
+        action_show_complete = QAction("Show &Complete Torrents", self)
+        action_show_complete.setShortcut("F7")
+        action_show_complete.triggered.connect(self._show_completed_torrents_only)
+        view_menu.addAction(action_show_complete)
+
+        action_show_all = QAction("Show &All Torrents", self)
+        action_show_all.setShortcut("F8")
+        action_show_all.triggered.connect(self._show_all_torrents_only)
+        view_menu.addAction(action_show_all)
 
         self.action_human_readable = QAction("&Human Readable", self)
         self.action_human_readable.setCheckable(True)
@@ -2912,15 +2964,28 @@ class MainWindow(QMainWindow):
         self.lbl_status = QLabel("Ready")
         self.statusbar.addWidget(self.lbl_status, 1)
 
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumWidth(200)
-        self.progress_bar.setVisible(False)
-        self.statusbar.addPermanentWidget(self.progress_bar)
+        self.lbl_dht_nodes = QLabel("")
+        self.statusbar.addPermanentWidget(self.lbl_dht_nodes)
+
+        self.lbl_download_summary = QLabel("")
+        self.statusbar.addPermanentWidget(self.lbl_download_summary)
+
+        self.lbl_upload_summary = QLabel("")
+        self.statusbar.addPermanentWidget(self.lbl_upload_summary)
 
         # Torrent count label
         self.lbl_count = QLabel("0 torrents")
         self.statusbar.addPermanentWidget(self.lbl_count)
+
+        # Progress bar (always visible at the far right)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(200)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        self.statusbar.addPermanentWidget(self.progress_bar)
+        self._update_statusbar_transfer_summary()
 
     # ========================================================================
     # Connection Configuration
@@ -2933,7 +2998,7 @@ class MainWindow(QMainWindow):
         host URL (e.g. https://user:password@remote.host.com:12345) or via
         explicit http_basic_auth_username / http_basic_auth_password config keys.
         """
-        # Host URL — may contain scheme, basic-auth credentials, and port
+        # Host URL ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â may contain scheme, basic-auth credentials, and port
         raw_host = (
             config.get('qb_host')
             or "localhost"
@@ -3618,6 +3683,9 @@ class MainWindow(QMainWindow):
 
         try:
             alt_speed_mode = bool(self._last_alt_speed_mode)
+            dht_nodes = self._safe_int(self._last_dht_nodes, 0)
+            global_download_limit = self._safe_int(self._last_global_download_limit, 0)
+            global_upload_limit = self._safe_int(self._last_global_upload_limit, 0)
             remote_filters = self._selected_remote_torrent_filters()
             with self._create_client() as qb:
                 if remote_filters:
@@ -3629,9 +3697,40 @@ class MainWindow(QMainWindow):
                 else:
                     maindata = qb.sync_maindata(rid=int(self._sync_rid))
                     result = self._merge_sync_maindata(maindata)
+                    payload = self._entry_to_dict(maindata)
+                    server_state = self._entry_to_dict(payload.get("server_state", {}))
+                    if "dht_nodes" in server_state:
+                        dht_nodes = max(
+                            0,
+                            self._safe_int(server_state.get("dht_nodes"), dht_nodes),
+                        )
                 if hasattr(qb, "transfer_speed_limits_mode"):
                     try:
                         alt_speed_mode = self._safe_int(qb.transfer_speed_limits_mode(), 0) == 1
+                    except Exception:
+                        pass
+                if hasattr(qb, "transfer_info"):
+                    try:
+                        transfer_info = self._entry_to_dict(qb.transfer_info())
+                        if "dht_nodes" in transfer_info:
+                            dht_nodes = max(
+                                0,
+                                self._safe_int(transfer_info.get("dht_nodes"), dht_nodes),
+                            )
+                    except Exception:
+                        pass
+                if hasattr(qb, "transfer_download_limit"):
+                    try:
+                        global_download_limit = max(
+                            0, self._safe_int(qb.transfer_download_limit(), 0)
+                        )
+                    except Exception:
+                        pass
+                if hasattr(qb, "transfer_upload_limit"):
+                    try:
+                        global_upload_limit = max(
+                            0, self._safe_int(qb.transfer_upload_limit(), 0)
+                        )
                     except Exception:
                         pass
 
@@ -3640,6 +3739,9 @@ class MainWindow(QMainWindow):
                 'data': result,
                 'remote_filtered': bool(remote_filters),
                 'alt_speed_mode': bool(alt_speed_mode),
+                'dht_nodes': int(max(0, dht_nodes)),
+                'global_download_limit': int(max(0, global_download_limit)),
+                'global_upload_limit': int(max(0, global_upload_limit)),
                 'elapsed': elapsed,
                 'success': True
             }
@@ -4751,6 +4853,7 @@ class MainWindow(QMainWindow):
                 self.all_torrents = []
                 self.filtered_torrents = []
                 self._update_window_title_speeds()
+                self._update_statusbar_transfer_summary()
                 self._update_torrents_table()
                 return
 
@@ -4758,9 +4861,25 @@ class MainWindow(QMainWindow):
             self.all_torrents = result.get('data', [])
             if "alt_speed_mode" in result:
                 self._last_alt_speed_mode = bool(result.get("alt_speed_mode"))
+            if "dht_nodes" in result:
+                self._last_dht_nodes = max(
+                    0,
+                    self._safe_int(result.get("dht_nodes"), 0),
+                )
+            if "global_download_limit" in result:
+                self._last_global_download_limit = max(
+                    0,
+                    self._safe_int(result.get("global_download_limit"), 0),
+                )
+            if "global_upload_limit" in result:
+                self._last_global_upload_limit = max(
+                    0,
+                    self._safe_int(result.get("global_upload_limit"), 0),
+                )
             self._record_session_timeline_sample(self._last_alt_speed_mode)
             self._log("INFO", f"Loaded {len(self.all_torrents)} torrents", result.get('elapsed', 0))
             self._update_window_title_speeds()
+            self._update_statusbar_transfer_summary()
 
             # Calculate size buckets
             self._calculate_size_buckets()
@@ -4799,7 +4918,10 @@ class MainWindow(QMainWindow):
             self.all_torrents = []
             self.filtered_torrents = []
             self._update_window_title_speeds()
+            self._update_statusbar_transfer_summary()
             self._update_torrents_table()
+        finally:
+            self._set_refresh_torrents_in_progress(False)
 
     def _select_first_torrent_after_refresh(self, previous_selected_hash: Optional[str] = None):
         """Select/restore one row after refresh without overriding a valid existing selection."""
@@ -5015,16 +5137,50 @@ class MainWindow(QMainWindow):
 
     def _on_task_completed(self, task_name: str, result):
         """Handle task completion"""
+        self._maybe_bump_auto_refresh_interval_from_api_elapsed(task_name, result)
         self._log("DEBUG", f"Task completed: {task_name}")
+
+    def _maybe_bump_auto_refresh_interval_from_api_elapsed(self, task_name: str, result: Any):
+        """Increase auto-refresh interval when one API task exceeds current interval."""
+        if not isinstance(result, dict):
+            return
+        elapsed_seconds = self._safe_float(result.get("elapsed", 0.0), 0.0)
+        if elapsed_seconds <= 0:
+            return
+
+        current_interval = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
+        if elapsed_seconds <= float(current_interval):
+            return
+
+        new_interval = max(current_interval, int(math.ceil(elapsed_seconds * 4.0)))
+        if new_interval <= current_interval:
+            return
+
+        self.refresh_interval = new_interval
+        self._update_auto_refresh_action_text()
+        self._sync_auto_refresh_timer_state()
+        self._save_refresh_settings()
+        self._log(
+            "INFO",
+            (
+                "Auto-refresh interval bumped to "
+                f"{new_interval}s after slow API task {task_name} "
+                f"({elapsed_seconds:.2f}s)"
+            ),
+        )
 
     def _on_task_failed(self, task_name: str, error_msg: str):
         """Handle task failure"""
+        if task_name == "refresh_torrents":
+            self._set_refresh_torrents_in_progress(False)
         self._log("ERROR", f"Task failed: {task_name} - {error_msg}")
         self._set_status(f"Error: {error_msg}")
         self._hide_progress()
 
     def _on_task_cancelled(self, task_name: str):
         """Handle task cancellation"""
+        if task_name == "refresh_torrents":
+            self._set_refresh_torrents_in_progress(False)
         self._log("INFO", f"Task cancelled: {task_name}")
 
     # ========================================================================
@@ -5327,14 +5483,8 @@ class MainWindow(QMainWindow):
 
     def _clear_filters(self):
         """Clear all filters"""
-        self.cmb_private.setCurrentIndex(0)
-        self.txt_name_filter.clear()
-        self.txt_file_filter.clear()
         self.current_status_filter = 'all'
-        self.current_category_filter = None
-        self.current_tag_filter = None
-        self.current_size_bucket = None
-        self.current_tracker_filter = None
+        self._clear_non_status_filters()
 
         # Clear tree selection
         self.tree_filters.clearSelection()
@@ -5342,11 +5492,57 @@ class MainWindow(QMainWindow):
 
         self._refresh_torrents()
 
+    def _clear_non_status_filters(self):
+        """Clear non-status torrent filters from quick bar and tree sections."""
+        private_signals = self.cmb_private.blockSignals(True)
+        self.cmb_private.setCurrentIndex(0)
+        self.cmb_private.blockSignals(private_signals)
+        self.current_private_filter = None
+
+        name_signals = self.txt_name_filter.blockSignals(True)
+        self.txt_name_filter.clear()
+        self.txt_name_filter.blockSignals(name_signals)
+
+        file_signals = self.txt_file_filter.blockSignals(True)
+        self.txt_file_filter.clear()
+        self.txt_file_filter.blockSignals(file_signals)
+
+        self.current_category_filter = None
+        self.current_tag_filter = None
+        self.current_size_bucket = None
+        self.current_tracker_filter = None
+
+    def _show_status_filter_only(self, status_filter: str):
+        """Show one status bucket and clear all other torrent filters."""
+        status = str(status_filter or "all").strip().lower()
+        if status not in STATUS_FILTERS:
+            status = "all"
+        self.current_status_filter = status
+        self._clear_non_status_filters()
+
+        # Clear tree selection
+        self.tree_filters.clearSelection()
+        self._refresh_filter_tree_highlights()
+
+        self._refresh_torrents()
+
+    def _show_active_torrents_only(self):
+        """Show only active torrents and clear all non-status filters."""
+        self._show_status_filter_only("active")
+
+    def _show_completed_torrents_only(self):
+        """Show only completed torrents and clear all non-status filters."""
+        self._show_status_filter_only("completed")
+
+    def _show_all_torrents_only(self):
+        """Show all torrents and clear all non-status filters."""
+        self._show_status_filter_only("all")
+
     def _on_filter_tree_clicked(self, item: QTreeWidgetItem, column: int):
         """Handle click on the unified filter tree."""
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data is None and item.childCount() > 0:
-            # Section header clicked — just toggle expand/collapse
+            # Section header clicked ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â just toggle expand/collapse
             return
         try:
             if not isinstance(data, tuple):
@@ -5936,12 +6132,24 @@ class MainWindow(QMainWindow):
         """Start/stop refresh timer based on settings and current details context."""
         if not hasattr(self, "refresh_timer"):
             return
-        should_run = bool(self.auto_refresh_enabled) and not self._is_torrent_edit_tab_active()
+        should_run = (
+            bool(self.auto_refresh_enabled)
+            and not self._is_torrent_edit_tab_active()
+            and not bool(self._refresh_torrents_in_progress)
+        )
         interval_seconds = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
         if should_run:
             self.refresh_timer.start(interval_seconds * 1000)
         else:
             self.refresh_timer.stop()
+
+    def _set_refresh_torrents_in_progress(self, in_progress: bool):
+        """Set refresh-in-progress state and re-evaluate auto-refresh timer."""
+        active = bool(in_progress)
+        if self._refresh_torrents_in_progress == active:
+            return
+        self._refresh_torrents_in_progress = active
+        self._sync_auto_refresh_timer_state()
 
     def _update_auto_refresh_action_text(self):
         """Refresh auto-refresh menu label to include current interval."""
@@ -6326,14 +6534,23 @@ class MainWindow(QMainWindow):
 
     def _refresh_torrents(self):
         """Refresh torrent list"""
+        if self._refresh_torrents_in_progress:
+            self._log("DEBUG", "Refresh skipped: refresh_torrents already in progress")
+            return
+
+        self._set_refresh_torrents_in_progress(True)
         self._log("INFO", "Refreshing torrents...")
         self._show_progress("Refreshing torrents...")
 
-        self.api_queue.add_task(
-            "refresh_torrents",
-            self._fetch_torrents,
-            self._on_torrents_loaded
-        )
+        try:
+            self.api_queue.add_task(
+                "refresh_torrents",
+                self._fetch_torrents,
+                self._on_torrents_loaded
+            )
+        except Exception:
+            self._set_refresh_torrents_in_progress(False)
+            raise
 
     def _show_add_torrent_dialog(self):
         """Show add torrent dialog"""
@@ -6967,6 +7184,20 @@ class MainWindow(QMainWindow):
         if result.get("success"):
             data = result.get("data", {}) or {}
             self._last_alt_speed_mode = bool(data.get("alt_enabled", self._last_alt_speed_mode))
+            if self._last_alt_speed_mode:
+                self._last_global_download_limit = max(
+                    0, self._safe_int(data.get("alt_dl", self._last_global_download_limit), 0)
+                )
+                self._last_global_upload_limit = max(
+                    0, self._safe_int(data.get("alt_ul", self._last_global_upload_limit), 0)
+                )
+            else:
+                self._last_global_download_limit = max(
+                    0, self._safe_int(data.get("normal_dl", self._last_global_download_limit), 0)
+                )
+                self._last_global_upload_limit = max(
+                    0, self._safe_int(data.get("normal_ul", self._last_global_upload_limit), 0)
+                )
             self._record_session_timeline_sample(self._last_alt_speed_mode)
             dialog = self._speed_limits_dialog
             if dialog is not None and dialog.isVisible():
@@ -6979,6 +7210,7 @@ class MainWindow(QMainWindow):
                 )
             self._set_status("Speed limits loaded")
             self._set_speed_limits_dialog_busy(False, "Loaded")
+            self._update_statusbar_transfer_summary()
         else:
             error = result.get("error", "Unknown error")
             self._set_status(f"Failed to load speed limits: {error}")
@@ -7581,6 +7813,34 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _remove_torrent_no_confirmation(self):
+        """Remove selected torrent(s) and keep data on disk, without confirmation."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
+            return
+        self._queue_delete_torrents(
+            torrent_hashes,
+            delete_files=False,
+            action_name="Remove (No Confirmation)",
+            progress_text="Removing torrent..." if len(torrent_hashes) == 1 else f"Removing {len(torrent_hashes)} torrents...",
+        )
+
+    def _remove_torrent_and_delete_data_no_confirmation(self):
+        """Remove selected torrent(s) and delete data, without confirmation."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
+            return
+        self._queue_delete_torrents(
+            torrent_hashes,
+            delete_files=True,
+            action_name="Remove + Delete Data (No Confirmation)",
+            progress_text=(
+                "Removing torrent and deleting data..."
+                if len(torrent_hashes) == 1
+                else f"Removing {len(torrent_hashes)} torrents and deleting data..."
+            ),
+        )
+
     def _delete_torrent(self):
         """Delete selected torrent(s) with confirmation."""
         torrent_hashes = self._get_selected_torrent_hashes()
@@ -7786,6 +8046,7 @@ class MainWindow(QMainWindow):
 
         # Re-render UI that depends on display units.
         self._update_window_title_speeds()
+        self._update_statusbar_transfer_summary()
         self._calculate_size_buckets()
         self._update_size_tree()
         self._update_torrents_table()
@@ -7800,16 +8061,52 @@ class MainWindow(QMainWindow):
         self._log("INFO", f"Display mode set to {mode_label}")
         self._set_status(f"Display mode: {mode_label}")
 
-    def _show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(
-            self,
-            "About qBiremo Enhanced",
+    def _about_dialog_text(self) -> str:
+        """Build full about dialog text including runtime file paths."""
+        instance_text = str(getattr(self, "instance_id", "") or "").strip()
+        if not instance_text:
+            instance_text = "N/A"
+
+        try:
+            ini_path = str(self._settings_ini_path())
+        except Exception:
+            ini_path = "N/A"
+
+        cache_path = str(getattr(self, "cache_file_path", "") or "N/A")
+        cache_tmp_path = (
+            str(Path(f"{cache_path}.tmp"))
+            if cache_path and cache_path != "N/A"
+            else "N/A"
+        )
+
+        return (
             "qBiremo Enhanced v2.0\n\n"
             "Advanced qBittorrent GUI Client\n"
-            "Built with PySide6\n\n"
-            "© 2025"
+            "Built with PySide6\n"
+            f"Instance ID: {instance_text}\n"
+            f"Settings INI: {ini_path}\n"
+            f"Cache file: {cache_path}\n"
+            f"Cache temp file: {cache_tmp_path}\n\n"
+            "(c) 2025"
         )
+
+    def _show_about(self):
+        """Show about dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("About qBiremo Enhanced")
+        dialog.resize(1100, 360)
+
+        layout = QVBoxLayout(dialog)
+        txt_about = QTextEdit(dialog)
+        txt_about.setReadOnly(True)
+        txt_about.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        txt_about.setPlainText(self._about_dialog_text())
+        layout.addWidget(txt_about, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, parent=dialog)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     # ========================================================================
     # UI Helper Methods
@@ -7817,18 +8114,68 @@ class MainWindow(QMainWindow):
 
     def _show_progress(self, message: str):
         """Show progress indicator"""
-        self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate
         self._set_status(message)
 
     def _hide_progress(self):
         """Hide progress indicator"""
-        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
         self._set_status("Ready")
 
     def _set_status(self, message: str):
         """Set status bar message"""
         self.lbl_status.setText(message)
+
+    def _update_statusbar_transfer_summary(self):
+        """Render aggregate transfer summary in the status bar."""
+        dht_label = getattr(self, "lbl_dht_nodes", None)
+        down_label = getattr(self, "lbl_download_summary", None)
+        up_label = getattr(self, "lbl_upload_summary", None)
+        if dht_label is None or down_label is None or up_label is None:
+            return
+
+        total_down_speed = 0
+        total_up_speed = 0
+        total_session_download = 0
+        total_session_upload = 0
+        for torrent in self.all_torrents:
+            total_down_speed += self._safe_int(getattr(torrent, "dlspeed", 0), 0)
+            total_up_speed += self._safe_int(getattr(torrent, "upspeed", 0), 0)
+            total_session_download += self._safe_int(
+                getattr(torrent, "downloaded_session", 0), 0
+            )
+            total_session_upload += self._safe_int(
+                getattr(torrent, "uploaded_session", 0), 0
+            )
+
+        down_speed_text = format_speed_mode(total_down_speed, self.display_speed_mode) or "0"
+        up_speed_text = format_speed_mode(total_up_speed, self.display_speed_mode) or "0"
+
+        down_limit_raw = max(0, self._safe_int(self._last_global_download_limit, 0))
+        up_limit_raw = max(0, self._safe_int(self._last_global_upload_limit, 0))
+        down_limit_text = (
+            "Unlimited"
+            if down_limit_raw <= 0
+            else (format_speed_mode(down_limit_raw, self.display_speed_mode) or "0")
+        )
+        up_limit_text = (
+            "Unlimited"
+            if up_limit_raw <= 0
+            else (format_speed_mode(up_limit_raw, self.display_speed_mode) or "0")
+        )
+
+        session_down_text = format_size_mode(total_session_download, self.display_size_mode)
+        session_up_text = format_size_mode(total_session_upload, self.display_size_mode)
+        dht_label.setText(
+            f"DHT: {max(0, self._safe_int(self._last_dht_nodes, 0))}"
+        )
+        down_label.setText(
+            f"D: {down_speed_text} [{down_limit_text}] ({session_down_text})"
+        )
+        up_label.setText(
+            f"U: {up_speed_text} [{up_limit_text}] ({session_up_text})"
+        )
 
     def _bring_to_front_startup(self):
         """Bring the main window to front shortly after startup."""
@@ -7997,6 +8344,7 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
         "title_bar_speed_format",
         "_log_file_path",
         "_instance_id",
+        "_instance_counter",
     }
 
     legacy_map = {
@@ -8198,6 +8546,19 @@ def _install_exception_hooks(file_handler: logging.FileHandler):
 
 def main():
     """Main application entry point"""
+    def _positive_instance_counter(value: str) -> int:
+        try:
+            parsed = int(value)
+        except Exception as e:
+            raise argparse.ArgumentTypeError(
+                f"instance_id must be a positive integer: {value}"
+            ) from e
+        if parsed <= 0:
+            raise argparse.ArgumentTypeError(
+                f"instance_id must be a positive integer: {value}"
+            )
+        return parsed
+
     parser = argparse.ArgumentParser(
         description="qBiremo Enhanced - Advanced qBittorrent GUI Client"
     )
@@ -8207,11 +8568,25 @@ def main():
         default="qbiremo_enhanced_config.toml",
         help="Path to configuration file (TOML format)"
     )
+    parser.add_argument(
+        "--instance_id",
+        "--instance-id",
+        dest="instance_id",
+        type=_positive_instance_counter,
+        required=False,
+        default=1,
+        help=(
+            "Positive instance counter suffix for the computed instance ID "
+            "(default: 1). Use different values to run multiple instances "
+            "against the same qBittorrent server."
+        ),
+    )
 
     args = parser.parse_args()
 
     # Load configuration (collect load-time issues before logging is configured)
     config, load_issues = load_config_with_issues(args.config_file)
+    config["_instance_counter"] = int(args.instance_id)
     config["_instance_id"] = compute_instance_id_from_config(config)
 
     # Set up logging *first*, then install the global exception hook
@@ -8222,6 +8597,7 @@ def main():
 
     # Validate and normalize config values now that file logging is active.
     config = validate_and_normalize_config(config, args.config_file)
+    config["_instance_counter"] = int(args.instance_id)
     config["_instance_id"] = compute_instance_id_from_config(config)
 
     try:

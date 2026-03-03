@@ -21,9 +21,10 @@ It combines:
   - bottom details tabs.
 - Startup always opens maximized.
 - Status bar with:
-  - status text,
+  - status text (left, stretches),
   - indeterminate progress indicator while background work runs,
-  - live torrent count.
+  - transfer summary (right-aligned),
+  - live torrent count (right).
 - Window title shows aggregate download/upload speeds using configurable format tokens:
   - `{down_text}`
   - `{up_text}`
@@ -38,24 +39,28 @@ It combines:
 - Re-apply saved named views from menu.
 - Fit visible columns to content (`View -> Fit Columns`).
 - Multi-select enabled for bulk actions.
-- Numeric-aware sorting for numeric columns.
+- Numeric-aware sorting for numeric columns (sizes, speeds, dates, ratios, counts, progress sort by value, not text; booleans sort as `1.0`/`0.0`/`-1.0`).
+- After refresh, the previously selected torrent is restored by hash when still present.
 - Enter/Return on selected torrent opens local torrent directory when path is available.
 - Double-click row also opens local torrent directory.
 
 ### Filtering
 - Quick filters (apply immediately):
   - Private: `All | Yes | No`
-  - Name wildcard filter (`*`, `?`, implicit contains)
-  - File wildcard filter against cached file paths
+  - Name wildcard filter (`*`, `?`, implicit contains — typing `foo` matches `*foo*`)
+  - File wildcard filter against cached file paths (same wildcard syntax)
+  - Clear button resets all quick filters at once.
 - Left filter tree sections:
   - Status
   - Categories
   - Tags
   - Size Groups (dynamic buckets)
   - Trackers
-- Active filters are highlighted in the tree.
-- Status/category/tag changes trigger fresh API fetches.
-- Size/tracker/name/file/private filters apply locally on loaded data.
+- Each section has an `All` entry at the top to deselect that dimension.
+- Active filters are visually highlighted (bold + colored background) in the tree.
+- Status/category/tag changes trigger fresh API fetches (remote filters).
+- Size/tracker/name/file/private filters apply locally on loaded data (local filters).
+- When using incremental sync (no remote filters), status filtering is approximated locally by mapping torrent state strings (`stalleddl`, `stalledup`, `checkingdl`, `metadl`, etc.) and progress/speed values.
 - File filter uses persistent content cache and updates automatically when cache refresh completes.
 
 ### Data Fetch Model
@@ -83,25 +88,28 @@ It combines:
     - ban selected peer.
 - `Content` tab:
   - cached file/folder tree with size/progress/priority columns.
-  - wildcard content filter for selected torrent.
+  - real-time wildcard content filter for the selected torrent (`*`, `?` wildcards, matches against filename and full path).
+  - content tree auto-refreshes when the cache for the selected torrent is updated.
+  - right-click context menu mirrors Edit menu content submenu (priority, rename).
   - Enter/Return and item activation open local file/folder if it exists.
 - `Edit` tab (single-selected torrent only):
   - editable fields:
     - name,
-    - auto management (tri-state),
+    - auto management (tri-state: checked = enable, unchecked = disable, partial = leave unchanged),
     - category,
     - tags,
     - download/upload limits,
     - save path,
     - incomplete/download path.
   - sends only changed fields to API.
-  - optional tag picker dialog.
+  - tag picker dialog (`+` button) with multi-select list of all known tags, pre-selecting currently assigned tags.
   - local-path browse buttons shown only when target paths exist locally.
+  - on multi-selection, details area is disabled and replaced with informative placeholders.
 
 ### Torrent and Session Actions
 - File menu:
   - Add torrent dialog.
-  - Export selected torrents to `.torrent` files.
+  - Export selected torrents to `.torrent` files (filenames are sanitized; collisions resolved with hash suffix and counter).
 - Edit menu torrent actions:
   - Start
   - Stop
@@ -150,9 +158,10 @@ It combines:
 
 ### Tools Menu
 - Clipboard monitor (toggle):
-  - detects magnet links or torrent hashes copied to clipboard,
+  - detects magnet links or raw BTIH hashes (40-char hex, 64-char hex, or 32-char base32) copied to clipboard,
+  - automatically converts hashes to magnet URIs,
   - auto-queues add-torrent task,
-  - deduplicates recently-seen payloads.
+  - deduplicates the last 256 seen payloads to prevent duplicate additions.
 - Debug logging toggle:
   - logs API calls, responses, errors with timing.
 - Edit `.ini` settings file (opens current QSettings INI path).
@@ -169,11 +178,12 @@ It combines:
   - create/delete tags.
 - Tracker Health Dashboard:
   - aggregates trackers across current torrents,
-  - shows fail/working counts, fail rate, dead marker, avg next announce, last error.
+  - shows fail/working counts, fail rate, dead marker, avg next announce, last error,
+  - a tracker is marked "dead" when it has failures but zero working reports and a fail rate >= 50%.
 - Session Timeline:
-  - stores rolling timeline samples,
+  - stores up to 720 rolling samples (timestamp, DL/UL speeds, active count, alt-mode state),
   - graph for DL/UL/active torrents,
-  - visual alt-mode bands,
+  - visual alt-mode background bands,
   - refresh and clear history controls.
 
 ### Caching, Persistence, and Instance Isolation
@@ -253,6 +263,26 @@ It combines:
 
 ### Help
 - `About`
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+O` | Add Torrent |
+| `Ctrl+Q` / `Alt+X` | Exit |
+| `F5` | Refresh |
+| `Ctrl+F5` | Clear Cache & Refresh |
+| `Ctrl+S` | Start selected |
+| `Ctrl+P` | Stop selected |
+| `Ctrl+M` | Force Start selected |
+| `Ctrl+R` | Recheck selected |
+| `Ctrl++` / `Ctrl+-` | Queue priority up / down |
+| `Ctrl+Shift++` / `Ctrl+Shift+-` | Queue priority top / minimum |
+| `Del` | Remove selected |
+| `Shift+Del` | Remove + Delete Data |
+| `Ctrl+Shift+P` | Pause Session (all) |
+| `Ctrl+Shift+S` | Resume Session (all) |
+| `Enter` / `Return` | Open local torrent directory / content file |
 
 ## Installation
 
@@ -343,11 +373,17 @@ Current tests cover:
 
 ## Architecture Notes
 
-- Background API operations run through cancellable worker tasks (`APITaskQueue`).
-- Main data, details, and analytics use separate queues to reduce UI contention.
-- Remote filtering is used when possible to reduce payload size.
-- Local post-filtering handles quick text/file/size/tracker filters.
+- Single-file application (`qbiremo_enhanced.py`) with a focused test suite under `tests/`.
+- Background API operations run through cancellable worker tasks (`APITaskQueue` using `QRunnable` + `QThreadPool`). Each new task cancels the currently running worker in that queue — latest task wins.
+- Three independent queue instances reduce contention:
+  - `api_queue` — general operations (refresh, mutations, dialogs).
+  - `details_api_queue` — selected-torrent trackers/peers loading.
+  - `analytics_api_queue` — tracker health dashboard loading.
+- Remote filtering is used when possible to reduce payload size; local post-filtering handles quick text/file/size/tracker filters.
 - Content filter accuracy depends on cached `torrents_files` snapshots.
+- When debug logging is enabled, the API client is wrapped with a transparent proxy that logs call names, args, responses, exceptions, and elapsed time.
+- Instance isolation: every qBittorrent server connection gets its own settings, cache file, and log file, keyed by a deterministic 6-character hash of host+port.
+- Display modes: sizes and speeds can be shown as raw bytes (with thousands separators) or human-readable units (KB/MB/GB/TB), toggled via `View -> Human Readable`.
 
 ## API Documentation References
 
