@@ -22,9 +22,10 @@ It combines:
 - Startup always opens maximized.
 - Status bar with:
   - status text (left, stretches),
-  - indeterminate progress indicator while background work runs,
-  - transfer summary (right-aligned),
-  - live torrent count (right).
+  - DHT nodes + download/upload transfer summary (speed, global limit, session totals),
+  - instance identity (`user@host:port [instance_counter]`),
+  - live torrent count,
+  - indeterminate progress indicator while background work runs (always visible at far right).
 - Window title shows aggregate download/upload speeds using configurable format tokens:
   - `{down_text}`
   - `{up_text}`
@@ -127,10 +128,10 @@ It combines:
 
 ### Add Torrent Dialog
 - Source supports:
-  - local `.torrent` file,
-  - magnet URL,
-  - HTTP/HTTPS URL,
-  - multi-line URL/magnet input.
+  - local `.torrent` files (multiple, one per line, with multi-file browse),
+  - magnet URLs (multiple, one per line),
+  - HTTP/HTTPS URLs (multiple, one per line),
+  - separate inputs for file sources vs magnet/URL sources.
 - Basic options:
   - save path,
   - optional download path + `Use Download Path`,
@@ -165,6 +166,8 @@ It combines:
 - Debug logging toggle:
   - logs API calls, responses, errors with timing.
 - Edit `.ini` settings file (opens current QSettings INI path).
+- Open Web UI in browser:
+  - launches the current qBittorrent Web UI URL in the default browser (`<scheme>://<user>@<host>:<port>`).
 - Edit App Preferences dialog:
   - full preference tree editor with type-aware parsing,
   - changed-value highlighting,
@@ -218,6 +221,8 @@ It combines:
 ### File
 - `Add Torrent...` (`Ctrl+O`)
 - `Export Torrent...`
+- `New instance` (`Ctrl+Shift+N`) - launch another app instance with current config
+- `New instance from config...` - choose a `.toml` file and launch a new instance
 - `Exit` (`Ctrl+Q`, `Alt+X`)
 
 ### Edit
@@ -231,6 +236,8 @@ It combines:
 - `Minimum Priority in Queue` (`Ctrl+Shift+-`)
 - `Remove` (`Del`)
 - `Remove and Delete Data` (`Shift+Del`)
+- `Remove (no confirmation)` (`Ctrl+Del`)
+- `Remove and Delete Data (no confirmation)` (`Ctrl+Shift+Del`)
 - `Pause Session` (`Ctrl+Shift+P`)
 - `Resume Session` (`Ctrl+Shift+S`)
 - `Content` submenu:
@@ -244,6 +251,9 @@ It combines:
 - `Open Log File`
 - `Refresh` (`F5`)
 - `Clear Cache & Refresh` (`Ctrl+F5`)
+- `Show Active Torrents` (`F6`)
+- `Show Complete Torrents` (`F7`)
+- `Show All Torrents` (`F8`)
 - `Human Readable` (toggle)
 - `Torrent Columns` submenu (presets + per-column toggles + named views)
 - `Fit Columns`
@@ -255,6 +265,7 @@ It combines:
 - `Enable Clipboard Monitor` (toggle)
 - `Enable Debug logging` (toggle)
 - `Edit .ini file`
+- `Open Web UI in browser`
 - `Edit App Preferences`
 - `Manage Speed Limits...`
 - `Manage Tags and Categories`
@@ -269,9 +280,13 @@ It combines:
 | Shortcut | Action |
 |---|---|
 | `Ctrl+O` | Add Torrent |
+| `Ctrl+Shift+N` | New instance (current config) |
 | `Ctrl+Q` / `Alt+X` | Exit |
 | `F5` | Refresh |
 | `Ctrl+F5` | Clear Cache & Refresh |
+| `F6` | Show active torrents |
+| `F7` | Show complete torrents |
+| `F8` | Show all torrents |
 | `Ctrl+S` | Start selected |
 | `Ctrl+P` | Stop selected |
 | `Ctrl+M` | Force Start selected |
@@ -280,6 +295,8 @@ It combines:
 | `Ctrl+Shift++` / `Ctrl+Shift+-` | Queue priority top / minimum |
 | `Del` | Remove selected |
 | `Shift+Del` | Remove + Delete Data |
+| `Ctrl+Del` | Remove selected (no confirmation) |
+| `Ctrl+Shift+Del` | Remove + Delete Data (no confirmation) |
 | `Ctrl+Shift+P` | Pause Session (all) |
 | `Ctrl+Shift+S` | Resume Session (all) |
 | `Enter` / `Return` | Open local torrent directory / content file |
@@ -316,6 +333,9 @@ qb_host = "127.0.0.1"
 qb_port = 8080
 qb_username = "admin"
 qb_password = "CHANGE_ME"
+# Optional protocol scheme for WebUI/API (allowed: "http", "https")
+# Default: "http"
+http_protocol_scheme = "http"
 
 # Optional reverse-proxy/basic-auth layer (separate from qb API auth)
 http_basic_auth_username = ""
@@ -333,6 +353,7 @@ Behavior notes:
 - Unknown TOML keys are ignored with warnings.
 - Runtime UI settings (`auto_refresh`, interval, window size/layout, display mode, default status) are QSettings-managed and not read from TOML.
 - If `qb_host` includes a full URL with embedded userinfo, HTTP basic auth is extracted and sent via `Authorization` header.
+- `http_protocol_scheme` controls the connection/browser scheme (`http`/`https`) and defaults to `http` when omitted.
 - Environment fallback for HTTP basic auth:
   - `X_HTTP_USER`
   - `X_HTTP_PASS`
@@ -352,6 +373,7 @@ python qbiremo_enhanced.py -c path\to\custom.toml
 ### Command-line options
 ```text
 -c, --config-file    Path to config file (default: qbiremo_enhanced_config.toml)
+--instance_counter   Positive per-server instance counter suffix (default: 1)
 -h, --help           Show help
 ```
 
@@ -382,7 +404,7 @@ Current tests cover:
 - Remote filtering is used when possible to reduce payload size; local post-filtering handles quick text/file/size/tracker filters.
 - Content filter accuracy depends on cached `torrents_files` snapshots.
 - When debug logging is enabled, the API client is wrapped with a transparent proxy that logs call names, args, responses, exceptions, and elapsed time.
-- Instance isolation: every qBittorrent server connection gets its own settings, cache file, and log file, keyed by a deterministic 6-character hash of host+port.
+- Instance isolation: every qBittorrent server connection gets its own settings, cache file, and log file, keyed by a deterministic 8-character host+port hash plus `instance_counter` suffix.
 - Display modes: sizes and speeds can be shown as raw bytes (with thousands separators) or human-readable units (KB/MB/GB/TB), toggled via `View -> Human Readable`.
 
 ## API Documentation References

@@ -19,6 +19,9 @@ qb_host = "127.0.0.1"
 qb_port = 8080
 qb_username = "admin"
 qb_password = "CHANGE_ME"
+# Optional protocol scheme for qBittorrent WebUI/API.
+# Allowed values: "http" or "https" (default: "http")
+http_protocol_scheme = "http"
 
 # Optional title-bar speed format
 # Placeholders: {down_text}, {up_text}

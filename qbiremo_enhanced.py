@@ -18,11 +18,12 @@ import traceback
 import tempfile
 import base64
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional, Dict, List, Any, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import time
 import fnmatch
 from collections import deque
@@ -40,7 +41,17 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import (
     Qt, QTimer, QRunnable, Slot, Signal, QObject, QThreadPool, QSettings, QEvent
 )
-from PySide6.QtGui import QAction, QIcon, QColor, QBrush, QShortcut, QKeySequence, QPainter, QPen
+from PySide6.QtGui import (
+    QAction,
+    QIcon,
+    QColor,
+    QBrush,
+    QShortcut,
+    QKeySequence,
+    QPainter,
+    QPen,
+    QFontDatabase,
+)
 
 import qbittorrentapi
 
@@ -208,19 +219,25 @@ class Worker(QRunnable):
     @Slot()
     def run(self):
         """Execute the worker function"""
-        if self.is_cancelled:
-            self.signals.cancelled.emit()
-            return
-
+        was_cancelled = False
         try:
+            if self.is_cancelled:
+                was_cancelled = True
+                return
             result = self.fn(*self.args, **self.kwargs)
-            if not self.is_cancelled:
-                self.signals.result.emit(result)
+            if self.is_cancelled:
+                was_cancelled = True
+                return
+            self.signals.result.emit(result)
         except Exception:
-            if not self.is_cancelled:
+            if self.is_cancelled:
+                was_cancelled = True
+            else:
                 exctype, value = sys.exc_info()[:2]
                 self.signals.error.emit((exctype, value, traceback.format_exc()))
         finally:
+            if was_cancelled:
+                self.signals.cancelled.emit()
             self.signals.finished.emit()
 
 
@@ -241,15 +258,10 @@ class APITaskQueue(QObject):
         self.is_processing = False
         self.threadpool = QThreadPool()
         self.current_task_name = None
+        self.pending_task = None
 
-    def add_task(self, task_name: str, fn, callback, *args, **kwargs):
-        """Add a task to the queue, cancelling any current task"""
-        # Cancel current task if running
-        if self.current_worker:
-            self.current_worker.cancel()
-            if self.current_task_name:
-                self.task_cancelled.emit(self.current_task_name)
-
+    def _start_task(self, task_name: str, fn, callback, *args, **kwargs):
+        """Create one worker and start processing."""
         self.is_processing = True
         self.current_task_name = task_name
 
@@ -257,44 +269,64 @@ class APITaskQueue(QObject):
         self.current_worker = worker
 
         worker.signals.result.connect(
-            lambda result: self._on_task_complete(task_name, callback, result)
+            lambda result, _worker=worker: self._on_task_complete(
+                _worker,
+                task_name,
+                callback,
+                result,
+            )
         )
         worker.signals.error.connect(
-            lambda error: self._on_task_error(task_name, error)
+            lambda error, _worker=worker: self._on_task_error(
+                _worker,
+                task_name,
+                error,
+            )
         )
         worker.signals.cancelled.connect(
-            lambda: self._on_task_cancelled(task_name)
+            lambda _worker=worker: self._on_task_cancelled(_worker, task_name)
         )
-
+        worker.signals.finished.connect(
+            lambda _worker=worker: self._on_worker_finished(_worker)
+        )
         self.threadpool.start(worker)
 
-    def clear_queue(self):
-        """Clear current task"""
+    def add_task(self, task_name: str, fn, callback, *args, **kwargs):
+        """Add a task to the queue, coalescing to latest while one is running."""
         if self.current_worker:
             self.current_worker.cancel()
-        self.is_processing = False
-        self.current_task_name = None
+            self.pending_task = (task_name, fn, callback, args, kwargs)
+            self.is_processing = True
+            return
 
-    def _on_task_complete(self, task_name: str, callback, result):
+        self._start_task(task_name, fn, callback, *args, **kwargs)
+
+    def clear_queue(self):
+        """Cancel current task and drop any queued replacement task."""
+        if self.current_worker:
+            self.current_worker.cancel()
+        self.pending_task = None
+        if not self.current_worker:
+            self.is_processing = False
+            self.current_task_name = None
+
+    def _on_task_complete(self, worker: Worker, task_name: str, callback, result):
         """Handle successful task completion"""
-        prev_worker = self.current_worker
+        if worker is not self.current_worker:
+            logger.debug("Ignoring stale task completion: %s", task_name)
+            return
         try:
             if callback:
                 callback(result)
             self.task_completed.emit(task_name, result)
         except Exception as e:
             self.task_failed.emit(task_name, str(e))
-        finally:
-            # Only clear state if the callback did NOT chain a new task
-            # via add_task (which would have replaced current_worker).
-            if self.current_worker is prev_worker:
-                self.current_worker = None
-                self.is_processing = False
-                self.current_task_name = None
 
-    def _on_task_error(self, task_name: str, error):
+    def _on_task_error(self, worker: Worker, task_name: str, error):
         """Handle task failure"""
-        prev_worker = self.current_worker
+        if worker is not self.current_worker:
+            logger.debug("Ignoring stale task error: %s", task_name)
+            return
         try:
             exctype, value, trace = error
             error_msg = f"{exctype.__name__}: {value}"
@@ -303,18 +335,30 @@ class APITaskQueue(QObject):
         except Exception as e:
             logger.error("Error in _on_task_error for %s: %s", task_name, e)
             self.task_failed.emit(task_name, str(e))
-        finally:
-            if self.current_worker is prev_worker:
-                self.current_worker = None
-                self.is_processing = False
-                self.current_task_name = None
 
-    def _on_task_cancelled(self, task_name: str):
+    def _on_task_cancelled(self, worker: Worker, task_name: str):
         """Handle task cancellation"""
+        if worker is not self.current_worker:
+            return
         try:
             self.task_cancelled.emit(task_name)
         except Exception as e:
             logger.error("Error in _on_task_cancelled for %s: %s", task_name, e)
+
+    def _on_worker_finished(self, worker: Worker):
+        """Finalize worker lifecycle and start latest pending task, if any."""
+        if worker is not self.current_worker:
+            return
+
+        self.current_worker = None
+        self.current_task_name = None
+        self.is_processing = False
+
+        pending = self.pending_task
+        self.pending_task = None
+        if pending:
+            task_name, fn, callback, args, kwargs = pending
+            self._start_task(task_name, fn, callback, *args, **kwargs)
 
 
 class _DebugAPIClientProxy:
@@ -369,18 +413,29 @@ class AddTorrentDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Source group
-        grp_source = QGroupBox("Torrent Source")
+        grp_source = QGroupBox("Torrent Sources")
         src_layout = QVBoxLayout(grp_source)
 
-        # File/URL selection
         file_layout = QHBoxLayout()
-        self.txt_source = QLineEdit()
-        self.txt_source.setPlaceholderText("Torrent file path, magnet link, or URL (one per line)...")
-        btn_browse = QPushButton("Browse...")
-        btn_browse.clicked.connect(self._browse_file)
-        file_layout.addWidget(self.txt_source)
-        file_layout.addWidget(btn_browse)
+        self.txt_torrent_files = QTextEdit()
+        self.txt_torrent_files.setPlaceholderText(
+            "Torrent files (one path per line)."
+        )
+        self.txt_torrent_files.setFixedHeight(86)
+        btn_browse_files = QPushButton("Browse Files...")
+        btn_browse_files.clicked.connect(self._browse_files)
+        file_layout.addWidget(self.txt_torrent_files, 1)
+        file_layout.addWidget(btn_browse_files)
         src_layout.addLayout(file_layout)
+
+        url_layout = QHBoxLayout()
+        self.txt_source_urls = QTextEdit()
+        self.txt_source_urls.setPlaceholderText(
+            "Magnet links / URLs (one per line)."
+        )
+        self.txt_source_urls.setFixedHeight(86)
+        url_layout.addWidget(self.txt_source_urls, 1)
+        src_layout.addLayout(url_layout)
 
         layout.addWidget(grp_source)
 
@@ -550,13 +605,21 @@ class AddTorrentDialog(QDialog):
 
         self.torrent_data = None
 
-    def _browse_file(self):
-        """Browse for torrent file"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Torrent File", "", "Torrent Files (*.torrent);;All Files (*)"
+    def accept(self):
+        """Validate and cache torrent payload before closing the dialog."""
+        payload = self.get_torrent_data()
+        if not payload:
+            return
+        self.torrent_data = payload
+        super().accept()
+
+    def _browse_files(self):
+        """Browse and append one or more torrent files."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Torrent Files", "", "Torrent Files (*.torrent);;All Files (*)"
         )
-        if file_path:
-            self.txt_source.setText(file_path)
+        if file_paths:
+            self._append_multiline_entries(self.txt_torrent_files, file_paths)
 
     def _browse_save_path(self):
         """Browse for save directory"""
@@ -573,6 +636,17 @@ class AddTorrentDialog(QDialog):
     @staticmethod
     def _split_csv(text: str) -> List[str]:
         return [p.strip() for p in (text or "").split(",") if p.strip()]
+
+    @staticmethod
+    def _split_multiline(text: str) -> List[str]:
+        return [line.strip() for line in str(text or "").splitlines() if line.strip()]
+
+    def _append_multiline_entries(self, editor: QTextEdit, entries: List[str]):
+        existing = self._split_multiline(editor.toPlainText())
+        combined = existing + [str(entry).strip() for entry in (entries or []) if str(entry).strip()]
+        # Preserve order while removing duplicates.
+        deduped = list(dict.fromkeys(combined))
+        editor.setPlainText("\n".join(deduped))
 
     def _get_selected_tags(self) -> str:
         """Return comma-separated string of checked tags."""
@@ -592,9 +666,8 @@ class AddTorrentDialog(QDialog):
         return lower.startswith("magnet:") or lower.startswith("http://") or lower.startswith("https://") or lower.startswith("bc://")
 
     @staticmethod
-    def _parse_url_source(source: str):
+    def _parse_url_sources(lines: List[str]):
         # Accept one URL per line for convenience.
-        lines = [line.strip() for line in source.splitlines() if line.strip()]
         if not lines:
             return ""
         if len(lines) == 1:
@@ -603,8 +676,9 @@ class AddTorrentDialog(QDialog):
 
     def get_torrent_data(self) -> Optional[Dict[str, Any]]:
         """Get the torrent data from the dialog"""
-        source = self.txt_source.text().strip()
-        if not source:
+        source_files = self._split_multiline(self.txt_torrent_files.toPlainText())
+        source_urls = self._split_multiline(self.txt_source_urls.toPlainText())
+        if not source_files and not source_urls:
             return None
 
         data: Dict[str, Any] = {}
@@ -682,14 +756,29 @@ class AddTorrentDialog(QDialog):
         if share_limit_action != "Default":
             data['share_limit_action'] = share_limit_action
 
-        # Source
-        if self._is_url_source(source):
-            data['urls'] = self._parse_url_source(source)
-        else:
-            if not os.path.exists(source):
-                QMessageBox.warning(self, "Torrent File Not Found", f"File does not exist:\n{source}")
+        # Sources
+        if source_files:
+            missing_files = [path for path in source_files if not os.path.exists(path)]
+            if missing_files:
+                QMessageBox.warning(
+                    self,
+                    "Torrent File Not Found",
+                    "File does not exist:\n" + "\n".join(missing_files),
+                )
                 return None
-            data['torrent_files'] = source
+            data['torrent_files'] = source_files[0] if len(source_files) == 1 else source_files
+
+        if source_urls:
+            invalid_urls = [url for url in source_urls if not self._is_url_source(url)]
+            if invalid_urls:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Magnet/URL",
+                    "These entries are not valid magnet links or URLs:\n"
+                    + "\n".join(invalid_urls),
+                )
+                return None
+            data['urls'] = self._parse_url_sources(source_urls)
 
         return data
 
@@ -1786,6 +1875,14 @@ def _normalize_instance_counter(raw_counter: Any) -> int:
     return counter if counter > 0 else 1
 
 
+def _normalize_http_protocol_scheme(raw_scheme: Any) -> str:
+    """Normalize WebUI/API protocol scheme to http or https."""
+    scheme = str(raw_scheme or "").strip().lower()
+    if scheme in ("http", "https"):
+        return scheme
+    return "http"
+
+
 def compute_instance_id(
     qb_host: Any,
     qb_port: Any,
@@ -1853,6 +1950,47 @@ def resolve_cache_file_path(
     if raw_path.is_absolute():
         return raw_path
     return Path(tempfile.gettempdir()) / CACHE_TEMP_SUBDIR / raw_path
+
+
+def resolve_instance_lock_file_path(instance_id: str, instance_counter: Any) -> Path:
+    """Resolve one .lck file path for a computed instance id + counter."""
+    ident = str(instance_id or "").strip().lower()
+    counter = _normalize_instance_counter(instance_counter)
+    suffix = f"_{counter}"
+    lock_key = ident if ident.endswith(suffix) else f"{ident}{suffix}"
+    return resolve_cache_file_path("qbiremo_enhanced.lck", lock_key)
+
+
+def acquire_instance_lock(
+    config: Dict[str, Any],
+    start_counter: Any,
+) -> Tuple[int, str, Path]:
+    """Create an exclusive .lck file; auto-increment counter when lock exists."""
+    cfg = config if isinstance(config, dict) else {}
+    counter = _normalize_instance_counter(start_counter)
+
+    while True:
+        cfg["_instance_counter"] = int(counter)
+        instance_id = compute_instance_id_from_config(cfg)
+        lock_path = resolve_instance_lock_file_path(instance_id, counter)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with lock_path.open("x", encoding="utf-8") as handle:
+                handle.write(f"instance_id={instance_id}\n")
+                handle.write(f"instance_counter={counter}\n")
+            return int(counter), str(instance_id), lock_path
+        except FileExistsError:
+            counter += 1
+
+
+def release_instance_lock(lock_path: Path):
+    """Best-effort removal of an instance .lck file on shutdown."""
+    try:
+        Path(lock_path).unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.debug("Failed to remove lock file: %s", lock_path, exc_info=True)
 
 
 def parse_tags(tags) -> List[str]:
@@ -1981,11 +2119,13 @@ class MainWindow(QMainWindow):
         self._suppress_next_cache_save = False
         self._sync_rid = 0
         self._sync_torrent_map: Dict[str, Dict[str, Any]] = {}
+        self._latest_torrent_fetch_remote_filtered = False
         self._taxonomy_dialog: Optional[TaxonomyManagerDialog] = None
         self._speed_limits_dialog: Optional[SpeedLimitsDialog] = None
         self._app_preferences_dialog: Optional[AppPreferencesDialog] = None
         self._tracker_health_dialog: Optional[TrackerHealthDialog] = None
         self._session_timeline_dialog: Optional[SessionTimelineDialog] = None
+        self._add_torrent_dialog: Optional[AddTorrentDialog] = None
         self.session_timeline_history = deque(maxlen=720)
         self._last_alt_speed_mode = False
         self._last_dht_nodes = 0
@@ -2730,6 +2870,15 @@ class MainWindow(QMainWindow):
         export_action.triggered.connect(self._export_selected_torrents)
         file_menu.addAction(export_action)
 
+        action_new_instance = QAction("New &instance", self)
+        action_new_instance.setShortcut("Ctrl+Shift+N")
+        action_new_instance.triggered.connect(self._launch_new_instance_current_config)
+        file_menu.addAction(action_new_instance)
+
+        action_new_instance_from_config = QAction("New instance from con&fig...", self)
+        action_new_instance_from_config.triggered.connect(self._launch_new_instance_from_config)
+        file_menu.addAction(action_new_instance_from_config)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)
@@ -2928,6 +3077,10 @@ class MainWindow(QMainWindow):
         action_edit_app_preferences.triggered.connect(self._show_app_preferences_editor)
         tools_menu.addAction(action_edit_app_preferences)
 
+        action_open_web_ui = QAction("Open Web UI in browser", self)
+        action_open_web_ui.triggered.connect(self._open_web_ui_in_browser)
+        tools_menu.addAction(action_open_web_ui)
+
         tools_menu.addSeparator()
 
         action_manage_speed_limits = QAction("Manage &Speed Limits...", self)
@@ -2973,6 +3126,9 @@ class MainWindow(QMainWindow):
         self.lbl_upload_summary = QLabel("")
         self.statusbar.addPermanentWidget(self.lbl_upload_summary)
 
+        self.lbl_instance_identity = QLabel(self._statusbar_instance_identity_text())
+        self.statusbar.addPermanentWidget(self.lbl_instance_identity)
+
         # Torrent count label
         self.lbl_count = QLabel("0 torrents")
         self.statusbar.addPermanentWidget(self.lbl_count)
@@ -2987,6 +3143,35 @@ class MainWindow(QMainWindow):
         self.statusbar.addPermanentWidget(self.progress_bar)
         self._update_statusbar_transfer_summary()
 
+    def _statusbar_instance_identity_text(self) -> str:
+        """Build left-most status bar identity text for current connection/instance."""
+        user = str(
+            self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
+            if isinstance(self.config, dict)
+            else self.qb_conn_info.get("username", "admin")
+        ).strip() or "admin"
+        raw_host = str(
+            self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
+            if isinstance(self.config, dict)
+            else self.qb_conn_info.get("host", "localhost")
+        ).strip() or "localhost"
+        host = raw_host
+        if "://" in raw_host:
+            try:
+                parsed = urlparse(raw_host)
+                host = str(parsed.hostname or raw_host).strip() or "localhost"
+            except Exception:
+                host = raw_host
+        port = _normalize_instance_port(
+            self.config.get("qb_port", self.qb_conn_info.get("port", 8080))
+            if isinstance(self.config, dict)
+            else self.qb_conn_info.get("port", 8080)
+        )
+        counter = _normalize_instance_counter(
+            self.config.get("_instance_counter", 1) if isinstance(self.config, dict) else 1
+        )
+        return f"{user}@{host}:{port} [{counter}]"
+
     # ========================================================================
     # Connection Configuration
     # ========================================================================
@@ -2997,12 +3182,17 @@ class MainWindow(QMainWindow):
         Supports HTTP basic auth (separate from qBittorrent API auth) via the
         host URL (e.g. https://user:password@remote.host.com:12345) or via
         explicit http_basic_auth_username / http_basic_auth_password config keys.
+        Protocol scheme can be forced via optional http_protocol_scheme (http/https).
         """
         # Host URL ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â may contain scheme, basic-auth credentials, and port
         raw_host = (
             config.get('qb_host')
             or "localhost"
         )
+        scheme_override = _normalize_http_protocol_scheme(
+            config.get("http_protocol_scheme", "http")
+        )
+        explicit_scheme_override = "http_protocol_scheme" in config
 
         extra_headers = {}
         host = raw_host
@@ -3022,7 +3212,9 @@ class MainWindow(QMainWindow):
             netloc_host = parsed.hostname or 'localhost'
             if parsed.port:
                 netloc_host = f"{netloc_host}:{parsed.port}"
-            host = f"{parsed.scheme}://{netloc_host}"
+            parsed_scheme = _normalize_http_protocol_scheme(parsed.scheme or "http")
+            final_scheme = scheme_override if explicit_scheme_override else parsed_scheme
+            host = f"{final_scheme}://{netloc_host}"
         else:
             http_user = (
                 config.get('http_basic_auth_username', '')
@@ -3030,6 +3222,7 @@ class MainWindow(QMainWindow):
             http_pass = (
                 config.get('http_basic_auth_password', '')
             )
+            host = f"{scheme_override}://{str(raw_host).strip() or 'localhost'}"
 
         # Also allow standalone config keys
         if not http_user:
@@ -3450,6 +3643,68 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log("ERROR", f"Failed to open settings INI file: {e}")
             self._set_status(f"Failed to open INI file: {e}")
+
+    def _web_ui_browser_url(self) -> str:
+        """Build Web UI URL for the current qBittorrent connection."""
+        user = str(
+            self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
+            if isinstance(self.config, dict)
+            else self.qb_conn_info.get("username", "admin")
+        ).strip() or "admin"
+        configured_scheme = _normalize_http_protocol_scheme(
+            self.config.get("http_protocol_scheme", "http")
+            if isinstance(self.config, dict)
+            else "http"
+        )
+        explicit_scheme_override = bool(
+            isinstance(self.config, dict)
+            and str(self.config.get("http_protocol_scheme", "") or "").strip()
+        )
+        raw_host = str(
+            self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
+            if isinstance(self.config, dict)
+            else self.qb_conn_info.get("host", "localhost")
+        ).strip() or "localhost"
+        host = raw_host
+        scheme = configured_scheme
+        host_port_from_url: Optional[int] = None
+        if "://" in raw_host:
+            try:
+                parsed = urlparse(raw_host)
+                host = str(parsed.hostname or raw_host).strip() or "localhost"
+                parsed_scheme = _normalize_http_protocol_scheme(parsed.scheme or "http")
+                scheme = configured_scheme if explicit_scheme_override else parsed_scheme
+                host_port_from_url = parsed.port
+            except Exception:
+                host = raw_host
+                host_port_from_url = None
+        else:
+            scheme = configured_scheme
+        port = _normalize_instance_port(
+            host_port_from_url
+            if host_port_from_url is not None
+            else (
+                self.config.get("qb_port", self.qb_conn_info.get("port", 8080))
+                if isinstance(self.config, dict)
+                else self.qb_conn_info.get("port", 8080)
+            )
+        )
+        encoded_user = quote(user, safe="")
+        host_text = host
+        if ":" in host_text and not host_text.startswith("["):
+            host_text = f"[{host_text}]"
+        return f"{scheme}://{encoded_user}@{host_text}:{port}"
+
+    def _open_web_ui_in_browser(self):
+        """Open qBittorrent Web UI URL in default browser."""
+        try:
+            url = self._web_ui_browser_url()
+            _open_file_in_default_app(url)
+            self._log("INFO", f"Opened qBittorrent Web UI: {url}")
+            self._set_status(f"Opened Web UI: {url}")
+        except Exception as e:
+            self._log("ERROR", f"Failed to open qBittorrent Web UI: {e}")
+            self._set_status(f"Failed to open Web UI: {e}")
 
     def _load_settings(self):
         """Load window geometry, splitter sizes, column widths, sort order,
@@ -4012,23 +4267,71 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': {}, 'errors': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
-    def _add_torrent_api(self, torrent_data: Dict, **_kw) -> bool:
+    def _add_torrent_api(self, torrent_data: Dict, **_kw) -> Dict[str, Any]:
         """Add a torrent via API"""
         start_time = time.time()
         data = dict(torrent_data)  # avoid mutating caller's dict
         try:
             with self._create_client() as qb:
-                if 'torrent_files' in data:
-                    # File-based torrent
-                    file_path = data.pop('torrent_files')
-                    with open(file_path, 'rb') as f:
-                        result = qb.torrents_add(torrent_files=f, **data)
-                else:
-                    # URL/magnet
-                    result = qb.torrents_add(**data)
+                result_ok = True
+                details: Dict[str, Any] = {
+                    "submitted_urls": 0,
+                    "added_urls": 0,
+                    "submitted_files": 0,
+                    "added_files": 0,
+                    "failed_sources": [],
+                }
+                urls_payload = data.pop('urls', None)
+                files_payload = data.pop('torrent_files', None)
+
+                if urls_payload not in (None, "", []):
+                    if isinstance(urls_payload, (list, tuple, set)):
+                        url_entries = [str(u or "").strip() for u in urls_payload if str(u or "").strip()]
+                    else:
+                        url_entries = [str(urls_payload).strip()]
+                    details["submitted_urls"] = len(url_entries)
+                    url_result = qb.torrents_add(urls=urls_payload, **dict(data))
+                    if url_result == "Ok.":
+                        details["added_urls"] = len(url_entries)
+                    else:
+                        result_ok = False
+                        details["failed_sources"].append(
+                            {"source": "urls", "error": f"API response: {url_result!r}"}
+                        )
+
+                if files_payload not in (None, "", []):
+                    if isinstance(files_payload, (list, tuple, set)):
+                        file_paths = [str(path or "").strip() for path in files_payload if str(path or "").strip()]
+                    else:
+                        file_paths = [str(files_payload).strip()]
+                    details["submitted_files"] = len(file_paths)
+                    for file_path in file_paths:
+                        try:
+                            with open(file_path, 'rb') as f:
+                                file_result = qb.torrents_add(torrent_files=f, **dict(data))
+                            if file_result == "Ok.":
+                                details["added_files"] += 1
+                            else:
+                                result_ok = False
+                                details["failed_sources"].append(
+                                    {"source": file_path, "error": f"API response: {file_result!r}"}
+                                )
+                        except Exception as ex:
+                            result_ok = False
+                            details["failed_sources"].append(
+                                {"source": file_path, "error": str(ex)}
+                            )
+
+                if urls_payload in (None, "", []) and files_payload in (None, "", []):
+                    raise ValueError("No torrent sources provided")
 
             elapsed = time.time() - start_time
-            return {'data': result == "Ok.", 'elapsed': elapsed, 'success': True}
+            return {
+                'data': result_ok,
+                'elapsed': elapsed,
+                'success': True,
+                'details': details,
+            }
         except Exception as e:
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
@@ -4845,6 +5148,7 @@ class MainWindow(QMainWindow):
         """Handle torrents loaded"""
         try:
             if not result.get('success', False):
+                self._latest_torrent_fetch_remote_filtered = False
                 error = result.get('error', 'Unknown error')
                 self._log("ERROR", f"Failed to load torrents: {error}", result.get('elapsed', 0))
                 self._hide_progress()
@@ -4858,6 +5162,9 @@ class MainWindow(QMainWindow):
                 return
 
             previous_selected_hash = self._get_selected_torrent_hash()
+            self._latest_torrent_fetch_remote_filtered = bool(
+                result.get("remote_filtered", False)
+            )
             self.all_torrents = result.get('data', [])
             if "alt_speed_mode" in result:
                 self._last_alt_speed_mode = bool(result.get("alt_speed_mode"))
@@ -4911,6 +5218,7 @@ class MainWindow(QMainWindow):
             self._select_first_torrent_after_refresh(previous_selected_hash)
             self._hide_progress()
         except Exception as e:
+            self._latest_torrent_fetch_remote_filtered = False
             self._log("ERROR", f"Exception in _on_torrents_loaded: {e}")
             self._hide_progress()
             self._set_status(f"Error loading torrents: {e}")
@@ -5001,16 +5309,43 @@ class MainWindow(QMainWindow):
 
     def _on_add_torrent_complete(self, result: Dict):
         """Handle torrent add completion"""
+        details = result.get("details", {}) if isinstance(result, dict) else {}
+        if isinstance(details, dict):
+            added_count = (
+                self._safe_int(details.get("added_urls", 0), 0)
+                + self._safe_int(details.get("added_files", 0), 0)
+            )
+            failed_sources = details.get("failed_sources", [])
+            failed_count = len(failed_sources) if isinstance(failed_sources, list) else 0
+        else:
+            added_count = 0
+            failed_count = 0
+
+        final_status_text = ""
         if result.get('success') and result.get('data'):
-            self._log("INFO", "Torrent added successfully", result.get('elapsed', 0))
-            self._set_status("Torrent added successfully")
+            status_text = (
+                f"Added {added_count} torrent sources"
+                if added_count > 1
+                else "Torrent added successfully"
+            )
+            self._log("INFO", status_text, result.get('elapsed', 0))
+            final_status_text = status_text
             # Refresh torrent list
+            QTimer.singleShot(1000, self._refresh_torrents)
+        elif result.get('success') and added_count > 0 and failed_count > 0:
+            status_text = f"Added {added_count} sources, {failed_count} failed"
+            self._log("ERROR", status_text, result.get('elapsed', 0))
+            final_status_text = status_text
             QTimer.singleShot(1000, self._refresh_torrents)
         else:
             error_msg = result.get('error', 'Unknown error')
+            if (error_msg == 'Unknown error') and failed_count > 0:
+                error_msg = f"{failed_count} source(s) failed"
             self._log("ERROR", f"Failed to add torrent: {error_msg}", result.get('elapsed', 0))
-            self._set_status(f"Failed to add torrent: {error_msg}")
+            final_status_text = f"Failed to add torrent: {error_msg}"
         self._hide_progress()
+        if final_status_text:
+            self._set_status(final_status_text)
 
     def _on_apply_selected_torrent_edits_done(self, result: Dict):
         """Handle completion of selected torrent edit apply action."""
@@ -5347,7 +5682,10 @@ class MainWindow(QMainWindow):
             filtered = self.all_torrents[:]  # Make a copy
 
             # Apply API-equivalent filters locally when using sync/maindata.
-            if self._sync_torrent_map:
+            if (
+                self._sync_torrent_map
+                and not bool(self._latest_torrent_fetch_remote_filtered)
+            ):
                 if self.current_status_filter and self.current_status_filter != "all":
                     filtered = [
                         t for t in filtered
@@ -6538,6 +6876,30 @@ class MainWindow(QMainWindow):
             self._log("DEBUG", "Refresh skipped: refresh_torrents already in progress")
             return
 
+        # Avoid auto/manual refresh canceling other in-flight user/API operations.
+        active_task = str(getattr(self.api_queue, "current_task_name", "") or "").strip()
+        pending_task = getattr(self.api_queue, "pending_task", None)
+        pending_name = (
+            str(pending_task[0]).strip()
+            if isinstance(pending_task, tuple) and pending_task
+            else ""
+        )
+        queue_busy_with_non_refresh = bool(
+            getattr(self.api_queue, "current_worker", None)
+        ) and (
+            (active_task and active_task != "refresh_torrents")
+            or (pending_name and pending_name != "refresh_torrents")
+        )
+        if queue_busy_with_non_refresh:
+            self._log(
+                "DEBUG",
+                (
+                    "Refresh skipped: API queue busy "
+                    f"(active={active_task or 'none'}, pending={pending_name or 'none'})"
+                ),
+            )
+            return
+
         self._set_refresh_torrents_in_progress(True)
         self._log("INFO", "Refreshing torrents...")
         self._show_progress("Refreshing torrents...")
@@ -6552,21 +6914,112 @@ class MainWindow(QMainWindow):
             self._set_refresh_torrents_in_progress(False)
             raise
 
+    @staticmethod
+    def _build_new_instance_command(config_file_path: str, instance_counter: Optional[int] = None) -> List[str]:
+        """Build command line used to spawn one new application instance."""
+        config_path = str(Path(str(config_file_path)).expanduser().resolve())
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "-c",
+            config_path,
+        ]
+        if instance_counter is not None:
+            command.extend(
+                ["--instance_counter", str(_normalize_instance_counter(instance_counter))]
+            )
+        return command
+
+    def _launch_new_instance_with_config_path(
+        self,
+        config_file_path: str,
+        instance_counter: Optional[int] = None,
+    ):
+        """Spawn one new process instance with the provided config path."""
+        try:
+            command = self._build_new_instance_command(config_file_path, instance_counter)
+            subprocess.Popen(command)
+            self._log("INFO", f"Launched new instance: {' '.join(command)}")
+            self._set_status(f"Launched new instance: {Path(command[3]).name}")
+        except Exception as e:
+            self._log("ERROR", f"Failed to launch new instance: {e}")
+            self._set_status(f"Failed to launch new instance: {e}")
+
+    def _launch_new_instance_current_config(self):
+        """Launch a new app instance using the currently loaded config file."""
+        raw_config_path = str(
+            (self.config.get("_config_file_path") if isinstance(self.config, dict) else "")
+            or ""
+        ).strip()
+        config_path = (
+            raw_config_path
+            if raw_config_path
+            else str(Path("qbiremo_enhanced_config.toml").resolve())
+        )
+        counter = _normalize_instance_counter(
+            self.config.get("_instance_counter", 1) if isinstance(self.config, dict) else 1
+        )
+        self._launch_new_instance_with_config_path(config_path, counter)
+
+    def _launch_new_instance_from_config(self):
+        """Launch a new app instance after selecting a .toml config file."""
+        current_config_path = str(
+            (self.config.get("_config_file_path") if isinstance(self.config, dict) else "")
+            or ""
+        ).strip()
+        if current_config_path:
+            initial_dir = str(Path(current_config_path).expanduser().resolve().parent)
+        else:
+            initial_dir = str(Path.cwd())
+        selected_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Config File",
+            initial_dir,
+            "TOML files (*.toml);;All files (*.*)",
+        )
+        if not selected_path:
+            return
+        self._launch_new_instance_with_config_path(selected_path, 1)
+
     def _show_add_torrent_dialog(self):
         """Show add torrent dialog"""
-        dialog = AddTorrentDialog(self.categories, self.tags, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            torrent_data = dialog.get_torrent_data()
-            if torrent_data:
-                self._log("INFO", "Adding torrent...")
-                self._show_progress("Adding torrent...")
+        if self._add_torrent_dialog is not None and self._add_torrent_dialog.isVisible():
+            self._add_torrent_dialog.raise_()
+            self._add_torrent_dialog.activateWindow()
+            return
 
-                self.api_queue.add_task(
-                    "add_torrent",
-                    self._add_torrent_api,
-                    self._on_add_torrent_complete,
-                    torrent_data
-                )
+        # Use a standalone top-level window so it appears in the taskbar.
+        dialog = AddTorrentDialog(self.categories, self.tags, None)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.setWindowFlag(Qt.WindowType.Window, True)
+        dialog.setWindowFlag(Qt.WindowType.Tool, False)
+        dialog.accepted.connect(self._on_add_torrent_dialog_accepted)
+        dialog.finished.connect(self._on_add_torrent_dialog_closed)
+        self._add_torrent_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_add_torrent_dialog_closed(self, _result: int):
+        """Clear cached Add Torrent dialog reference."""
+        self._add_torrent_dialog = None
+
+    def _on_add_torrent_dialog_accepted(self):
+        """Queue torrent add task when Add Torrent dialog is accepted."""
+        dialog = self._add_torrent_dialog
+        if dialog is None:
+            return
+        torrent_data = dict(getattr(dialog, "torrent_data", {}) or {})
+        dialog.torrent_data = None
+        if torrent_data:
+            self._log("INFO", "Adding torrent...")
+            self._show_progress("Adding torrent...")
+            self.api_queue.add_task(
+                "add_torrent",
+                self._add_torrent_api,
+                self._on_add_torrent_complete,
+                torrent_data
+            )
 
     @staticmethod
     def _sanitize_export_filename(name: Any, fallback: str = "torrent") -> str:
@@ -8078,6 +8531,20 @@ class MainWindow(QMainWindow):
             if cache_path and cache_path != "N/A"
             else "N/A"
         )
+        instance_counter = _normalize_instance_counter(
+            getattr(self, "config", {}).get("_instance_counter", 1)
+            if isinstance(getattr(self, "config", None), dict)
+            else 1
+        )
+        lock_path = str(
+            getattr(self, "config", {}).get("_instance_lock_file_path", "")
+            if isinstance(getattr(self, "config", None), dict)
+            else ""
+        ).strip()
+        if not lock_path:
+            lock_path = str(
+                resolve_instance_lock_file_path(instance_text, instance_counter)
+            )
 
         return (
             "qBiremo Enhanced v2.0\n\n"
@@ -8087,6 +8554,7 @@ class MainWindow(QMainWindow):
             f"Settings INI: {ini_path}\n"
             f"Cache file: {cache_path}\n"
             f"Cache temp file: {cache_tmp_path}\n\n"
+            f"Lock file: {lock_path}\n\n"
             "(c) 2025"
         )
 
@@ -8100,6 +8568,9 @@ class MainWindow(QMainWindow):
         txt_about = QTextEdit(dialog)
         txt_about.setReadOnly(True)
         txt_about.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        txt_about.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         txt_about.setPlainText(self._about_dialog_text())
         layout.addWidget(txt_about, 1)
 
@@ -8279,6 +8750,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event"""
+        if self._add_torrent_dialog is not None and self._add_torrent_dialog.isVisible():
+            self._add_torrent_dialog.close()
         self._save_settings()
         self._save_content_cache()
         event.accept()
@@ -8340,11 +8813,14 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
     known_keys = {
         "qb_host", "qb_port", "qb_username", "qb_password",
         "http_basic_auth_username", "http_basic_auth_password",
+        "http_protocol_scheme",
         "log_file",
         "title_bar_speed_format",
+        "_config_file_path",
         "_log_file_path",
         "_instance_id",
         "_instance_counter",
+        "_instance_lock_file_path",
     }
 
     legacy_map = {
@@ -8402,6 +8878,21 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
         _warn(f"'qb_port' out of range ({raw_port!r}); using 8080.")
         port = 8080
     normalized["qb_port"] = port
+
+    # http_protocol_scheme (optional; defaults to http when absent)
+    if "http_protocol_scheme" in normalized:
+        raw_scheme = normalized.get("http_protocol_scheme")
+        normalized_scheme = _normalize_http_protocol_scheme(raw_scheme)
+        raw_scheme_text = (
+            str(raw_scheme).strip().lower()
+            if isinstance(raw_scheme, str)
+            else ""
+        )
+        if raw_scheme_text not in ("http", "https"):
+            _warn(
+                f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'."
+            )
+        normalized["http_protocol_scheme"] = normalized_scheme
 
     # Credentials
     for key, default_value in [
@@ -8551,11 +9042,11 @@ def main():
             parsed = int(value)
         except Exception as e:
             raise argparse.ArgumentTypeError(
-                f"instance_id must be a positive integer: {value}"
+                f"instance_counter must be a positive integer: {value}"
             ) from e
         if parsed <= 0:
             raise argparse.ArgumentTypeError(
-                f"instance_id must be a positive integer: {value}"
+                f"instance_counter must be a positive integer: {value}"
             )
         return parsed
 
@@ -8569,9 +9060,9 @@ def main():
         help="Path to configuration file (TOML format)"
     )
     parser.add_argument(
-        "--instance_id",
-        "--instance-id",
-        dest="instance_id",
+        "--instance_counter",
+        "--instance-counter",
+        dest="instance_counter",
         type=_positive_instance_counter,
         required=False,
         default=1,
@@ -8583,11 +9074,29 @@ def main():
     )
 
     args = parser.parse_args()
+    config_file_path = str(Path(args.config_file).expanduser().resolve())
 
     # Load configuration (collect load-time issues before logging is configured)
     config, load_issues = load_config_with_issues(args.config_file)
-    config["_instance_counter"] = int(args.instance_id)
-    config["_instance_id"] = compute_instance_id_from_config(config)
+    config["_config_file_path"] = config_file_path
+    requested_counter = int(args.instance_counter)
+    config["_instance_counter"] = requested_counter
+    claimed_counter, claimed_instance_id, lock_path = acquire_instance_lock(
+        config,
+        requested_counter,
+    )
+    config["_instance_counter"] = int(claimed_counter)
+    config["_instance_id"] = str(claimed_instance_id)
+    config["_instance_lock_file_path"] = str(lock_path)
+    if claimed_counter != requested_counter:
+        load_issues.append(
+            (
+                "Lock file already exists; auto-incremented instance counter "
+                f"from {requested_counter} to {claimed_counter} "
+                f"({claimed_instance_id})."
+            )
+        )
+    atexit.register(release_instance_lock, lock_path)
 
     # Set up logging *first*, then install the global exception hook
     file_handler = _setup_logging(config)
@@ -8597,8 +9106,10 @@ def main():
 
     # Validate and normalize config values now that file logging is active.
     config = validate_and_normalize_config(config, args.config_file)
-    config["_instance_counter"] = int(args.instance_id)
-    config["_instance_id"] = compute_instance_id_from_config(config)
+    config["_config_file_path"] = config_file_path
+    config["_instance_counter"] = int(claimed_counter)
+    config["_instance_id"] = str(claimed_instance_id)
+    config["_instance_lock_file_path"] = str(lock_path)
 
     try:
         # Create application
