@@ -1,5 +1,5 @@
-@echo off
+@ECHO OFF
 
 CD /D %~dp0
 
-python -m pytest -q
+PYTHON.EXE -m pytest -q
