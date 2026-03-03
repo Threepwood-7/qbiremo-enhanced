@@ -2322,7 +2322,19 @@ class MainWindow(QMainWindow):
         self.tbl_torrents = self._create_torrents_table()
         self.right_splitter.addWidget(self.tbl_torrents)
 
-        # Details panel (tabbed)
+        self._create_details_tabs()
+        self.right_splitter.addWidget(self.detail_tabs)
+
+        self.main_splitter.addWidget(self.right_splitter)
+
+        # Set initial sizes
+        self.main_splitter.setSizes([DEFAULT_LEFT_PANEL_WIDTH, 1000])
+        self.right_splitter.setSizes([600, 200])
+
+        main_layout.addWidget(self.main_splitter)
+
+    def _create_details_tabs(self):
+        """Create details tabs (General/Trackers/Peers/Content/Edit)."""
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setTabPosition(QTabWidget.TabPosition.South)
 
@@ -2535,16 +2547,6 @@ class MainWindow(QMainWindow):
         self.detail_tabs.currentChanged.connect(self._on_detail_tab_changed)
 
         self._set_torrent_edit_enabled(False, "Select one torrent to edit.")
-
-        self.right_splitter.addWidget(self.detail_tabs)
-
-        self.main_splitter.addWidget(self.right_splitter)
-
-        # Set initial sizes
-        self.main_splitter.setSizes([DEFAULT_LEFT_PANEL_WIDTH, 1000])
-        self.right_splitter.setSizes([600, 200])
-
-        main_layout.addWidget(self.main_splitter)
 
     def _create_filter_bar(self) -> QWidget:
         """Create the filter bar above the torrents table"""
@@ -2989,8 +2991,14 @@ class MainWindow(QMainWindow):
     def _create_menus(self):
         """Create menu bar"""
         menubar = self.menuBar()
+        self._build_file_menu(menubar)
+        self._build_edit_menu(menubar)
+        self._build_view_menu(menubar)
+        self._build_tools_menu(menubar)
+        self._build_help_menu(menubar)
 
-        # File menu
+    def _build_file_menu(self, menubar):
+        """Create File menu."""
         file_menu = menubar.addMenu("&File")
 
         add_action = QAction("&Add Torrent...", self)
@@ -3018,7 +3026,8 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        # Edit menu
+    def _build_edit_menu(self, menubar):
+        """Create Edit menu."""
         edit_menu = menubar.addMenu("&Edit")
 
         action_start = QAction("&Start", self)
@@ -3099,7 +3108,8 @@ class MainWindow(QMainWindow):
         action_resume_session.triggered.connect(self._resume_session)
         edit_menu.addAction(action_resume_session)
 
-        # View menu
+    def _build_view_menu(self, menubar):
+        """Create View menu."""
         view_menu = menubar.addMenu("&View")
 
         action_open_log = QAction("Open &Log File", self)
@@ -3162,7 +3172,8 @@ class MainWindow(QMainWindow):
         action_reset_view.triggered.connect(self._reset_view_defaults)
         view_menu.addAction(action_reset_view)
 
-        # Tools menu
+    def _build_tools_menu(self, menubar):
+        """Create Tools menu."""
         tools_menu = menubar.addMenu("&Tools")
 
         self.action_clipboard_monitor = QAction("Enable &Clipboard Monitor", self)
@@ -3209,7 +3220,8 @@ class MainWindow(QMainWindow):
         action_session_timeline.triggered.connect(self._show_session_timeline)
         tools_menu.addAction(action_session_timeline)
 
-        # Help menu
+    def _build_help_menu(self, menubar):
+        """Create Help menu."""
         help_menu = menubar.addMenu("&Help")
 
         about_action = QAction("&About", self)
@@ -8660,15 +8672,10 @@ class MainWindow(QMainWindow):
 
     def _open_log_file(self):
         """Open the log file in the OS default application."""
-        import subprocess
         log_path = os.path.abspath(self.log_file_path)
         try:
-            if sys.platform == 'win32':
-                os.startfile(log_path)
-            elif sys.platform == 'darwin':
-                subprocess.Popen(['open', log_path])
-            else:
-                subprocess.Popen(['xdg-open', log_path])
+            if not _open_file_in_default_app(log_path):
+                raise RuntimeError("OS failed to open log file")
         except Exception as e:
             self._log("ERROR", f"Failed to open log file: {e}")
             self._set_status(f"Failed to open log file: {e}")
@@ -9037,6 +9044,174 @@ def load_config_with_issues(config_file: str) -> Tuple[Dict[str, Any], List[str]
     return data, issues
 
 
+CONFIG_VALIDATION_KNOWN_KEYS = {
+    "qb_host", "qb_port", "qb_username", "qb_password",
+    "http_basic_auth_username", "http_basic_auth_password",
+    "http_protocol_scheme",
+    "log_file",
+    "title_bar_speed_format",
+    "_config_file_path",
+    "_log_file_path",
+    "_instance_id",
+    "_instance_counter",
+    "_instance_lock_file_path",
+}
+
+CONFIG_VALIDATION_LEGACY_MAP = {
+    "host": "qb_host",
+    "port": "qb_port",
+    "username": "qb_username",
+    "password": "qb_password",
+    "http_user": "http_basic_auth_username",
+    "http_password": "http_basic_auth_password",
+}
+
+CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS = (
+    "auto_refresh",
+    "refresh_interval",
+    "default_window_width",
+    "default_window_height",
+    "default_status_filter",
+    "display_size_mode",
+    "display_speed_mode",
+)
+
+
+def _config_validation_warn(message: str):
+    """Log one configuration validation warning message."""
+    logger.warning("Config validation: %s", message)
+
+
+def _config_validation_coerce_int(value: Any, default: int) -> int:
+    """Coerce one value to int with fallback default."""
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _apply_legacy_config_mappings(normalized: Dict[str, Any]):
+    """Map legacy config keys to current keys with warnings."""
+    for old_key, new_key in CONFIG_VALIDATION_LEGACY_MAP.items():
+        if new_key not in normalized and old_key in normalized:
+            normalized[new_key] = normalized.get(old_key)
+            _config_validation_warn(
+                f"'{old_key}' is deprecated; use '{new_key}'. "
+                f"Using '{old_key}' value for now."
+            )
+
+
+def _remove_settings_managed_config_keys(normalized: Dict[str, Any]):
+    """Drop config keys that are intentionally managed by QSettings."""
+    for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
+        if key in normalized:
+            _config_validation_warn(f"'{key}' is ignored in TOML; managed via QSettings.")
+            normalized.pop(key, None)
+
+
+def _normalize_qb_host_value(normalized: Dict[str, Any]):
+    """Normalize qb_host value."""
+    host_val = normalized.get("qb_host", "localhost")
+    if not isinstance(host_val, str) or not host_val.strip():
+        _config_validation_warn(f"'qb_host' invalid ({host_val!r}); using 'localhost'.")
+        normalized["qb_host"] = "localhost"
+    else:
+        normalized["qb_host"] = host_val.strip()
+
+
+def _normalize_qb_port_value(normalized: Dict[str, Any]):
+    """Normalize qb_port value."""
+    raw_port = normalized.get("qb_port", 8080)
+    port = _config_validation_coerce_int(raw_port, 8080)
+    if port < 1 or port > 65535:
+        _config_validation_warn(f"'qb_port' out of range ({raw_port!r}); using 8080.")
+        port = 8080
+    normalized["qb_port"] = port
+
+
+def _normalize_http_protocol_scheme_value(normalized: Dict[str, Any]):
+    """Normalize optional http_protocol_scheme value."""
+    if "http_protocol_scheme" not in normalized:
+        return
+    raw_scheme = normalized.get("http_protocol_scheme")
+    normalized_scheme = _normalize_http_protocol_scheme(raw_scheme)
+    raw_scheme_text = (
+        str(raw_scheme).strip().lower()
+        if isinstance(raw_scheme, str)
+        else ""
+    )
+    if raw_scheme_text not in ("http", "https"):
+        _config_validation_warn(
+            f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'."
+        )
+    normalized["http_protocol_scheme"] = normalized_scheme
+
+
+def _normalize_credential_values(normalized: Dict[str, Any]):
+    """Normalize credential-related string values."""
+    for key, default_value in [
+        ("qb_username", "admin"),
+        ("qb_password", ""),
+        ("http_basic_auth_username", ""),
+        ("http_basic_auth_password", ""),
+    ]:
+        value = normalized.get(key, default_value)
+        if value is None:
+            value = default_value
+        if not isinstance(value, str):
+            _config_validation_warn(f"'{key}' should be a string; using default.")
+            value = str(default_value)
+        normalized[key] = value
+
+
+def _normalize_log_file_value(normalized: Dict[str, Any]):
+    """Normalize optional log_file path value."""
+    raw_log_file = normalized.get("log_file", "qbiremo_enhanced.log")
+    if not isinstance(raw_log_file, str) or not raw_log_file.strip():
+        _config_validation_warn(
+            f"'log_file' invalid ({raw_log_file!r}); using 'qbiremo_enhanced.log'."
+        )
+        normalized["log_file"] = "qbiremo_enhanced.log"
+    else:
+        normalized["log_file"] = raw_log_file.strip()
+
+
+def _normalize_title_bar_speed_format_value(normalized: Dict[str, Any]):
+    """Normalize title_bar_speed_format template string."""
+    raw_title_fmt = normalized.get(
+        "title_bar_speed_format",
+        DEFAULT_TITLE_BAR_SPEED_FORMAT,
+    )
+    if not isinstance(raw_title_fmt, str) or not raw_title_fmt.strip():
+        _config_validation_warn(
+            "'title_bar_speed_format' invalid; using default "
+            f"{DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
+        )
+        title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
+    else:
+        title_fmt = raw_title_fmt.strip()
+    try:
+        title_fmt.format(up_text="0", down_text="0")
+    except Exception:
+        _config_validation_warn(
+            "'title_bar_speed_format' failed to format with {up_text}/{down_text}; "
+            f"using default {DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
+        )
+        title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
+    normalized["title_bar_speed_format"] = title_fmt
+
+
+def _warn_unknown_config_keys(normalized: Dict[str, Any]):
+    """Warn for unknown config keys."""
+    unknown_keys = sorted(
+        key for key in normalized.keys()
+        if key not in CONFIG_VALIDATION_KNOWN_KEYS
+        and key not in CONFIG_VALIDATION_LEGACY_MAP
+    )
+    for key in unknown_keys:
+        _config_validation_warn(f"Unknown config key '{key}' will be ignored.")
+
+
 def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> Dict[str, Any]:
     """Validate config values, log issues, and return a sanitized config dict."""
     if not isinstance(config, dict):
@@ -9047,145 +9222,15 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
         config = {}
 
     normalized = dict(config)
-    known_keys = {
-        "qb_host", "qb_port", "qb_username", "qb_password",
-        "http_basic_auth_username", "http_basic_auth_password",
-        "http_protocol_scheme",
-        "log_file",
-        "title_bar_speed_format",
-        "_config_file_path",
-        "_log_file_path",
-        "_instance_id",
-        "_instance_counter",
-        "_instance_lock_file_path",
-    }
-
-    legacy_map = {
-        "host": "qb_host",
-        "port": "qb_port",
-        "username": "qb_username",
-        "password": "qb_password",
-        "http_user": "http_basic_auth_username",
-        "http_password": "http_basic_auth_password",
-    }
-
-    def _warn(msg: str):
-        logger.warning("Config validation: %s", msg)
-
-    def _coerce_int(value: Any, default: int) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return default
-
-    for old_key, new_key in legacy_map.items():
-        if new_key not in normalized and old_key in normalized:
-            normalized[new_key] = normalized.get(old_key)
-            _warn(
-                f"'{old_key}' is deprecated; use '{new_key}'. "
-                f"Using '{old_key}' value for now."
-            )
-
-    settings_managed_keys = (
-        "auto_refresh",
-        "refresh_interval",
-        "default_window_width",
-        "default_window_height",
-        "default_status_filter",
-        "display_size_mode",
-        "display_speed_mode",
-    )
-    for key in settings_managed_keys:
-        if key in normalized:
-            _warn(f"'{key}' is ignored in TOML; managed via QSettings.")
-            normalized.pop(key, None)
-
-    # qb_host
-    host_val = normalized.get("qb_host", "localhost")
-    if not isinstance(host_val, str) or not host_val.strip():
-        _warn(f"'qb_host' invalid ({host_val!r}); using 'localhost'.")
-        normalized["qb_host"] = "localhost"
-    else:
-        normalized["qb_host"] = host_val.strip()
-
-    # qb_port
-    raw_port = normalized.get("qb_port", 8080)
-    port = _coerce_int(raw_port, 8080)
-    if port < 1 or port > 65535:
-        _warn(f"'qb_port' out of range ({raw_port!r}); using 8080.")
-        port = 8080
-    normalized["qb_port"] = port
-
-    # http_protocol_scheme (optional; defaults to http when absent)
-    if "http_protocol_scheme" in normalized:
-        raw_scheme = normalized.get("http_protocol_scheme")
-        normalized_scheme = _normalize_http_protocol_scheme(raw_scheme)
-        raw_scheme_text = (
-            str(raw_scheme).strip().lower()
-            if isinstance(raw_scheme, str)
-            else ""
-        )
-        if raw_scheme_text not in ("http", "https"):
-            _warn(
-                f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'."
-            )
-        normalized["http_protocol_scheme"] = normalized_scheme
-
-    # Credentials
-    for key, default_value in [
-        ("qb_username", "admin"),
-        ("qb_password", ""),
-        ("http_basic_auth_username", ""),
-        ("http_basic_auth_password", ""),
-    ]:
-        val = normalized.get(key, default_value)
-        if val is None:
-            val = default_value
-        if not isinstance(val, str):
-            _warn(f"'{key}' should be a string; using default.")
-            val = str(default_value)
-        normalized[key] = val
-
-    # log_file
-    raw_log_file = normalized.get("log_file", "qbiremo_enhanced.log")
-    if not isinstance(raw_log_file, str) or not raw_log_file.strip():
-        _warn(
-            f"'log_file' invalid ({raw_log_file!r}); using 'qbiremo_enhanced.log'."
-        )
-        normalized["log_file"] = "qbiremo_enhanced.log"
-    else:
-        normalized["log_file"] = raw_log_file.strip()
-
-    # title_bar_speed_format
-    raw_title_fmt = normalized.get(
-        "title_bar_speed_format",
-        DEFAULT_TITLE_BAR_SPEED_FORMAT,
-    )
-    if not isinstance(raw_title_fmt, str) or not raw_title_fmt.strip():
-        _warn(
-            "'title_bar_speed_format' invalid; using default "
-            f"{DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
-        )
-        title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
-    else:
-        title_fmt = raw_title_fmt.strip()
-    try:
-        title_fmt.format(up_text="0", down_text="0")
-    except Exception:
-        _warn(
-            "'title_bar_speed_format' failed to format with {up_text}/{down_text}; "
-            f"using default {DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
-        )
-        title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
-    normalized["title_bar_speed_format"] = title_fmt
-
-    # Unknown keys warning (except explicit internal keys)
-    unknown_keys = sorted(
-        key for key in normalized.keys()
-        if key not in known_keys and key not in legacy_map
-    )
-    for key in unknown_keys:
-        _warn(f"Unknown config key '{key}' will be ignored.")
+    _apply_legacy_config_mappings(normalized)
+    _remove_settings_managed_config_keys(normalized)
+    _normalize_qb_host_value(normalized)
+    _normalize_qb_port_value(normalized)
+    _normalize_http_protocol_scheme_value(normalized)
+    _normalize_credential_values(normalized)
+    _normalize_log_file_value(normalized)
+    _normalize_title_bar_speed_format_value(normalized)
+    _warn_unknown_config_keys(normalized)
 
     logger.info("Configuration validated from %s", config_file)
     return normalized
@@ -9233,10 +9278,10 @@ def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
     return file_handler
 
 
-def _open_file_in_default_app(path: str):
+def _open_file_in_default_app(path: str) -> bool:
     """Open a file in the platform default application."""
     if not path:
-        return
+        return False
 
     import subprocess
 
@@ -9247,8 +9292,10 @@ def _open_file_in_default_app(path: str):
             subprocess.Popen(['open', path])
         else:
             subprocess.Popen(['xdg-open', path])
+        return True
     except Exception:
         logger.exception("Failed to open file in default app: %s", path)
+        return False
 
 
 def _install_exception_hooks(file_handler: logging.FileHandler):
