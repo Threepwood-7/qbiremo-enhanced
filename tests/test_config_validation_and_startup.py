@@ -2,7 +2,8 @@ import logging
 
 import pytest
 
-import qbiremo_enhanced as appmod
+import qbiremo_enhanced.main_window as appmod
+import qbiremo_enhanced.utils as apputils
 
 
 def test_compute_instance_id_uses_length_8_and_default_counter_suffix():
@@ -27,7 +28,7 @@ def test_compute_instance_id_from_config_uses_instance_counter_suffix():
 
 def test_acquire_instance_lock_increments_counter_when_lock_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        appmod,
+        apputils,
         "resolve_instance_lock_file_path",
         lambda _instance_id, counter: tmp_path / f"instance_{int(counter)}.lck",
     )

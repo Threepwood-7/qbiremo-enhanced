@@ -2,4 +2,4 @@
 
 CD /D %~dp0
 
-START "" PYTHONW.EXE qbiremo_enhanced.py
+START "" PYTHONW.EXE -m qbiremo_enhanced

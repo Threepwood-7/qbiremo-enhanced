@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
-import qbiremo_enhanced as appmod
+import qbiremo_enhanced.main_window as appmod
 
 
 def _top_level_names(tree_widget):
@@ -2233,9 +2233,9 @@ def test_launch_new_instance_with_config_path_spawns_process(window, monkeypatch
 
     assert captured["cmd"] is not None
     assert captured["cmd"][0] == appmod.sys.executable
-    assert captured["cmd"][1] == str(appmod.Path(appmod.__file__).resolve())
-    assert captured["cmd"][2:4] == ["-c", str(config_path.resolve())]
-    assert captured["cmd"][4:] == ["--instance_counter", "7"]
+    assert captured["cmd"][1:4] == ["-m", "qbiremo_enhanced", "--config-file"]
+    assert captured["cmd"][4] == str(config_path.resolve())
+    assert captured["cmd"][5:] == ["--instance_counter", "7"]
 
 
 def test_export_selected_torrents_queues_api_task(window, monkeypatch, tmp_path):

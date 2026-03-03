@@ -1,0 +1,528 @@
+
+"""Formatting helpers, path/instance helpers, and platform primitives."""
+
+import fnmatch
+import hashlib
+import logging
+import os
+import re
+import tempfile
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from PySide6.QtGui import QIcon
+
+from .constants import (
+    APP_ICON_FILE_NAME,
+    CACHE_FILE_NAME,
+    CACHE_TEMP_SUBDIR,
+    DEFAULT_DISPLAY_SIZE_MODE,
+    DEFAULT_DISPLAY_SPEED_MODE,
+    G_APP_NAME,
+    G_ORG_NAME,
+    INSTANCE_ID_LENGTH,
+)
+
+
+logger = logging.getLogger(G_APP_NAME)
+_INSTANCE_LOCK_HANDLES: Dict[str, Any] = {}
+__all__ = [
+    "format_float",
+    "format_int",
+    "format_datetime",
+    "format_size",
+    "format_speed",
+    "_normalize_display_mode",
+    "format_size_mode",
+    "format_speed_mode",
+    "format_eta",
+    "_normalize_instance_host",
+    "_normalize_instance_port",
+    "_normalize_instance_counter",
+    "_normalize_http_protocol_scheme",
+    "compute_instance_id",
+    "compute_instance_id_from_config",
+    "_append_instance_id_to_filename",
+    "settings_app_name_for_instance",
+    "resolve_cache_file_path",
+    "resolve_instance_lock_file_path",
+    "load_app_icon",
+    "_instance_lock_key",
+    "_try_acquire_os_file_lock",
+    "_release_os_file_lock",
+    "acquire_instance_lock",
+    "release_instance_lock",
+    "parse_tags",
+    "matches_wildcard",
+    "normalize_filter_pattern",
+    "calculate_size_buckets",
+]
+
+def format_float(value: float, decimals: int = 2) -> str:
+    """Format float with specified decimals, empty if zero.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    if value != 0:
+        return f"{value:.{decimals}f}"
+    return ""
+
+def format_int(value: int) -> str:
+    """Format integer with thousands separator, empty if zero.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    if value != 0:
+        return f"{value:,}"
+    return ""
+
+def format_datetime(timestamp: int) -> str:
+    """Format Unix timestamp, empty if zero.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    if timestamp > 0:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    return ""
+
+def format_size(bytes_size: int) -> str:
+    """Format bytes as human-readable size.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    return format_size_mode(bytes_size, mode='human_readable')
+
+def format_speed(bytes_per_sec: int) -> str:
+    """Format speed in bytes/sec.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    return format_speed_mode(bytes_per_sec, mode='human_readable')
+
+def _normalize_display_mode(value: Any, default: str) -> str:
+    """Normalize mode to 'bytes' or 'human_readable'.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    mode = str(value or default).strip().lower()
+    if mode in {'bytes', 'human_readable'}:
+        return mode
+    return default
+
+def format_size_mode(bytes_size: int, mode: str = 'human_readable') -> str:
+    """Format size according to display mode.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    mode = _normalize_display_mode(mode, DEFAULT_DISPLAY_SIZE_MODE)
+    size_val = int(bytes_size or 0)
+    if mode == 'bytes':
+        return f"{size_val:,}"
+
+    if size_val == 0:
+        return "0 B"
+
+    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+    unit_idx = 0
+    size = float(size_val)
+
+    while size >= 1024 and unit_idx < len(units) - 1:
+        size /= 1024
+        unit_idx += 1
+
+    return f"{size:.2f} {units[unit_idx]}"
+
+def format_speed_mode(bytes_per_sec: int, mode: str = 'human_readable') -> str:
+    """Format speed according to display mode.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    speed_val = int(bytes_per_sec or 0)
+    if speed_val == 0:
+        return ""
+    mode = _normalize_display_mode(mode, DEFAULT_DISPLAY_SPEED_MODE)
+    if mode == 'bytes':
+        return f"{speed_val:,}"
+    return f"{format_size_mode(speed_val, mode='human_readable')}/s"
+
+def format_eta(seconds: int) -> str:
+    """Format ETA seconds to compact human-readable duration.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    try:
+        eta = int(seconds)
+    except Exception:
+        return ""
+
+    if eta <= 0:
+        return ""
+
+    days, remainder = divmod(eta, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    if days > 0:
+        return f"{days}d {hours:02d}h"
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m"
+    if minutes > 0:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+def _normalize_instance_host(raw_host: Any) -> str:
+    """Normalize host input used for per-instance file ID generation.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    if raw_host is None:
+        return "localhost"
+    host = str(raw_host).strip()
+    return host if host else "localhost"
+
+def _normalize_instance_port(raw_port: Any) -> int:
+    """Normalize port input used for per-instance file ID generation.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    try:
+        port = int(raw_port)
+    except Exception:
+        port = 8080
+    if port < 1 or port > 65535:
+        return 8080
+    return port
+
+def _normalize_instance_counter(raw_counter: Any) -> int:
+    """Normalize per-server instance counter used as instance ID suffix.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    try:
+        counter = int(raw_counter)
+    except Exception:
+        counter = 1
+    return counter if counter > 0 else 1
+
+def _normalize_http_protocol_scheme(raw_scheme: Any) -> str:
+    """Normalize WebUI/API protocol scheme to http or https.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    scheme = str(raw_scheme or "").strip().lower()
+    if scheme in ("http", "https"):
+        return scheme
+    return "http"
+
+def compute_instance_id(
+    qb_host: Any,
+    qb_port: Any,
+    length: int = INSTANCE_ID_LENGTH,
+    instance_counter: Any = 1,
+) -> str:
+    """Compute a short deterministic ID from qb_host + qb_port.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    host = _normalize_instance_host(qb_host)
+    port = _normalize_instance_port(qb_port)
+    digest = hashlib.sha1(f"{host}:{port}".encode("utf-8")).hexdigest()
+    try:
+        max_len = max(1, int(length))
+    except Exception:
+        max_len = INSTANCE_ID_LENGTH
+    base_id = digest[:max_len]
+    counter = _normalize_instance_counter(instance_counter)
+    return f"{base_id}_{counter}"
+
+def compute_instance_id_from_config(config: Dict[str, Any]) -> str:
+    """Compute instance ID from a config dict using normalized host/port values.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    cfg = config if isinstance(config, dict) else {}
+    host = cfg.get("qb_host", cfg.get("host", "localhost"))
+    port = cfg.get("qb_port", cfg.get("port", 8080))
+    counter = cfg.get("_instance_counter", 1)
+    return compute_instance_id(host, port, instance_counter=counter)
+
+def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
+    """Append _<instance_id> before file extension, preserving directory.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    raw = str(path_value or "").strip()
+    if not raw:
+        return raw
+    ident = str(instance_id or "").strip().lower()
+    if not ident:
+        return raw
+    path_obj = Path(raw)
+    suffix_marker = f"_{ident}"
+    stem = path_obj.stem
+    if stem.lower().endswith(suffix_marker):
+        return str(path_obj)
+    if path_obj.suffix:
+        new_name = f"{stem}{suffix_marker}{path_obj.suffix}"
+    else:
+        new_name = f"{path_obj.name}{suffix_marker}"
+    return str(path_obj.with_name(new_name))
+
+def settings_app_name_for_instance(instance_id: str) -> str:
+    """Build QSettings app name for a given instance ID.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: None.
+    """
+    ident = str(instance_id or "").strip().lower()
+    if not ident:
+        return G_APP_NAME
+    return f"{G_APP_NAME}_{ident}"
+
+def resolve_cache_file_path(
+    cache_file_name: str = CACHE_FILE_NAME,
+    instance_id: str = "",
+) -> Path:
+    """Resolve cache file path under OS temp dir unless absolute override is used.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    raw_path = Path(str(cache_file_name))
+    if instance_id:
+        raw_path = Path(_append_instance_id_to_filename(str(raw_path), instance_id))
+    if raw_path.is_absolute():
+        return raw_path
+    return Path(tempfile.gettempdir()) / CACHE_TEMP_SUBDIR / raw_path
+
+def resolve_instance_lock_file_path(instance_id: str, instance_counter: Any) -> Path:
+    """Resolve one .lck file path for a computed instance id + counter.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    ident = str(instance_id or "").strip().lower()
+    counter = _normalize_instance_counter(instance_counter)
+    suffix = f"_{counter}"
+    lock_key = ident if ident.endswith(suffix) else f"{ident}{suffix}"
+    return resolve_cache_file_path("qbiremo_enhanced.lck", lock_key)
+
+def load_app_icon() -> QIcon:
+    """Load the application icon from the script directory when available.
+
+    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
+    Failure modes: None.
+    """
+    module_dir = Path(__file__).resolve().parent
+    candidates = (
+        module_dir / APP_ICON_FILE_NAME,
+        module_dir.parent / APP_ICON_FILE_NAME,
+    )
+    for icon_path in candidates:
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+    return QIcon()
+
+def _instance_lock_key(lock_path: Path) -> str:
+    """Build a stable dictionary key for one lock file path.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    try:
+        return str(Path(lock_path).resolve())
+    except Exception:
+        return str(Path(lock_path))
+
+def _try_acquire_os_file_lock(handle) -> bool:
+    """Try to acquire a non-blocking exclusive lock on one open file handle.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except Exception:
+        return False
+
+def _release_os_file_lock(handle) -> None:
+    """Best-effort release of an OS-level file lock.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        logger.debug("Failed to release OS file lock", exc_info=True)
+
+def acquire_instance_lock(
+    config: Dict[str, Any],
+    start_counter: Any,
+) -> Tuple[int, str, Path]:
+    """Acquire an exclusive .lck file lock; auto-increment counter when in use.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    cfg = config if isinstance(config, dict) else {}
+    counter = _normalize_instance_counter(start_counter)
+
+    while True:
+        cfg["_instance_counter"] = int(counter)
+        instance_id = compute_instance_id_from_config(cfg)
+        lock_path = resolve_instance_lock_file_path(instance_id, counter)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            handle = lock_path.open("a+b")
+        except Exception as e:
+            raise RuntimeError(f"Failed to open lock file {lock_path}: {e}") from e
+
+        try:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                # Ensure one lockable byte exists for Windows byte-range locking.
+                handle.write(b"\n")
+                handle.flush()
+            handle.seek(0)
+            if not _try_acquire_os_file_lock(handle):
+                handle.close()
+                counter += 1
+                continue
+
+            payload = (
+                f"instance_id={instance_id}\n"
+                f"instance_counter={counter}\n"
+            ).encode("utf-8")
+            handle.seek(0)
+            handle.truncate(0)
+            handle.write(payload)
+            handle.flush()
+            try:
+                os.fsync(handle.fileno())
+            except Exception:
+                pass
+
+            _INSTANCE_LOCK_HANDLES[_instance_lock_key(lock_path)] = handle
+            return int(counter), str(instance_id), lock_path
+        except Exception:
+            try:
+                handle.close()
+            except Exception:
+                pass
+            raise
+
+def release_instance_lock(lock_path: Path) -> None:
+    """Best-effort release/removal of an instance .lck file on shutdown.
+
+    Side effects: None.
+    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
+    """
+    key = _instance_lock_key(Path(lock_path))
+    handle = _INSTANCE_LOCK_HANDLES.pop(key, None)
+    if handle is not None:
+        try:
+            _release_os_file_lock(handle)
+        finally:
+            try:
+                handle.close()
+            except Exception:
+                pass
+    try:
+        Path(lock_path).unlink()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.debug("Failed to remove lock file: %s", lock_path, exc_info=True)
+
+def parse_tags(tags) -> List[str]:
+    """Parse tags from qBittorrentAPI into a list of strings.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    if not tags:
+        return []
+    if isinstance(tags, str):
+        return [t.strip() for t in tags.split(',') if t.strip()]
+    if isinstance(tags, (list, tuple, set)):
+        return [str(t) for t in tags]
+    return []
+
+def matches_wildcard(text: str, pattern: str) -> bool:
+    """Check if text matches DOS-style wildcard pattern.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    if not pattern:
+        return True
+    return fnmatch.fnmatch(text.lower(), pattern.lower())
+
+def normalize_filter_pattern(raw_pattern: str) -> str:
+    """Normalize filter input: plain text becomes a contains wildcard pattern.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    pattern = (raw_pattern or "").strip()
+    if not pattern:
+        return ""
+    if '*' in pattern or '?' in pattern:
+        return pattern
+    return f"*{pattern}*"
+
+def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> List[tuple]:
+    """Calculate size bucket ranges.
+
+    Side effects: None.
+    Failure modes: None.
+    """
+    if min_size >= max_size or count < 1:
+        return []
+
+    buckets = []
+    range_size = (max_size - min_size) / count
+
+    for i in range(count):
+        start = int(min_size + (i * range_size))
+        end = int(min_size + ((i + 1) * range_size))
+        buckets.append((start, end))
+
+    return buckets

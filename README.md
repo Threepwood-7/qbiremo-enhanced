@@ -299,25 +299,35 @@ It combines:
 
 ## Project Structure
 
-```
+```text
 qbiremo-enhanced/
-├── qbiremo_enhanced.py                  # Main application (single-file, ~9 300 lines)
-├── qb_temp_launch.py                    # Helper: launch a temporary qBittorrent instance
-├── qbiremo_enhanced_config.toml         # Active TOML configuration
-├── qbiremo_enhanced_config_example.toml # Annotated example configuration
-├── requirements.txt                     # Runtime dependencies
-├── requirements-dev.txt                 # Dev/test dependencies
-├── pytest.ini                           # Pytest configuration
-├── qbiremo_enhanced_launch.cmd          # Windows batch launcher
-├── qbiremo_enhanced_test.cmd            # Windows batch test runner
-├── README.md
-├── MEMORY_SPEC.md                       # Architecture reference spec
-└── tests/
-    ├── conftest.py                      # Shared fixtures and mocks
-    ├── test_mainwindow_filters_and_cache.py
-    ├── test_add_torrent_dialog.py
-    ├── test_config_validation_and_startup.py
-    └── test_settings_persistence.py
+|-- qbiremo_enhanced/                    # Package modules (controllers/dialogs/tasking/etc.)
+|   |-- __init__.py
+|   |-- __main__.py
+|   |-- main_window.py
+|   |-- controllers.py
+|   |-- dialogs.py
+|   |-- tasking.py
+|   |-- config_runtime.py
+|   |-- utils.py
+|   |-- types.py
+|   `-- constants.py
+|-- qb_temp_launch.py                    # Helper: launch a temporary qBittorrent instance
+|-- qbiremo_enhanced_config.toml         # Active TOML configuration
+|-- qbiremo_enhanced_config_example.toml # Annotated example configuration
+|-- requirements.txt                     # Runtime dependencies
+|-- requirements-dev.txt                 # Dev/test dependencies
+|-- pytest.ini                           # Pytest configuration
+|-- qbiremo_enhanced_launch.cmd          # Windows batch launcher
+|-- qbiremo_enhanced_test.cmd            # Windows batch test runner
+|-- README.md
+|-- MEMORY_SPEC.md                       # Architecture reference spec
+`-- tests/
+    |-- conftest.py                      # Shared fixtures and mocks
+    |-- test_mainwindow_filters_and_cache.py
+    |-- test_add_torrent_dialog.py
+    |-- test_config_validation_and_startup.py
+    `-- test_settings_persistence.py
 ```
 
 ## Installation
@@ -388,12 +398,12 @@ Behavior notes:
 
 ### Run
 ```bash
-python qbiremo_enhanced.py
+python -m qbiremo_enhanced
 ```
 
 ### Run with custom config
 ```bash
-python qbiremo_enhanced.py -c path\to\custom.toml
+python -m qbiremo_enhanced -c path\to\custom.toml
 ```
 
 ### Command-line options
@@ -435,7 +445,8 @@ Current tests cover:
 
 ## Architecture Notes
 
-- Single-file application (`qbiremo_enhanced.py`, ~9 300 lines) with a focused test suite under `tests/`.
+- Package-based architecture with purpose-specific modules under `qbiremo_enhanced/`.
+- `MainWindow` is the composition root and delegates domain behavior to feature controllers.
 - Background API operations run through cancellable worker tasks (`APITaskQueue` using `QRunnable` + `QThreadPool`). Each new task cancels the currently running worker in that queue — latest task wins (not a FIFO queue).
 - Three independent queue instances reduce contention:
   - `api_queue` — general operations (refresh, mutations, dialogs).

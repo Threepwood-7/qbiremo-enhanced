@@ -3,7 +3,7 @@ import time
 
 from PySide6.QtCore import QSettings
 
-import qbiremo_enhanced as appmod
+import qbiremo_enhanced.main_window as appmod
 
 
 def _default_instance_id() -> str:
