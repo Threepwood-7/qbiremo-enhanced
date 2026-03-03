@@ -5,11 +5,12 @@ import logging
 import sys
 import time
 import traceback
-from typing import Any, Callable, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QRunnable, Slot, Signal, QThreadPool
 
 from .constants import G_APP_NAME
+from .types import TaskCallable, TaskCallback
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -28,12 +29,8 @@ class WorkerSignals(QObject):
 class Worker(QRunnable):
     """Worker thread for background tasks with cancellation support"""
 
-    def __init__(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
-        """Store callable and arguments for execution in a worker thread.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+    def __init__(self, fn: TaskCallable, *args: object, **kwargs: object) -> None:
+        """Store callable and arguments for one worker execution."""
         super().__init__()
         self.fn = fn
         self.args = args
@@ -43,20 +40,12 @@ class Worker(QRunnable):
         self.is_cancelled = False
 
     def cancel(self) -> None:
-        """Cancel this worker.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+        """Mark this worker as cancelled."""
         self.is_cancelled = True
 
     @Slot()
     def run(self) -> None:
-        """Execute the worker function.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-        """
+        """Execute the worker callable and emit result/error/cancel signals."""
         was_cancelled = False
         try:
             if self.is_cancelled:
@@ -86,11 +75,7 @@ class APITaskQueue(QObject):
     task_cancelled = Signal(str)  # task_name
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
-        """Initialize queue state and threadpool used for API tasks.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+        """Initialize queue state and thread pool."""
         super().__init__(parent)
         self.current_worker: Optional[Worker] = None
         self.is_processing = False
@@ -99,26 +84,22 @@ class APITaskQueue(QObject):
         self.pending_task: Optional[
             Tuple[
                 str,
-                Callable[..., Any],
-                Optional[Callable[[Any], None]],
-                Tuple[Any, ...],
-                Dict[str, Any],
+                TaskCallable,
+                Optional[TaskCallback],
+                Tuple[object, ...],
+                Dict[str, object],
             ]
         ] = None
 
     def _start_task(
         self,
         task_name: str,
-        fn: Callable[..., Any],
-        callback: Optional[Callable[[Any], None]],
-        *args: Any,
-        **kwargs: Any,
+        fn: TaskCallable,
+        callback: Optional[TaskCallback],
+        *args: object,
+        **kwargs: object,
     ) -> None:
-        """Create one worker and start processing.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+        """Create one worker and start processing it."""
         self.is_processing = True
         self.current_task_name = task_name
 
@@ -151,16 +132,12 @@ class APITaskQueue(QObject):
     def add_task(
         self,
         task_name: str,
-        fn: Callable[..., Any],
-        callback: Optional[Callable[[Any], None]],
-        *args: Any,
-        **kwargs: Any,
+        fn: TaskCallable,
+        callback: Optional[TaskCallback],
+        *args: object,
+        **kwargs: object,
     ) -> None:
-        """Add a task to the queue, coalescing to latest while one is running.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+        """Queue a task, coalescing to the latest one while busy."""
         if self.current_worker:
             self.current_worker.cancel()
             self.pending_task = (task_name, fn, callback, args, kwargs)
@@ -170,11 +147,7 @@ class APITaskQueue(QObject):
         self._start_task(task_name, fn, callback, *args, **kwargs)
 
     def clear_queue(self) -> None:
-        """Cancel current task and drop any queued replacement task.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+        """Cancel the current task and clear any pending replacement."""
         if self.current_worker:
             self.current_worker.cancel()
         self.pending_task = None
@@ -186,14 +159,10 @@ class APITaskQueue(QObject):
         self,
         worker: Worker,
         task_name: str,
-        callback: Optional[Callable[[Any], None]],
-        result: Any,
+        callback: Optional[TaskCallback],
+        result: object,
     ) -> None:
-        """Handle successful task completion.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-        """
+        """Handle successful task completion for the active worker."""
         if worker is not self.current_worker:
             logger.debug("Ignoring stale task completion: %s", task_name)
             return
@@ -207,12 +176,13 @@ class APITaskQueue(QObject):
         except Exception as e:
             self.task_failed.emit(task_name, str(e))
 
-    def _on_task_error(self, worker: Worker, task_name: str, error: Tuple[Any, Any, str]) -> None:
-        """Handle task failure.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-        """
+    def _on_task_error(
+        self,
+        worker: Worker,
+        task_name: str,
+        error: Tuple[type[BaseException], BaseException, str],
+    ) -> None:
+        """Handle task failure for the active worker."""
         if worker is not self.current_worker:
             logger.debug("Ignoring stale task error: %s", task_name)
             return
@@ -229,11 +199,7 @@ class APITaskQueue(QObject):
             self.task_failed.emit(task_name, str(e))
 
     def _on_task_cancelled(self, worker: Worker, task_name: str) -> None:
-        """Handle task cancellation.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-        """
+        """Handle task cancellation for the active worker."""
         if worker is not self.current_worker:
             return
         try:
@@ -242,11 +208,7 @@ class APITaskQueue(QObject):
             logger.error("Error in _on_task_cancelled for %s: %s", task_name, e)
 
     def _on_worker_finished(self, worker: Worker) -> None:
-        """Finalize worker lifecycle and start latest pending task, if any.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+        """Finalize worker state and start the latest pending task."""
         if worker is not self.current_worker:
             return
 
@@ -263,50 +225,30 @@ class APITaskQueue(QObject):
 class _DebugAPIClientProxy:
     """Proxy that logs qBittorrent API calls and responses."""
 
-    def __init__(self, client: Any, owner: "MainWindow") -> None:
-        """Wrap one API client and route log events through the main window.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: None.
-        """
+    def __init__(self, client: object, owner: "MainWindow") -> None:
+        """Wrap one API client and route debug logs via main window hooks."""
         self._client = client
         self._owner = owner
 
     def __enter__(self) -> "_DebugAPIClientProxy":
-        """Enter wrapped context manager and preserve proxy behavior.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: Propagates unexpected exceptions unless explicitly handled by caller or runtime.
-        """
+        """Enter wrapped context manager while preserving proxy behavior."""
         entered = self._client.__enter__()
         if entered is self._client:
             return self
         return _DebugAPIClientProxy(entered, self._owner)
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
-        """Delegate context-manager exit to wrapped client.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: Propagates unexpected exceptions unless explicitly handled by caller or runtime.
-        """
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        """Delegate context-manager exit to wrapped client."""
         return self._client.__exit__(exc_type, exc, tb)
 
-    def __getattr__(self, name: str) -> Any:
-        """Intercept callable attributes to add call/response/error logging.
-
-        Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-        """
+    def __getattr__(self, name: str) -> object:
+        """Intercept callable attributes to add debug call/response/error logs."""
         attr = getattr(self._client, name)
         if not callable(attr):
             return attr
 
-        def _wrapped(*args: Any, **kwargs: Any) -> Any:
-            """Execute one proxied API call with debug timing logs.
-
-            Side effects: Coordinates worker lifecycle, callbacks, and/or debug logging side effects.
-            Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-            """
+        def _wrapped(*args: object, **kwargs: object) -> object:
+            """Execute one proxied API call with debug timing logs."""
             self._owner._debug_log_api_call(name, args, kwargs)
             start_time = time.time()
             try:

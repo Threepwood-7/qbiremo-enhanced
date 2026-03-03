@@ -5,7 +5,6 @@ import argparse
 import atexit
 import fnmatch
 import html
-import inspect
 import json
 import logging
 import os
@@ -17,7 +16,7 @@ import traceback
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple, Callable
 from urllib.parse import quote, urlparse
 
 import qbittorrentapi
@@ -41,6 +40,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenuBar,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -62,6 +62,7 @@ from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QBrush,
+    QCloseEvent,
     QColor,
     QFontDatabase,
     QIcon,
@@ -70,8 +71,29 @@ from PySide6.QtGui import (
     QPen,
     QShortcut,
 )
+from .models.config import NormalizedConfig
+from .models.torrent import SessionTimelineSample, TorrentCacheEntry, TorrentFileEntry
 
-from .constants import *
+from .constants import (
+    BASIC_TORRENT_VIEW_KEYS,
+    CACHE_FILE_NAME,
+    CLIPBOARD_SEEN_LIMIT,
+    DEFAULT_AUTO_REFRESH,
+    DEFAULT_DISPLAY_SIZE_MODE,
+    DEFAULT_DISPLAY_SPEED_MODE,
+    DEFAULT_HTTP_TIMEOUT_SECONDS,
+    DEFAULT_LEFT_PANEL_WIDTH,
+    DEFAULT_REFRESH_INTERVAL,
+    DEFAULT_STATUS_FILTER,
+    DEFAULT_TITLE_BAR_SPEED_FORMAT,
+    DEFAULT_WINDOW_HEIGHT,
+    DEFAULT_WINDOW_WIDTH,
+    G_APP_NAME,
+    G_ORG_NAME,
+    MEDIUM_TORRENT_VIEW_KEYS,
+    STATUS_FILTERS,
+    TORRENT_COLUMNS,
+)
 from .controllers import (
     ActionsTaxonomyController,
     DetailsContentController,
@@ -79,9 +101,31 @@ from .controllers import (
     NetworkApiController,
     SessionUiController,
 )
-from .dialogs import *
+from .dialogs import (
+    AddTorrentDialog,
+    AppPreferencesDialog,
+    FriendlyAddPreferencesDialog,
+    SessionTimelineDialog,
+    SpeedLimitsDialog,
+    TaxonomyManagerDialog,
+    TrackerHealthDialog,
+)
 from .tasking import APITaskQueue, Worker, WorkerSignals, _DebugAPIClientProxy
-from .utils import *
+from .utils import (
+    _append_instance_id_to_filename,
+    _normalize_display_mode,
+    _normalize_http_protocol_scheme,
+    _normalize_instance_counter,
+    _normalize_instance_port,
+    acquire_instance_lock,
+    compute_instance_id,
+    compute_instance_id_from_config,
+    load_app_icon,
+    release_instance_lock,
+    resolve_cache_file_path,
+    settings_app_name_for_instance,
+)
+from .widgets import NumericTableWidgetItem
 from .config_runtime import (
     _install_exception_hooks,
     _open_file_in_default_app,
@@ -94,68 +138,44 @@ from .config_runtime import (
 
 logger = logging.getLogger(G_APP_NAME)
 
-class NumericTableWidgetItem(QTableWidgetItem):
-    """QTableWidgetItem that sorts by a numeric value instead of text."""
-
-    def __init__(self, display_text: str, sort_value: float = 0.0) -> None:
-        """Store display text and numeric sort key for table sorting.
-
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
-        """
-        super().__init__(display_text)
-        self._sort_value = sort_value
-
-    def __lt__(self, other) -> bool:
-        """Compare by numeric sort key when both items are numeric wrappers.
-
-        Side effects: None.
-        Failure modes: None.
-        """
-        if isinstance(other, NumericTableWidgetItem):
-            return self._sort_value < other._sort_value
-        return super().__lt__(other)
-
 
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    def _resolve_controller_attr(self, name: str) -> Any:
-        """Resolve one delegated attribute from the controller classes."""
-        for controller_cls in (
+    def _install_controller_methods(self, controller_cls: object) -> None:
+        """Bind controller class methods onto this window when no local override exists."""
+        for name, raw_attr in controller_cls.__dict__.items():
+            if name.startswith("__"):
+                continue
+            if name in {"eventFilter", "closeEvent"}:
+                continue
+            if hasattr(type(self), name):
+                continue
+            if name in self.__dict__:
+                continue
+            if isinstance(raw_attr, staticmethod):
+                candidate = raw_attr.__get__(None, controller_cls)
+            elif isinstance(raw_attr, classmethod):
+                candidate = raw_attr.__get__(controller_cls, controller_cls)
+            elif hasattr(raw_attr, "__get__"):
+                candidate = raw_attr.__get__(self, type(self))
+            else:
+                candidate = raw_attr
+            if not callable(candidate):
+                continue
+            setattr(self, name, candidate)
+
+    def _initialize_controllers(self) -> None:
+        """Create feature controllers and install delegated methods."""
+        self._controller_classes = (
             NetworkApiController,
             FilterTableController,
             DetailsContentController,
             ActionsTaxonomyController,
             SessionUiController,
-        ):
-            try:
-                raw_attr = inspect.getattr_static(controller_cls, name)
-            except AttributeError:
-                continue
-            if isinstance(raw_attr, staticmethod):
-                return raw_attr.__get__(None, controller_cls)
-            if isinstance(raw_attr, classmethod):
-                return raw_attr.__get__(controller_cls, controller_cls)
-            if hasattr(raw_attr, "__get__"):
-                return raw_attr.__get__(self, type(self))
-            return raw_attr
-        raise AttributeError(f"{self.__class__.__name__!s} object has no attribute {name!r}")
-
-    def __getattribute__(self, name: str) -> Any:
-        """Prefer local/QMainWindow attributes; fall back to delegated controllers."""
-        try:
-            attr = super().__getattribute__(name)
-        except AttributeError:
-            resolver = object.__getattribute__(self, "_resolve_controller_attr")
-            return resolver(name)
-        if type(attr).__name__ == "MetaFunction" and name.startswith("_"):
-            resolver = object.__getattribute__(self, "_resolve_controller_attr")
-            try:
-                return resolver(name)
-            except AttributeError:
-                return attr
-        return attr
+        )
+        for controller_cls in self._controller_classes:
+            self._install_controller_methods(controller_cls)
 
     def _open_file_in_default_app(self, path: str) -> bool:
         """Open one local path in the platform default app."""
@@ -163,21 +183,20 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Delegate custom event-filter handling to session controller logic."""
-        handler = self._resolve_controller_attr("eventFilter")
-        return handler(watched, event)
+        return SessionUiController.eventFilter(self, watched, event)
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:
         """Delegate close-event cleanup to session controller logic."""
-        handler = self._resolve_controller_attr("closeEvent")
-        handler(event)
+        SessionUiController.closeEvent(self, event)
 
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(self, config: NormalizedConfig) -> None:
         """Initialize UI, runtime state, queues, settings, and startup refresh.
 
         Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
         Failure modes: None.
         """
         super().__init__()
+        self._initialize_controllers()
 
         self.config = config if isinstance(config, dict) else {}
         config = self.config
@@ -197,7 +216,7 @@ class MainWindow(QMainWindow):
         self.all_torrents = []
         self.filtered_torrents = []
         self.categories = []
-        self.category_details: Dict[str, Dict[str, Any]] = {}
+        self.category_details: Dict[str, Dict[str, object]] = {}
         self.tags = []
         self.trackers = []
         self.size_buckets = []
@@ -231,13 +250,13 @@ class MainWindow(QMainWindow):
         self.current_text_filter = ""
         self.current_file_filter = ""
         self.current_content_filter = ""
-        self.current_content_files: List[Dict[str, Any]] = []
+        self.current_content_files: List[TorrentFileEntry] = []
         self._selected_torrent = None
-        self._torrent_edit_original: Dict[str, Any] = {}
+        self._torrent_edit_original: Dict[str, object] = {}
         self.tab_torrent_edit: Optional[QWidget] = None
         self._suppress_next_cache_save = False
         self._sync_rid = 0
-        self._sync_torrent_map: Dict[str, Dict[str, Any]] = {}
+        self._sync_torrent_map: Dict[str, Dict[str, object]] = {}
         self._latest_torrent_fetch_remote_filtered = False
         self._taxonomy_dialog: Optional[TaxonomyManagerDialog] = None
         self._speed_limits_dialog: Optional[SpeedLimitsDialog] = None
@@ -246,7 +265,7 @@ class MainWindow(QMainWindow):
         self._tracker_health_dialog: Optional[TrackerHealthDialog] = None
         self._session_timeline_dialog: Optional[SessionTimelineDialog] = None
         self._add_torrent_dialog: Optional[AddTorrentDialog] = None
-        self.session_timeline_history = deque(maxlen=720)
+        self.session_timeline_history: deque[SessionTimelineSample] = deque(maxlen=720)
         self._last_alt_speed_mode = False
         self._last_dht_nodes = 0
         self._last_global_download_limit = 0
@@ -254,7 +273,7 @@ class MainWindow(QMainWindow):
 
         # Persistent per-torrent content cache (JSON file)
         self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME, self.instance_id)
-        self.content_cache: Dict[str, Dict[str, Any]] = {}
+        self.content_cache: Dict[str, TorrentCacheEntry] = {}
         self._remove_expired_cache_file()
         self._load_content_cache()
 
@@ -738,7 +757,7 @@ class MainWindow(QMainWindow):
         self._build_tools_menu(menubar)
         self._build_help_menu(menubar)
 
-    def _build_file_menu(self, menubar) -> None:
+    def _build_file_menu(self, menubar: QMenuBar) -> None:
         """Create File menu.
 
         Side effects: None.
@@ -771,7 +790,7 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-    def _build_edit_menu(self, menubar) -> None:
+    def _build_edit_menu(self, menubar: QMenuBar) -> None:
         """Create Edit menu.
 
         Side effects: None.
@@ -857,7 +876,7 @@ class MainWindow(QMainWindow):
         action_resume_session.triggered.connect(self._resume_session)
         edit_menu.addAction(action_resume_session)
 
-    def _build_view_menu(self, menubar) -> None:
+    def _build_view_menu(self, menubar: QMenuBar) -> None:
         """Create View menu.
 
         Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
@@ -925,7 +944,7 @@ class MainWindow(QMainWindow):
         action_reset_view.triggered.connect(self._reset_view_defaults)
         view_menu.addAction(action_reset_view)
 
-    def _build_tools_menu(self, menubar) -> None:
+    def _build_tools_menu(self, menubar: QMenuBar) -> None:
         """Create Tools menu.
 
         Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
@@ -981,7 +1000,7 @@ class MainWindow(QMainWindow):
         action_session_timeline.triggered.connect(self._show_session_timeline)
         tools_menu.addAction(action_session_timeline)
 
-    def _build_help_menu(self, menubar) -> None:
+    def _build_help_menu(self, menubar: QMenuBar) -> None:
         """Create Help menu.
 
         Side effects: None.
@@ -1053,7 +1072,7 @@ class MainWindow(QMainWindow):
             try:
                 parsed = urlparse(raw_host)
                 host = str(parsed.hostname or raw_host).strip() or "localhost"
-            except Exception:
+            except ValueError:
                 host = raw_host
         port = _normalize_instance_port(
             self.config.get("qb_port", self.qb_conn_info.get("port", 8080))
@@ -1121,7 +1140,7 @@ class MainWindow(QMainWindow):
         """
         try:
             self._apply_default_main_splitter_width()
-        except Exception:
+        except (RuntimeError, TypeError, ValueError):
             self.main_splitter.setSizes([DEFAULT_LEFT_PANEL_WIDTH, 1000])
 
         try:
@@ -1129,7 +1148,7 @@ class MainWindow(QMainWindow):
                 self.right_splitter.restoreState(self._default_right_splitter_state)
             else:
                 self.right_splitter.setSizes([600, 200])
-        except Exception:
+        except (RuntimeError, TypeError, ValueError):
             self.right_splitter.setSizes([600, 200])
 
         try:
@@ -1137,13 +1156,13 @@ class MainWindow(QMainWindow):
                 self.tbl_torrents.horizontalHeader().restoreState(self._default_torrent_header_state)
             else:
                 self._apply_default_torrent_header_layout()
-        except Exception:
+        except (RuntimeError, TypeError, ValueError):
             # Fall back to explicit defaults.
             self._apply_default_torrent_header_layout()
         self._sync_torrent_column_actions()
 
     @staticmethod
-    def _to_bool(value, default: bool = False) -> bool:
+    def _to_bool(value: object, default: bool = False) -> bool:
         """Convert QSettings-like values to bool.
 
         Side effects: None.
@@ -1215,7 +1234,7 @@ class MainWindow(QMainWindow):
             self._clipboard = QApplication.clipboard()
             if self._clipboard:
                 self._clipboard.dataChanged.connect(self._on_clipboard_changed)
-        except Exception as e:
+        except (RuntimeError, AttributeError) as e:
             self._log("ERROR", f"Failed to initialize clipboard monitor: {e}")
 
     @staticmethod
@@ -1327,7 +1346,7 @@ class MainWindow(QMainWindow):
             return
         try:
             text = (self._clipboard.text() or "").strip()
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError):
             return
         if not text or text == self._last_clipboard_text:
             return
@@ -1362,7 +1381,7 @@ class MainWindow(QMainWindow):
             _open_file_in_default_app(str(ini_path))
             self._log("INFO", f"Opened settings INI file: {ini_path}")
             self._set_status(f"Opened INI: {ini_path}")
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             self._log("ERROR", f"Failed to open settings INI file: {e}")
             self._set_status(f"Failed to open INI file: {e}")
 
@@ -1401,7 +1420,7 @@ class MainWindow(QMainWindow):
                 parsed_scheme = _normalize_http_protocol_scheme(parsed.scheme or "http")
                 scheme = configured_scheme if explicit_scheme_override else parsed_scheme
                 host_port_from_url = parsed.port
-            except Exception:
+            except ValueError:
                 host = raw_host
                 host_port_from_url = None
         else:
@@ -1432,7 +1451,7 @@ class MainWindow(QMainWindow):
             _open_file_in_default_app(url)
             self._log("INFO", f"Opened qBittorrent Web UI: {url}")
             self._set_status(f"Opened Web UI: {url}")
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             self._log("ERROR", f"Failed to open qBittorrent Web UI: {e}")
             self._set_status(f"Failed to open Web UI: {e}")
 
@@ -1616,7 +1635,7 @@ class MainWindow(QMainWindow):
                 self._fetch_categories,
                 self._on_categories_loaded
             )
-        except Exception as e:
+        except (KeyError, TypeError, RuntimeError, AttributeError) as e:
             self._log("ERROR", f"Failed to start initial load: {e}")
             self._hide_progress()
             self._set_status(f"Error: {e}")
@@ -1636,7 +1655,7 @@ def main() -> None:
         """
         try:
             parsed = int(value)
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             raise argparse.ArgumentTypeError(
                 f"instance_counter must be a positive integer: {value}"
             ) from e

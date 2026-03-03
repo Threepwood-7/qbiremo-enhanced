@@ -8,8 +8,9 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtGui import QIcon
 
@@ -23,10 +24,11 @@ from .constants import (
     G_ORG_NAME,
     INSTANCE_ID_LENGTH,
 )
+from .models.config import NormalizedConfig
 
 
 logger = logging.getLogger(G_APP_NAME)
-_INSTANCE_LOCK_HANDLES: Dict[str, Any] = {}
+_INSTANCE_LOCK_HANDLES: Dict[str, object] = {}
 __all__ = [
     "format_float",
     "format_int",
@@ -105,7 +107,7 @@ def format_speed(bytes_per_sec: int) -> str:
     """
     return format_speed_mode(bytes_per_sec, mode='human_readable')
 
-def _normalize_display_mode(value: Any, default: str) -> str:
+def _normalize_display_mode(value: object, default: str) -> str:
     """Normalize mode to 'bytes' or 'human_readable'.
 
     Side effects: None.
@@ -162,7 +164,7 @@ def format_eta(seconds: int) -> str:
     """
     try:
         eta = int(seconds)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return ""
 
     if eta <= 0:
@@ -180,7 +182,7 @@ def format_eta(seconds: int) -> str:
         return f"{minutes}m {secs:02d}s"
     return f"{secs}s"
 
-def _normalize_instance_host(raw_host: Any) -> str:
+def _normalize_instance_host(raw_host: object) -> str:
     """Normalize host input used for per-instance file ID generation.
 
     Side effects: None.
@@ -191,7 +193,7 @@ def _normalize_instance_host(raw_host: Any) -> str:
     host = str(raw_host).strip()
     return host if host else "localhost"
 
-def _normalize_instance_port(raw_port: Any) -> int:
+def _normalize_instance_port(raw_port: object) -> int:
     """Normalize port input used for per-instance file ID generation.
 
     Side effects: None.
@@ -199,13 +201,13 @@ def _normalize_instance_port(raw_port: Any) -> int:
     """
     try:
         port = int(raw_port)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         port = 8080
     if port < 1 or port > 65535:
         return 8080
     return port
 
-def _normalize_instance_counter(raw_counter: Any) -> int:
+def _normalize_instance_counter(raw_counter: object) -> int:
     """Normalize per-server instance counter used as instance ID suffix.
 
     Side effects: None.
@@ -213,11 +215,11 @@ def _normalize_instance_counter(raw_counter: Any) -> int:
     """
     try:
         counter = int(raw_counter)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         counter = 1
     return counter if counter > 0 else 1
 
-def _normalize_http_protocol_scheme(raw_scheme: Any) -> str:
+def _normalize_http_protocol_scheme(raw_scheme: object) -> str:
     """Normalize WebUI/API protocol scheme to http or https.
 
     Side effects: None.
@@ -229,10 +231,10 @@ def _normalize_http_protocol_scheme(raw_scheme: Any) -> str:
     return "http"
 
 def compute_instance_id(
-    qb_host: Any,
-    qb_port: Any,
+    qb_host: object,
+    qb_port: object,
     length: int = INSTANCE_ID_LENGTH,
-    instance_counter: Any = 1,
+    instance_counter: object = 1,
 ) -> str:
     """Compute a short deterministic ID from qb_host + qb_port.
 
@@ -244,13 +246,13 @@ def compute_instance_id(
     digest = hashlib.sha1(f"{host}:{port}".encode("utf-8")).hexdigest()
     try:
         max_len = max(1, int(length))
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         max_len = INSTANCE_ID_LENGTH
     base_id = digest[:max_len]
     counter = _normalize_instance_counter(instance_counter)
     return f"{base_id}_{counter}"
 
-def compute_instance_id_from_config(config: Dict[str, Any]) -> str:
+def compute_instance_id_from_config(config: NormalizedConfig) -> str:
     """Compute instance ID from a config dict using normalized host/port values.
 
     Side effects: None.
@@ -312,7 +314,7 @@ def resolve_cache_file_path(
         return raw_path
     return Path(tempfile.gettempdir()) / CACHE_TEMP_SUBDIR / raw_path
 
-def resolve_instance_lock_file_path(instance_id: str, instance_counter: Any) -> Path:
+def resolve_instance_lock_file_path(instance_id: str, instance_counter: object) -> Path:
     """Resolve one .lck file path for a computed instance id + counter.
 
     Side effects: None.
@@ -348,10 +350,10 @@ def _instance_lock_key(lock_path: Path) -> str:
     """
     try:
         return str(Path(lock_path).resolve())
-    except Exception:
+    except (TypeError, ValueError, OSError, RuntimeError):
         return str(Path(lock_path))
 
-def _try_acquire_os_file_lock(handle) -> bool:
+def _try_acquire_os_file_lock(handle: object) -> bool:
     """Try to acquire a non-blocking exclusive lock on one open file handle.
 
     Side effects: None.
@@ -369,10 +371,10 @@ def _try_acquire_os_file_lock(handle) -> bool:
 
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
-    except Exception:
+    except (AttributeError, ImportError, OSError, ValueError):
         return False
 
-def _release_os_file_lock(handle) -> None:
+def _release_os_file_lock(handle: object) -> None:
     """Best-effort release of an OS-level file lock.
 
     Side effects: None.
@@ -389,12 +391,12 @@ def _release_os_file_lock(handle) -> None:
         import fcntl
 
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    except Exception:
+    except (AttributeError, ImportError, OSError, ValueError):
         logger.debug("Failed to release OS file lock", exc_info=True)
 
 def acquire_instance_lock(
-    config: Dict[str, Any],
-    start_counter: Any,
+    config: NormalizedConfig,
+    start_counter: object,
 ) -> Tuple[int, str, Path]:
     """Acquire an exclusive .lck file lock; auto-increment counter when in use.
 
@@ -411,7 +413,7 @@ def acquire_instance_lock(
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             handle = lock_path.open("a+b")
-        except Exception as e:
+        except OSError as e:
             raise RuntimeError(f"Failed to open lock file {lock_path}: {e}") from e
 
         try:
@@ -436,15 +438,15 @@ def acquire_instance_lock(
             handle.flush()
             try:
                 os.fsync(handle.fileno())
-            except Exception:
+            except OSError:
                 pass
 
             _INSTANCE_LOCK_HANDLES[_instance_lock_key(lock_path)] = handle
             return int(counter), str(instance_id), lock_path
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             try:
                 handle.close()
-            except Exception:
+            except OSError:
                 pass
             raise
 
@@ -462,16 +464,16 @@ def release_instance_lock(lock_path: Path) -> None:
         finally:
             try:
                 handle.close()
-            except Exception:
+            except OSError:
                 pass
     try:
         Path(lock_path).unlink()
     except FileNotFoundError:
         pass
-    except Exception:
+    except OSError:
         logger.debug("Failed to remove lock file: %s", lock_path, exc_info=True)
 
-def parse_tags(tags) -> List[str]:
+def parse_tags(tags: object) -> List[str]:
     """Parse tags from qBittorrentAPI into a list of strings.
 
     Side effects: None.

@@ -5,13 +5,15 @@ import atexit
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Tuple
+from types import TracebackType
+from typing import Dict, List, Tuple
 
 from .constants import (
     DEFAULT_HTTP_TIMEOUT_SECONDS,
     DEFAULT_TITLE_BAR_SPEED_FORMAT,
     G_APP_NAME,
 )
+from .models.config import NormalizedConfig
 from .utils import _append_instance_id_to_filename, _normalize_http_protocol_scheme, compute_instance_id_from_config
 
 
@@ -52,28 +54,20 @@ CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS = (
 )
 
 
-def load_config(config_file: str) -> Dict[str, Any]:
-    """Load configuration from TOML file.
-
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-    """
+def load_config(config_file: str) -> NormalizedConfig:
+    """Load one TOML configuration file."""
     if os.path.exists(config_file):
         try:
             import tomllib
             with open(config_file, 'rb') as f:
                 return tomllib.load(f)
-        except Exception as e:
+        except (ModuleNotFoundError, OSError, TypeError, ValueError) as e:
             logger.error("Failed to load config file %s: %s", config_file, e)
             return {}
     return {}
 
-def load_config_with_issues(config_file: str) -> Tuple[Dict[str, Any], List[str]]:
-    """Load TOML config and collect load-time issues without requiring logging.
-
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-    """
+def load_config_with_issues(config_file: str) -> Tuple[NormalizedConfig, List[str]]:
+    """Load TOML config and collect non-fatal load issues."""
     issues: List[str] = []
     if not os.path.exists(config_file):
         issues.append(
@@ -85,7 +79,7 @@ def load_config_with_issues(config_file: str) -> Tuple[Dict[str, Any], List[str]
         import tomllib
         with open(config_file, 'rb') as f:
             data = tomllib.load(f)
-    except Exception as e:
+    except (ModuleNotFoundError, OSError, TypeError, ValueError) as e:
         issues.append(f"Failed to parse config file {config_file}: {e}. Using defaults.")
         return {}, issues
 
@@ -105,7 +99,7 @@ def _config_validation_warn(message: str) -> None:
     """
     logger.warning("Config validation: %s", message)
 
-def _config_validation_coerce_int(value: Any, default: int) -> int:
+def _config_validation_coerce_int(value: object, default: int) -> int:
     """Coerce one value to int with fallback default.
 
     Side effects: None.
@@ -113,10 +107,10 @@ def _config_validation_coerce_int(value: Any, default: int) -> int:
     """
     try:
         return int(value)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return default
 
-def _apply_legacy_config_mappings(normalized: Dict[str, Any]) -> None:
+def _apply_legacy_config_mappings(normalized: Dict[str, object]) -> None:
     """Map legacy config keys to current keys with warnings.
 
     Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
@@ -130,7 +124,7 @@ def _apply_legacy_config_mappings(normalized: Dict[str, Any]) -> None:
                 f"Using '{old_key}' value for now."
             )
 
-def _remove_settings_managed_config_keys(normalized: Dict[str, Any]) -> None:
+def _remove_settings_managed_config_keys(normalized: Dict[str, object]) -> None:
     """Drop config keys that are intentionally managed by QSettings.
 
     Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
@@ -141,7 +135,7 @@ def _remove_settings_managed_config_keys(normalized: Dict[str, Any]) -> None:
             _config_validation_warn(f"'{key}' is ignored in TOML; managed via QSettings.")
             normalized.pop(key, None)
 
-def _normalize_qb_host_value(normalized: Dict[str, Any]) -> None:
+def _normalize_qb_host_value(normalized: Dict[str, object]) -> None:
     """Normalize qb_host value.
 
     Side effects: None.
@@ -154,7 +148,7 @@ def _normalize_qb_host_value(normalized: Dict[str, Any]) -> None:
     else:
         normalized["qb_host"] = host_val.strip()
 
-def _normalize_qb_port_value(normalized: Dict[str, Any]) -> None:
+def _normalize_qb_port_value(normalized: Dict[str, object]) -> None:
     """Normalize qb_port value.
 
     Side effects: None.
@@ -167,7 +161,7 @@ def _normalize_qb_port_value(normalized: Dict[str, Any]) -> None:
         port = 8080
     normalized["qb_port"] = port
 
-def _normalize_http_protocol_scheme_value(normalized: Dict[str, Any]) -> None:
+def _normalize_http_protocol_scheme_value(normalized: Dict[str, object]) -> None:
     """Normalize optional http_protocol_scheme value.
 
     Side effects: None.
@@ -188,7 +182,7 @@ def _normalize_http_protocol_scheme_value(normalized: Dict[str, Any]) -> None:
         )
     normalized["http_protocol_scheme"] = normalized_scheme
 
-def _normalize_http_timeout_value(normalized: Dict[str, Any]) -> None:
+def _normalize_http_timeout_value(normalized: Dict[str, object]) -> None:
     """Normalize optional http_timeout value (seconds).
 
     Side effects: None.
@@ -197,7 +191,7 @@ def _normalize_http_timeout_value(normalized: Dict[str, Any]) -> None:
     raw_timeout = normalized.get("http_timeout", DEFAULT_HTTP_TIMEOUT_SECONDS)
     try:
         timeout_seconds = int(raw_timeout)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         _config_validation_warn(
             f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
         )
@@ -209,7 +203,7 @@ def _normalize_http_timeout_value(normalized: Dict[str, Any]) -> None:
         timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
     normalized["http_timeout"] = int(timeout_seconds)
 
-def _normalize_credential_values(normalized: Dict[str, Any]) -> None:
+def _normalize_credential_values(normalized: Dict[str, object]) -> None:
     """Normalize credential-related string values.
 
     Side effects: None.
@@ -229,7 +223,7 @@ def _normalize_credential_values(normalized: Dict[str, Any]) -> None:
             value = str(default_value)
         normalized[key] = value
 
-def _normalize_log_file_value(normalized: Dict[str, Any]) -> None:
+def _normalize_log_file_value(normalized: Dict[str, object]) -> None:
     """Normalize optional log_file path value.
 
     Side effects: None.
@@ -244,7 +238,7 @@ def _normalize_log_file_value(normalized: Dict[str, Any]) -> None:
     else:
         normalized["log_file"] = raw_log_file.strip()
 
-def _normalize_title_bar_speed_format_value(normalized: Dict[str, Any]) -> None:
+def _normalize_title_bar_speed_format_value(normalized: Dict[str, object]) -> None:
     """Normalize title_bar_speed_format template string.
 
     Side effects: None.
@@ -264,7 +258,7 @@ def _normalize_title_bar_speed_format_value(normalized: Dict[str, Any]) -> None:
         title_fmt = raw_title_fmt.strip()
     try:
         title_fmt.format(up_text="0", down_text="0")
-    except Exception:
+    except (IndexError, KeyError, ValueError):
         _config_validation_warn(
             "'title_bar_speed_format' failed to format with {up_text}/{down_text}; "
             f"using default {DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
@@ -272,7 +266,7 @@ def _normalize_title_bar_speed_format_value(normalized: Dict[str, Any]) -> None:
         title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
     normalized["title_bar_speed_format"] = title_fmt
 
-def _warn_unknown_config_keys(normalized: Dict[str, Any]) -> None:
+def _warn_unknown_config_keys(normalized: Dict[str, object]) -> None:
     """Warn for unknown config keys.
 
     Side effects: None.
@@ -286,12 +280,8 @@ def _warn_unknown_config_keys(normalized: Dict[str, Any]) -> None:
     for key in unknown_keys:
         _config_validation_warn(f"Unknown config key '{key}' will be ignored.")
 
-def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> Dict[str, Any]:
-    """Validate config values, log issues, and return a sanitized config dict.
-
-    Side effects: None.
-    Failure modes: None.
-    """
+def validate_and_normalize_config(config: Dict[str, object], config_file: str) -> NormalizedConfig:
+    """Validate config values and return one sanitized config mapping."""
     if not isinstance(config, dict):
         logger.warning(
             "Config validation: root config from %s is not a TOML table/object. Using defaults.",
@@ -314,12 +304,8 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
     logger.info("Configuration validated from %s", config_file)
     return normalized
 
-def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
-    """Configure file logging and return the handler so it can be flushed.
-
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-    """
+def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
+    """Configure file logging and return the active file handler."""
     instance_id = str(config.get("_instance_id", "") or "").strip().lower()
     if not instance_id:
         instance_id = compute_instance_id_from_config(config)
@@ -336,13 +322,13 @@ def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
         log_dir = os.path.dirname(os.path.abspath(log_file))
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
-    except Exception:
+    except OSError:
         # Directory creation failure will be handled by FileHandler fallback.
         pass
 
     try:
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    except Exception:
+    except OSError:
         # Fallback to local path if configured log path is not writable.
         fallback_log_file = _append_instance_id_to_filename(
             'qbiremo_enhanced.log',
@@ -360,11 +346,7 @@ def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
     return file_handler
 
 def _open_file_in_default_app(path: str) -> bool:
-    """Open a file in the platform default application.
-
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
-    """
+    """Open one path in the platform default application."""
     if not path:
         return False
 
@@ -378,22 +360,18 @@ def _open_file_in_default_app(path: str) -> bool:
         else:
             subprocess.Popen(['xdg-open', path])
         return True
-    except Exception:
+    except (AttributeError, OSError, subprocess.SubprocessError):
         logger.exception("Failed to open file in default app: %s", path)
         return False
 
 def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
-    """Install global hooks so that *every* unhandled exception is logged.
-
-    Side effects: None.
-    Failure modes: None.
-        """
-    def _excepthook(exc_type, exc_value, exc_tb) -> None:
-        """Log unhandled exceptions and flush log handler immediately.
-
-        Side effects: None.
-        Failure modes: None.
-        """
+    """Install global exception hooks that flush and persist fatal errors."""
+    def _excepthook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Log one unhandled exception and flush the log handler."""
         if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return

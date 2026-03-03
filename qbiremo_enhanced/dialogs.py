@@ -4,7 +4,7 @@
 import copy
 import html
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -51,22 +51,25 @@ from PySide6.QtGui import (
     QFontDatabase,
     QIcon,
     QKeySequence,
+    QPaintEvent,
     QPainter,
     QPen,
     QShortcut,
 )
 
+from .models.torrent import SessionTimelineSample, TrackerHealthRow
 from .utils import format_size_mode, format_speed_mode
 
 class AddTorrentDialog(QDialog):
     """Dialog for adding a new torrent"""
 
-    def __init__(self, categories: List[str], tags: List[str], parent=None) -> None:
-        """Build add-torrent dialog with source, behavior, and limits tabs.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(
+        self,
+        categories: List[str],
+        tags: List[str],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        """Initialize add-torrent dialog with source and behavior editors."""
         super().__init__(parent)
         self.setWindowTitle("Add Torrent")
         self.resize(780, 720)
@@ -380,7 +383,7 @@ class AddTorrentDialog(QDialog):
             return lines[0]
         return lines
 
-    def get_torrent_data(self) -> Optional[Dict[str, Any]]:
+    def get_torrent_data(self) -> Optional[Dict[str, object]]:
         """Get the torrent data from the dialog.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -391,7 +394,7 @@ class AddTorrentDialog(QDialog):
         if not source_files and not source_urls:
             return None
 
-        data: Dict[str, Any] = {}
+        data: Dict[str, object] = {}
 
         save_path = self.txt_save_path.text().strip()
         if save_path:
@@ -501,17 +504,13 @@ class TaxonomyManagerDialog(QDialog):
     create_tags_requested = Signal(list)
     delete_tags_requested = Signal(list)
 
-    def __init__(self, parent=None) -> None:
-        """Initialize category/tag management dialog and default edit mode.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize category and tag management dialog state."""
         super().__init__(parent)
         self.setWindowTitle("Manage Tags and Categories")
         self.resize(760, 520)
 
-        self._category_data: Dict[str, Dict[str, Any]] = {}
+        self._category_data: Dict[str, Dict[str, object]] = {}
         self._build_ui()
         self._set_category_create_mode()
 
@@ -641,7 +640,7 @@ class TaxonomyManagerDialog(QDialog):
         if selected:
             self.txt_category_incomplete_path.setText(selected)
 
-    def _update_incomplete_path_enabled_state(self, *_args) -> None:
+    def _update_incomplete_path_enabled_state(self, *_args: object) -> None:
         """Enable/disable incomplete path controls based on checkbox.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -669,7 +668,7 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_delete_tags.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
-    def set_taxonomy_data(self, category_data: Dict[str, Dict[str, Any]], tags: List[str]) -> None:
+    def set_taxonomy_data(self, category_data: Dict[str, Dict[str, object]], tags: List[str]) -> None:
         """Refresh dialog contents from latest category/tag lists.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -709,7 +708,11 @@ class TaxonomyManagerDialog(QDialog):
         item = self.lst_categories.currentItem()
         return item.text().strip() if item else ""
 
-    def _on_category_selection_changed(self, current: Optional[QListWidgetItem], _previous) -> None:
+    def _on_category_selection_changed(
+        self,
+        current: Optional[QListWidgetItem],
+        _previous: Optional[QListWidgetItem],
+    ) -> None:
         """Load selected category into the editor.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -834,12 +837,8 @@ class SpeedLimitsDialog(QDialog):
     refresh_requested = Signal()
     apply_requested = Signal(int, int, int, int, bool)  # normal_dl_kib, normal_ul_kib, alt_dl_kib, alt_ul_kib, alt_enabled
 
-    def __init__(self, parent=None) -> None:
-        """Initialize speed-limits dialog and create controls.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize speed-limits dialog controls."""
         super().__init__(parent)
         self.setWindowTitle("Manage Speed Limits")
         self.resize(520, 320)
@@ -948,22 +947,18 @@ class AppPreferencesDialog(QDialog):
     ROLE_PATH = int(Qt.ItemDataRole.UserRole) + 200
     ROLE_IS_LEAF = int(Qt.ItemDataRole.UserRole) + 201
 
-    def __init__(self, parent=None) -> None:
-        """Initialize raw app-preferences editor dialog and state trackers.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize raw preferences editor state and tree bindings."""
         super().__init__(parent)
         self.setWindowTitle("Edit App Preferences")
         self.resize(980, 640)
         self._updating_tree = False
-        self._original_preferences: Dict[str, Any] = {}
-        self._edited_preferences: Dict[str, Any] = {}
-        self._path_items: Dict[Tuple[Any, ...], QTreeWidgetItem] = {}
-        self._leaf_original_values: Dict[Tuple[Any, ...], Any] = {}
-        self._leaf_current_values: Dict[Tuple[Any, ...], Any] = {}
-        self._leaf_items: Dict[Tuple[Any, ...], QTreeWidgetItem] = {}
+        self._original_preferences: Dict[str, object] = {}
+        self._edited_preferences: Dict[str, object] = {}
+        self._path_items: Dict[Tuple[object, ...], QTreeWidgetItem] = {}
+        self._leaf_original_values: Dict[Tuple[object, ...], object] = {}
+        self._leaf_current_values: Dict[Tuple[object, ...], object] = {}
+        self._leaf_items: Dict[Tuple[object, ...], QTreeWidgetItem] = {}
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -1013,7 +1008,7 @@ class AppPreferencesDialog(QDialog):
         self.btn_apply.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
-    def set_preferences(self, preferences: Dict[str, Any]) -> None:
+    def set_preferences(self, preferences: Dict[str, object]) -> None:
         """Load preferences into editable tree and reset change tracking.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1044,7 +1039,7 @@ class AppPreferencesDialog(QDialog):
             self._updating_tree = False
 
     @staticmethod
-    def _is_container(value: Any) -> bool:
+    def _is_container(value: object) -> bool:
         """Return True when value is a nested dict/list container.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1053,7 +1048,7 @@ class AppPreferencesDialog(QDialog):
         return isinstance(value, (dict, list))
 
     @staticmethod
-    def _value_type_name(value: Any) -> str:
+    def _value_type_name(value: object) -> str:
         """Return a human-readable type name for one preference value.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1076,7 +1071,7 @@ class AppPreferencesDialog(QDialog):
         return type(value).__name__
 
     @staticmethod
-    def _value_to_text(value: Any) -> str:
+    def _value_to_text(value: object) -> str:
         """Render one preference value to editable text representation.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1094,7 +1089,7 @@ class AppPreferencesDialog(QDialog):
         return str(value)
 
     @staticmethod
-    def _container_summary(value: Any) -> str:
+    def _container_summary(value: object) -> str:
         """Return compact summary label for dict/list containers.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1113,9 +1108,9 @@ class AppPreferencesDialog(QDialog):
     def _add_pref_item(
         self,
         parent_item: Optional[QTreeWidgetItem],
-        path: Tuple[Any, ...],
+        path: Tuple[object, ...],
         label: str,
-        value: Any,
+        value: object,
     ) -> None:
         """Add one preference tree node and recurse for nested values.
 
@@ -1153,7 +1148,7 @@ class AppPreferencesDialog(QDialog):
         self._leaf_items[path] = item
 
     @staticmethod
-    def _normalize_item_path(path_data: Any) -> Tuple[Any, ...]:
+    def _normalize_item_path(path_data: object) -> Tuple[object, ...]:
         """Normalize serialized path metadata to tuple form.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1166,7 +1161,7 @@ class AppPreferencesDialog(QDialog):
         return tuple()
 
     @staticmethod
-    def _path_label(path: Tuple[Any, ...]) -> str:
+    def _path_label(path: Tuple[object, ...]) -> str:
         """Format one tree path tuple as dotted/bracketed label.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1185,7 +1180,7 @@ class AppPreferencesDialog(QDialog):
         return "".join(parts)
 
     @staticmethod
-    def _set_path_value(container: Any, path: Tuple[Any, ...], value: Any) -> None:
+    def _set_path_value(container: object, path: Tuple[object, ...], value: object) -> None:
         """Assign one nested container value addressed by path tuple.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1197,7 +1192,7 @@ class AppPreferencesDialog(QDialog):
         target[path[-1]] = value
 
     @staticmethod
-    def _get_path_value(container: Any, path: Tuple[Any, ...]) -> Any:
+    def _get_path_value(container: object, path: Tuple[object, ...]) -> object:
         """Resolve one nested container value addressed by path tuple.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1223,7 +1218,7 @@ class AppPreferencesDialog(QDialog):
         raise ValueError("expected boolean (true/false)")
 
     @staticmethod
-    def _parse_value_by_example(text: str, example: Any) -> Any:
+    def _parse_value_by_example(text: str, example: object) -> object:
         """Parse editor text using original value type as parsing guide.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1284,13 +1279,13 @@ class AppPreferencesDialog(QDialog):
             changed = current != original
             item.setBackground(1, coral_brush if changed else clear_brush)
 
-    def changed_preferences(self) -> Dict[str, Any]:
+    def changed_preferences(self) -> Dict[str, object]:
         """Return only top-level preferences changed by the user.
 
         Side effects: Updates dialog/widget state and connected UI controls.
         Failure modes: None.
         """
-        changes: Dict[str, Any] = {}
+        changes: Dict[str, object] = {}
         for key, edited_value in self._edited_preferences.items():
             original_value = self._original_preferences.get(key, None)
             if key not in self._original_preferences or edited_value != original_value:
@@ -1397,16 +1392,12 @@ class FriendlyAddPreferencesDialog(QDialog):
         "max_seeding_time",
     )
 
-    def __init__(self, parent=None) -> None:
-        """Initialize friendly app-preferences dialog and form state.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize friendly preference editor controls and state."""
         super().__init__(parent)
         self.setWindowTitle("Edit Add Preferences (friendly)")
         self.resize(640, 560)
-        self._original_values: Dict[str, Any] = {}
+        self._original_values: Dict[str, object] = {}
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -1536,7 +1527,7 @@ class FriendlyAddPreferencesDialog(QDialog):
         return spin
 
     @staticmethod
-    def _to_bool(value: Any, default: bool = False) -> bool:
+    def _to_bool(value: object, default: bool = False) -> bool:
         """Best-effort conversion of unknown value to bool with default.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1555,7 +1546,7 @@ class FriendlyAddPreferencesDialog(QDialog):
         return bool(default)
 
     @staticmethod
-    def _to_int(value: Any, default: int = -1) -> int:
+    def _to_int(value: object, default: int = -1) -> int:
         """Best-effort conversion of unknown value to int with default.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1569,7 +1560,7 @@ class FriendlyAddPreferencesDialog(QDialog):
             return int(default)
 
     @staticmethod
-    def _to_float(value: Any, default: float = 0.0) -> float:
+    def _to_float(value: object, default: float = 0.0) -> float:
         """Best-effort conversion of unknown value to float with default.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1583,7 +1574,7 @@ class FriendlyAddPreferencesDialog(QDialog):
             return float(default)
 
     @staticmethod
-    def _set_combo_data(combo: QComboBox, value: Any, fallback: int = 0) -> None:
+    def _set_combo_data(combo: QComboBox, value: object, fallback: int = 0) -> None:
         """Select combo item by `data` value with robust fallback behavior.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1637,7 +1628,7 @@ class FriendlyAddPreferencesDialog(QDialog):
             self._update_seeding_time_enabled_state()
         self.lbl_message.setText(str(message or ""))
 
-    def _collect_values(self) -> Dict[str, Any]:
+    def _collect_values(self) -> Dict[str, object]:
         """Collect current friendly form state into preference payload dict.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1673,7 +1664,7 @@ class FriendlyAddPreferencesDialog(QDialog):
         }
         return values
 
-    def set_preferences(self, preferences: Dict[str, Any]) -> None:
+    def set_preferences(self, preferences: Dict[str, object]) -> None:
         """Load selected friendly fields from raw app preferences payload.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1716,14 +1707,14 @@ class FriendlyAddPreferencesDialog(QDialog):
         self._original_values = self._collect_values()
         self.lbl_message.setText("Loaded friendly add preferences.")
 
-    def changed_preferences(self) -> Dict[str, Any]:
+    def changed_preferences(self) -> Dict[str, object]:
         """Return only friendly fields changed by the user.
 
         Side effects: Updates dialog/widget state and connected UI controls.
         Failure modes: None.
         """
         current = self._collect_values()
-        changes: Dict[str, Any] = {}
+        changes: Dict[str, object] = {}
         for key in self.FRIENDLY_PREF_KEYS:
             if current.get(key) != self._original_values.get(key):
                 changes[key] = copy.deepcopy(current.get(key))
@@ -1746,12 +1737,8 @@ class TrackerHealthDialog(QDialog):
 
     refresh_requested = Signal()
 
-    def __init__(self, parent=None) -> None:
-        """Initialize tracker health dashboard dialog.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize tracker health dashboard widgets."""
         super().__init__(parent)
         self.setWindowTitle("Tracker Health Dashboard")
         self.resize(980, 520)
@@ -1811,7 +1798,7 @@ class TrackerHealthDialog(QDialog):
         if message:
             self.lbl_summary.setText(message)
 
-    def set_rows(self, rows: List[Dict[str, Any]]) -> None:
+    def set_rows(self, rows: List[TrackerHealthRow]) -> None:
         """Render aggregated tracker-health rows.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1849,17 +1836,13 @@ class TrackerHealthDialog(QDialog):
 class TimelineGraphWidget(QWidget):
     """Simple custom graph for session timeline samples."""
 
-    def __init__(self, parent=None) -> None:
-        """Initialize timeline graph widget with empty sample buffer.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize timeline graph with an empty sample buffer."""
         super().__init__(parent)
-        self._samples: List[Dict[str, Any]] = []
+        self._samples: List[SessionTimelineSample] = []
         self.setMinimumHeight(260)
 
-    def set_samples(self, samples: List[Dict[str, Any]]) -> None:
+    def set_samples(self, samples: List[SessionTimelineSample]) -> None:
         """Set timeline samples and trigger repaint.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1868,7 +1851,7 @@ class TimelineGraphWidget(QWidget):
         self._samples = list(samples or [])
         self.update()
 
-    def paintEvent(self, event) -> None:
+    def paintEvent(self, event: QPaintEvent) -> None:
         """Render timeline graph for speed, active-count, and alt-mode bands.
 
         Side effects: Updates dialog/widget state and connected UI controls.
@@ -1984,12 +1967,8 @@ class SessionTimelineDialog(QDialog):
     refresh_requested = Signal()
     clear_requested = Signal()
 
-    def __init__(self, parent=None) -> None:
-        """Initialize session timeline dialog and create UI controls.
-
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
-        """
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """Initialize session timeline dialog controls."""
         super().__init__(parent)
         self.setWindowTitle("Session Timeline")
         self.resize(980, 420)
@@ -2021,7 +2000,7 @@ class SessionTimelineDialog(QDialog):
         controls.addWidget(self.btn_close)
         layout.addLayout(controls)
 
-    def set_samples(self, samples: List[Dict[str, Any]]) -> None:
+    def set_samples(self, samples: List[SessionTimelineSample]) -> None:
         """Update timeline graph and summary.
 
         Side effects: Updates dialog/widget state and connected UI controls.

@@ -1,34 +1,32 @@
 
 """Shared typing models and call signatures."""
 
-from typing import Any, Callable, Dict, Optional, NotRequired, TypedDict, cast
+from typing import Callable, Dict, Generic, NotRequired, Optional, TypeVar, TypedDict, cast
 
 
-TaskCallable = Callable[..., Any]
-TaskCallback = Callable[[Any], None]
+T = TypeVar("T")
 
-class APITaskResult(TypedDict):
-    """Standard task payload envelope used by API queue workers."""
+TaskCallable = Callable[..., object]
+TaskCallback = Callable[[object], None]
 
-    data: Any
+class APITaskResult(TypedDict, Generic[T]):
+    """Describe the standard API task payload envelope."""
+
+    data: T
     elapsed: float
     success: bool
     error: NotRequired[str]
 
 def api_task_result(
     *,
-    data: Any,
+    data: T,
     elapsed: float,
     success: bool,
     error: Optional[str] = None,
-    **extra: Any,
-) -> APITaskResult:
-    """Create one API-task payload with consistent success/error/data/elapsed keys.
-
-    Side effects: None.
-    Failure modes: None.
-    """
-    payload: Dict[str, Any] = {
+    **extra: object,
+) -> APITaskResult[T]:
+    """Build one API-task payload with consistent envelope keys."""
+    payload: Dict[str, object] = {
         "data": data,
         "elapsed": float(elapsed),
         "success": bool(success),
@@ -37,4 +35,4 @@ def api_task_result(
         payload["error"] = str(error)
     if extra:
         payload.update(extra)
-    return cast(APITaskResult, payload)
+    return cast(APITaskResult[T], payload)
