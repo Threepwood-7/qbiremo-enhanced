@@ -889,6 +889,7 @@ def test_build_connection_info_uses_new_config_keys(window):
     assert conn["username"] == "new_user"
     assert conn["password"] == "new_pass"
     assert conn["FORCE_SCHEME_FROM_HOST"] is True
+    assert conn["REQUESTS_ARGS"]["timeout"] == appmod.DEFAULT_HTTP_TIMEOUT_SECONDS
     assert "EXTRA_HEADERS" in conn
     assert conn["EXTRA_HEADERS"]["Authorization"].startswith("Basic ")
 
@@ -905,6 +906,19 @@ def test_build_connection_info_uses_https_scheme_override(window):
     )
     assert conn["host"] == "https://127.0.0.1"
     assert conn["FORCE_SCHEME_FROM_HOST"] is True
+
+
+def test_build_connection_info_uses_custom_http_timeout(window):
+    conn = window._build_connection_info(
+        {
+            "qb_host": "127.0.0.1",
+            "qb_port": 12000,
+            "qb_username": "new_user",
+            "qb_password": "new_pass",
+            "http_timeout": 45,
+        }
+    )
+    assert conn["REQUESTS_ARGS"]["timeout"] == 45
 
 
 def test_window_title_shows_aggregate_up_down_speeds(window, make_torrent):

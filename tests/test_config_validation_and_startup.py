@@ -54,6 +54,7 @@ def test_validate_and_normalize_config_logs_invalid_values(caplog):
     cfg = {
         "qb_host": "",
         "qb_port": "99999",
+        "http_timeout": "not-a-number",
         "qb_username": 123,
         "qb_password": None,
         "http_basic_auth_username": 1,
@@ -80,6 +81,7 @@ def test_validate_and_normalize_config_logs_invalid_values(caplog):
     assert normalized["http_basic_auth_username"] == ""
     assert normalized["http_basic_auth_password"] == ""
     assert normalized["http_protocol_scheme"] == "http"
+    assert normalized["http_timeout"] == appmod.DEFAULT_HTTP_TIMEOUT_SECONDS
     assert normalized["log_file"] == "qbiremo_enhanced.log"
     assert normalized["title_bar_speed_format"] == appmod.DEFAULT_TITLE_BAR_SPEED_FORMAT
     assert "auto_refresh" not in normalized
@@ -95,6 +97,7 @@ def test_validate_and_normalize_config_logs_invalid_values(caplog):
     assert "qb_port" in log_text
     assert "ignored in TOML; managed via QSettings" in log_text
     assert "http_protocol_scheme" in log_text
+    assert "http_timeout" in log_text
     assert "title_bar_speed_format" in log_text
     assert "unknown_field" in log_text
 
@@ -131,6 +134,18 @@ def test_validate_and_normalize_config_accepts_https_protocol_scheme():
         "scheme_config.toml",
     )
     assert normalized["http_protocol_scheme"] == "https"
+
+
+def test_validate_and_normalize_config_accepts_http_timeout():
+    normalized = appmod.validate_and_normalize_config(
+        {
+            "qb_host": "127.0.0.1",
+            "qb_port": 8080,
+            "http_timeout": 420,
+        },
+        "timeout_config.toml",
+    )
+    assert normalized["http_timeout"] == 420
 
 
 def test_main_opens_log_file_on_startup_crash(monkeypatch, tmp_path):

@@ -71,6 +71,7 @@ DEFAULT_LEFT_PANEL_WIDTH = 220
 DEFAULT_DISPLAY_SIZE_MODE = 'bytes'
 DEFAULT_DISPLAY_SPEED_MODE = 'bytes'
 DEFAULT_TITLE_BAR_SPEED_FORMAT = "[D: {down_text}, U: {up_text}]"
+DEFAULT_HTTP_TIMEOUT_SECONDS = 300
 CACHE_TEMP_SUBDIR = "qbiremo_enhanced_temp"
 CACHE_FILE_NAME = "qbiremo_enhanced.cache"
 CACHE_MAX_AGE_DAYS = 3
@@ -3303,6 +3304,8 @@ class MainWindow(QMainWindow):
         host URL (e.g. https://user:password@remote.host.com:12345) or via
         explicit http_basic_auth_username / http_basic_auth_password config keys.
         Protocol scheme can be forced via optional http_protocol_scheme (http/https).
+        HTTP timeout defaults to 300 seconds and can be set via optional
+        http_timeout in TOML.
         """
         # Host URL ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â may contain scheme, basic-auth credentials, and port
         raw_host = (
@@ -3363,6 +3366,12 @@ class MainWindow(QMainWindow):
             )
         except (ValueError, TypeError):
             port = 8080
+        try:
+            http_timeout = int(config.get("http_timeout", DEFAULT_HTTP_TIMEOUT_SECONDS))
+        except (ValueError, TypeError):
+            http_timeout = DEFAULT_HTTP_TIMEOUT_SECONDS
+        if http_timeout <= 0:
+            http_timeout = DEFAULT_HTTP_TIMEOUT_SECONDS
 
         conn = {
             'host': host,
@@ -3377,7 +3386,8 @@ class MainWindow(QMainWindow):
             ),
             'FORCE_SCHEME_FROM_HOST': True,
             'VERIFY_WEBUI_CERTIFICATE': False,
-            'DISABLE_LOGGING_DEBUG_OUTPUT': False
+            'DISABLE_LOGGING_DEBUG_OUTPUT': False,
+            'REQUESTS_ARGS': {'timeout': int(http_timeout)},
         }
         if extra_headers:
             conn['EXTRA_HEADERS'] = extra_headers
@@ -9048,6 +9058,7 @@ CONFIG_VALIDATION_KNOWN_KEYS = {
     "qb_host", "qb_port", "qb_username", "qb_password",
     "http_basic_auth_username", "http_basic_auth_password",
     "http_protocol_scheme",
+    "http_timeout",
     "log_file",
     "title_bar_speed_format",
     "_config_file_path",
@@ -9147,6 +9158,24 @@ def _normalize_http_protocol_scheme_value(normalized: Dict[str, Any]):
     normalized["http_protocol_scheme"] = normalized_scheme
 
 
+def _normalize_http_timeout_value(normalized: Dict[str, Any]):
+    """Normalize optional http_timeout value (seconds)."""
+    raw_timeout = normalized.get("http_timeout", DEFAULT_HTTP_TIMEOUT_SECONDS)
+    try:
+        timeout_seconds = int(raw_timeout)
+    except Exception:
+        _config_validation_warn(
+            f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
+        )
+        timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
+    if timeout_seconds <= 0:
+        _config_validation_warn(
+            f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
+        )
+        timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
+    normalized["http_timeout"] = int(timeout_seconds)
+
+
 def _normalize_credential_values(normalized: Dict[str, Any]):
     """Normalize credential-related string values."""
     for key, default_value in [
@@ -9227,6 +9256,7 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
     _normalize_qb_host_value(normalized)
     _normalize_qb_port_value(normalized)
     _normalize_http_protocol_scheme_value(normalized)
+    _normalize_http_timeout_value(normalized)
     _normalize_credential_values(normalized)
     _normalize_log_file_value(normalized)
     _normalize_title_bar_speed_format_value(normalized)

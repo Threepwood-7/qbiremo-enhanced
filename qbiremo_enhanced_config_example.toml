@@ -30,6 +30,10 @@ qb_password = "CHANGE_ME"
 # Allowed values: "http" or "https" (default: "http")
 http_protocol_scheme = "http"
 
+# Optional HTTP timeout for qBittorrent API requests, in seconds.
+# Default: 300
+http_timeout = 300
+
 # Optional title-bar speed format
 # Placeholders: {down_text}, {up_text}
 title_bar_speed_format = "[D: {down_text}, U: {up_text}]"

@@ -356,6 +356,10 @@ qb_password = "CHANGE_ME"
 # Default: "http"
 http_protocol_scheme = "http"
 
+# Optional HTTP timeout for qBittorrent API requests, in seconds
+# Default: 300
+http_timeout = 300
+
 # Optional reverse-proxy/basic-auth layer (separate from qb API auth)
 http_basic_auth_username = ""
 http_basic_auth_password = ""
@@ -373,6 +377,7 @@ Behavior notes:
 - Runtime UI settings (`auto_refresh`, interval, window size/layout, display mode, default status) are QSettings-managed and not read from TOML.
 - If `qb_host` includes a full URL with embedded userinfo, HTTP basic auth is extracted and sent via `Authorization` header.
 - `http_protocol_scheme` controls the connection/browser scheme (`http`/`https`) and defaults to `http` when omitted.
+- `http_timeout` sets the qBittorrent API HTTP timeout in seconds and defaults to `300`.
 - Environment fallback for HTTP basic auth:
   - `X_HTTP_USER`
   - `X_HTTP_PASS`
