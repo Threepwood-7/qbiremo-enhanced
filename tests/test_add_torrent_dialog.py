@@ -122,3 +122,37 @@ def test_add_torrent_dialog_accepts_multiple_file_sources(qtbot, tmp_path):
 
     assert data is not None
     assert data["torrent_files"] == [str(t1), str(t2)]
+
+
+def test_add_torrent_dialog_accept_keeps_dialog_open_when_source_is_invalid(
+    qtbot, monkeypatch
+):
+    dialog = appmod.AddTorrentDialog(categories=[], tags=[])
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    called = {"count": 0}
+    monkeypatch.setattr(
+        appmod.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: called.__setitem__("count", called["count"] + 1),
+    )
+    dialog.txt_torrent_files.setPlainText(str(Path("C:/definitely/nonexistent/file.torrent")))
+
+    dialog.accept()
+
+    assert dialog.result() != appmod.QDialog.DialogCode.Accepted
+    assert called["count"] == 1
+
+
+def test_add_torrent_dialog_accept_caches_payload(qtbot):
+    dialog = appmod.AddTorrentDialog(categories=[], tags=[])
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.txt_source_urls.setPlainText("magnet:?xt=urn:btih:aaa")
+
+    dialog.accept()
+
+    assert dialog.result() == appmod.QDialog.DialogCode.Accepted
+    assert isinstance(dialog.torrent_data, dict)
+    assert dialog.torrent_data.get("urls") == "magnet:?xt=urn:btih:aaa"

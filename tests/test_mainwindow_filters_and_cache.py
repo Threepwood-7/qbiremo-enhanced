@@ -773,6 +773,46 @@ def test_apply_filters_includes_status_category_and_tag_filters(window, make_tor
     assert [t.hash for t in window.filtered_torrents] == ["h1"]
 
 
+def test_apply_filters_skips_local_remote_equivalent_filters_when_remote_filtered(
+    window, monkeypatch, make_torrent
+):
+    window.current_status_filter = "active"
+    window.current_category_filter = "movies"
+    window.current_tag_filter = "tag1"
+    window._sync_torrent_map = {"enabled": {}}
+    window._latest_torrent_fetch_remote_filtered = True
+    window.all_torrents = [
+        make_torrent(hash="h1", state="stalleddl", category="movies", tags="tag1"),
+    ]
+
+    monkeypatch.setattr(window, "_torrent_matches_status_filter", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(window, "_torrent_matches_category_filter", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(window, "_torrent_matches_tag_filter", lambda *_args, **_kwargs: False)
+
+    window._apply_filters()
+    assert [t.hash for t in window.filtered_torrents] == ["h1"]
+
+    window._latest_torrent_fetch_remote_filtered = False
+    window._apply_filters()
+    assert [t.hash for t in window.filtered_torrents] == []
+
+
+def test_on_torrents_loaded_tracks_remote_filtered_flag(window, monkeypatch, make_torrent):
+    monkeypatch.setattr(window, "_get_cache_refresh_candidates", lambda **_kwargs: {})
+    monkeypatch.setattr(window, "_load_selected_torrent_network_details", lambda *_args, **_kwargs: None)
+
+    torrents = [make_torrent(hash="h1", name="One")]
+    window._on_torrents_loaded(
+        {"success": True, "data": torrents, "elapsed": 0.01, "remote_filtered": True}
+    )
+    assert window._latest_torrent_fetch_remote_filtered is True
+
+    window._on_torrents_loaded(
+        {"success": True, "data": torrents, "elapsed": 0.01, "remote_filtered": False}
+    )
+    assert window._latest_torrent_fetch_remote_filtered is False
+
+
 def test_refresh_selects_first_torrent_row(window, monkeypatch, make_torrent):
     monkeypatch.setattr(window, "_get_cache_refresh_candidates", lambda **_kwargs: {})
     monkeypatch.setattr(window, "_load_selected_torrent_network_details", lambda *_args, **_kwargs: None)
@@ -1041,6 +1081,148 @@ def test_set_auto_refresh_interval_from_menu(window, monkeypatch):
 
 def test_auto_refresh_menu_label_includes_current_interval(window):
     assert window.action_auto_refresh.text() == f"Enable &Auto-Refresh ({window.refresh_interval})"
+
+
+def test_api_task_queue_ignores_stale_worker_completion(window):
+    queue = window.api_queue
+    active_worker = appmod.Worker(lambda **_kwargs: None)
+    stale_worker = appmod.Worker(lambda **_kwargs: None)
+    queue.current_worker = active_worker
+    queue.current_task_name = "active"
+    queue.is_processing = True
+
+    callback_calls = {"count": 0}
+    queue._on_task_complete(
+        stale_worker,
+        "stale",
+        lambda _result: callback_calls.__setitem__("count", callback_calls["count"] + 1),
+        {"success": True},
+    )
+
+    assert callback_calls["count"] == 0
+    assert queue.current_worker is active_worker
+    assert queue.current_task_name == "active"
+    assert queue.is_processing is True
+
+
+def test_api_task_queue_ignores_stale_worker_error(window):
+    queue = window.api_queue
+    active_worker = appmod.Worker(lambda **_kwargs: None)
+    stale_worker = appmod.Worker(lambda **_kwargs: None)
+    queue.current_worker = active_worker
+    queue.current_task_name = "active"
+    queue.is_processing = True
+
+    queue._on_task_error(
+        stale_worker,
+        "stale",
+        (RuntimeError, RuntimeError("boom"), "trace"),
+    )
+
+    assert queue.current_worker is active_worker
+    assert queue.current_task_name == "active"
+    assert queue.is_processing is True
+
+
+def test_api_task_queue_coalesces_latest_task_while_worker_running(window, monkeypatch):
+    queue = window.api_queue
+    active_worker = appmod.Worker(lambda **_kwargs: None)
+    queue.current_worker = active_worker
+    queue.current_task_name = "active"
+    queue.is_processing = True
+
+    cancelled_calls = {"count": 0}
+    monkeypatch.setattr(
+        active_worker,
+        "cancel",
+        lambda: cancelled_calls.__setitem__("count", cancelled_calls["count"] + 1),
+    )
+
+    started_calls = {"count": 0}
+    monkeypatch.setattr(
+        queue.threadpool,
+        "start",
+        lambda _worker: started_calls.__setitem__("count", started_calls["count"] + 1),
+    )
+
+    cancelled_signals = {"count": 0}
+    queue.task_cancelled.connect(
+        lambda _task_name: cancelled_signals.__setitem__(
+            "count", cancelled_signals["count"] + 1
+        )
+    )
+
+    queue.add_task("next_task", lambda **_kwargs: None, lambda _result: None)
+
+    assert cancelled_calls["count"] == 1
+    assert queue.current_worker is active_worker
+    assert queue.pending_task is not None
+    assert queue.pending_task[0] == "next_task"
+    assert started_calls["count"] == 0
+    assert cancelled_signals["count"] == 0
+
+
+def test_api_task_queue_starts_pending_task_when_current_worker_finishes(window, monkeypatch):
+    queue = window.api_queue
+    active_worker = appmod.Worker(lambda **_kwargs: None)
+    queue.current_worker = active_worker
+    queue.current_task_name = "active"
+    queue.is_processing = True
+    queue.pending_task = ("next_task", lambda **_kwargs: None, lambda _result: None, (), {})
+
+    started = {"task_name": None}
+    monkeypatch.setattr(
+        queue,
+        "_start_task",
+        lambda task_name, fn, callback, *args, **kwargs: started.__setitem__(
+            "task_name", task_name
+        ),
+    )
+
+    queue._on_worker_finished(active_worker)
+
+    assert started["task_name"] == "next_task"
+    assert queue.pending_task is None
+
+
+def test_refresh_torrents_skips_when_api_queue_busy_with_non_refresh_task(window, monkeypatch):
+    queue = window.api_queue
+    queue.current_worker = appmod.Worker(lambda **_kwargs: None)
+    queue.current_task_name = "pause_torrent"
+    queue.pending_task = None
+    window._refresh_torrents_in_progress = False
+
+    add_calls = {"count": 0}
+    monkeypatch.setattr(
+        queue,
+        "add_task",
+        lambda *args, **kwargs: add_calls.__setitem__("count", add_calls["count"] + 1),
+    )
+
+    window._refresh_torrents()
+
+    assert add_calls["count"] == 0
+    assert window._refresh_torrents_in_progress is False
+
+
+def test_refresh_torrents_skips_when_pending_task_is_non_refresh(window, monkeypatch):
+    queue = window.api_queue
+    queue.current_worker = appmod.Worker(lambda **_kwargs: None)
+    queue.current_task_name = "refresh_torrents"
+    queue.pending_task = ("pause_torrent", lambda **_kwargs: None, None, (), {})
+    window._refresh_torrents_in_progress = False
+
+    add_calls = {"count": 0}
+    monkeypatch.setattr(
+        queue,
+        "add_task",
+        lambda *args, **kwargs: add_calls.__setitem__("count", add_calls["count"] + 1),
+    )
+
+    window._refresh_torrents()
+
+    assert add_calls["count"] == 0
+    assert window._refresh_torrents_in_progress is False
 
 
 def test_auto_refresh_pauses_while_edit_tab_is_selected(window):
@@ -1673,6 +1855,17 @@ def test_open_web_ui_action_uses_configured_http_protocol_scheme(window, monkeyp
     assert opened["url"] == "http://alice@qb.example.com:38081"
 
 
+def test_web_ui_browser_url_encodes_username_and_brackets_ipv6_host(window):
+    window.qb_conn_info["username"] = "alice+bob@example"
+    window.config["qb_host"] = "2001:db8::10"
+    window.config["qb_port"] = 8080
+    window.config["http_protocol_scheme"] = "https"
+
+    url = window._web_ui_browser_url()
+
+    assert url == "https://alice%2Bbob%40example@[2001:db8::10]:8080"
+
+
 def test_file_menu_exit_action_supports_alt_x_shortcut(window):
     action_exit = _find_menu_action(window, "&File", "E&xit")
     assert action_exit is not None
@@ -1684,6 +1877,59 @@ def test_file_menu_exit_action_supports_alt_x_shortcut(window):
 def test_file_menu_contains_export_torrent_action(window):
     action_export = _find_menu_action(window, "&File", "&Export Torrent...")
     assert action_export is not None
+
+
+def test_show_add_torrent_dialog_is_modeless_top_level_window(window, qtbot):
+    window._show_add_torrent_dialog()
+
+    dialog = window._add_torrent_dialog
+    assert dialog is not None
+    assert dialog.windowModality() == appmod.Qt.WindowModality.NonModal
+    assert dialog.isModal() is False
+    assert bool(dialog.windowFlags() & appmod.Qt.WindowType.Window)
+    assert dialog.windowType() == appmod.Qt.WindowType.Window
+
+    dialog.close()
+    qtbot.waitUntil(lambda: window._add_torrent_dialog is None)
+
+
+def test_show_add_torrent_dialog_reuses_existing_visible_dialog(window, qtbot):
+    window._show_add_torrent_dialog()
+    first = window._add_torrent_dialog
+    assert first is not None
+
+    window._show_add_torrent_dialog()
+    assert window._add_torrent_dialog is first
+
+    first.close()
+    qtbot.waitUntil(lambda: window._add_torrent_dialog is None)
+
+
+def test_add_torrent_dialog_accept_queues_api_task(window, monkeypatch, qtbot):
+    captured = {}
+    monkeypatch.setattr(window, "_log", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(window, "_show_progress", lambda *_args, **_kwargs: None)
+
+    def _fake_add_task(task_name, api_method, callback, *args):
+        captured["task_name"] = task_name
+        captured["api_method_name"] = getattr(api_method, "__name__", "")
+        captured["callback"] = callback
+        captured["args"] = args
+
+    monkeypatch.setattr(window.api_queue, "add_task", _fake_add_task)
+
+    window._show_add_torrent_dialog()
+    dialog = window._add_torrent_dialog
+    assert dialog is not None
+    monkeypatch.setattr(dialog, "get_torrent_data", lambda: {"urls": ["magnet:?xt=urn:btih:aaa"]})
+
+    dialog.accept()
+
+    assert captured["task_name"] == "add_torrent"
+    assert captured["api_method_name"] == "_add_torrent_api"
+    assert callable(captured["callback"])
+    assert captured["args"] == ({"urls": ["magnet:?xt=urn:btih:aaa"]},)
+    qtbot.waitUntil(lambda: window._add_torrent_dialog is None)
 
 
 def test_file_menu_contains_new_instance_actions(window):
@@ -1881,6 +2127,31 @@ def test_add_torrent_api_supports_urls_and_multiple_file_sources(window, monkeyp
     assert [call["torrent_files"] for call in file_calls] == [str(file_one), str(file_two)]
     assert all(call["save_path"] == str(tmp_path) for call in file_calls)
     assert all("urls" not in call for call in file_calls)
+
+
+def test_on_add_torrent_complete_reports_partial_success(window, monkeypatch):
+    calls = {"refresh_delay": None}
+    monkeypatch.setattr(
+        appmod.QTimer,
+        "singleShot",
+        lambda delay_ms, _fn: calls.__setitem__("refresh_delay", int(delay_ms)),
+    )
+
+    window._on_add_torrent_complete(
+        {
+            "success": True,
+            "data": False,
+            "elapsed": 0.2,
+            "details": {
+                "added_urls": 1,
+                "added_files": 0,
+                "failed_sources": [{"source": "file.torrent", "error": "boom"}],
+            },
+        }
+    )
+
+    assert window.lbl_status.text() == "Added 1 sources, 1 failed"
+    assert calls["refresh_delay"] == 1000
 
 
 def test_tools_menu_contains_manage_tags_and_categories_action(window):
