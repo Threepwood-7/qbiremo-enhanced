@@ -90,8 +90,8 @@ It combines:
 - `Content` tab:
   - cached file/folder tree with size/progress/priority columns.
   - real-time wildcard content filter for the selected torrent (`*`, `?` wildcards, matches against filename and full path).
+  - inline content action buttons: `Skip`, `Normal Priority`, `High Priority`, `Maximum Priority`, `Rename...`.
   - content tree auto-refreshes when the cache for the selected torrent is updated.
-  - right-click context menu mirrors Edit menu content submenu (priority, rename).
   - Enter/Return and item activation open local file/folder if it exists.
 - `Edit` tab (single-selected torrent only):
   - editable fields:
@@ -119,9 +119,6 @@ It combines:
   - Increase/Decrease/Top/Minimum queue priority
   - Remove
   - Remove and Delete Data
-- Edit menu content submenu:
-  - set priority (`Skip`, `Normal`, `High`, `Maximum`)
-  - rename selected file/folder inside torrent
 - Session-wide actions:
   - Pause Session
   - Resume Session
@@ -240,12 +237,6 @@ It combines:
 - `Remove and Delete Data (no confirmation)` (`Ctrl+Shift+Del`)
 - `Pause Session` (`Ctrl+Shift+P`)
 - `Resume Session` (`Ctrl+Shift+S`)
-- `Content` submenu:
-  - `Skip`
-  - `Normal Priority`
-  - `High Priority`
-  - `Maximum Priority`
-  - `Rename...`
 
 ### View
 - `Open Log File`

@@ -2392,6 +2392,35 @@ class MainWindow(QMainWindow):
         content_filter_layout.addWidget(self.txt_content_filter)
         content_layout.addLayout(content_filter_layout)
 
+        content_actions_layout = QHBoxLayout()
+        self.btn_content_skip = QPushButton("Skip")
+        self.btn_content_skip.clicked.connect(
+            lambda: self._set_selected_content_priority(0)
+        )
+        content_actions_layout.addWidget(self.btn_content_skip)
+        self.btn_content_normal = QPushButton("Normal Priority")
+        self.btn_content_normal.clicked.connect(
+            lambda: self._set_selected_content_priority(1)
+        )
+        content_actions_layout.addWidget(self.btn_content_normal)
+        self.btn_content_high = QPushButton("High Priority")
+        self.btn_content_high.clicked.connect(
+            lambda: self._set_selected_content_priority(6)
+        )
+        content_actions_layout.addWidget(self.btn_content_high)
+        self.btn_content_max = QPushButton("Maximum Priority")
+        self.btn_content_max.clicked.connect(
+            lambda: self._set_selected_content_priority(7)
+        )
+        content_actions_layout.addWidget(self.btn_content_max)
+        self.btn_content_rename = QPushButton("Rename...")
+        self.btn_content_rename.clicked.connect(
+            lambda: self._rename_selected_content_item()
+        )
+        content_actions_layout.addWidget(self.btn_content_rename)
+        content_actions_layout.addStretch(1)
+        content_layout.addLayout(content_actions_layout)
+
         self.tree_files = QTreeWidget()
         self.tree_files.setHeaderLabels(["Name", "Size", "Progress", "Priority"])
         self.tree_files.setAlternatingRowColors(True)
@@ -3057,30 +3086,6 @@ class MainWindow(QMainWindow):
         action_resume_session.setShortcut("Ctrl+Shift+S")
         action_resume_session.triggered.connect(self._resume_session)
         edit_menu.addAction(action_resume_session)
-
-        edit_menu.addSeparator()
-        content_menu = edit_menu.addMenu("Con&tent")
-
-        action_content_skip = QAction("&Skip", self)
-        action_content_skip.triggered.connect(lambda: self._set_selected_content_priority(0))
-        content_menu.addAction(action_content_skip)
-
-        action_content_normal = QAction("&Normal Priority", self)
-        action_content_normal.triggered.connect(lambda: self._set_selected_content_priority(1))
-        content_menu.addAction(action_content_normal)
-
-        action_content_high = QAction("&High Priority", self)
-        action_content_high.triggered.connect(lambda: self._set_selected_content_priority(6))
-        content_menu.addAction(action_content_high)
-
-        action_content_max = QAction("&Maximum Priority", self)
-        action_content_max.triggered.connect(lambda: self._set_selected_content_priority(7))
-        content_menu.addAction(action_content_max)
-
-        content_menu.addSeparator()
-        action_content_rename = QAction("&Rename...", self)
-        action_content_rename.triggered.connect(self._rename_selected_content_item)
-        content_menu.addAction(action_content_rename)
 
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -8032,12 +8037,7 @@ class MainWindow(QMainWindow):
         old_rel = str(info["relative_path"])
         old_name = old_rel.rsplit("/", 1)[-1]
         label = "file" if info["is_file"] else "folder"
-        new_name, ok = QInputDialog.getText(
-            self,
-            f"Rename {label.title()}",
-            f"New {label} name:",
-            text=old_name,
-        )
+        new_name, ok = self._prompt_content_rename_name(label, old_name)
         if not ok:
             return
 
@@ -8064,6 +8064,52 @@ class MainWindow(QMainWindow):
             new_rel,
             bool(info["is_file"]),
         )
+
+    def _prompt_content_rename_name(self, label: str, old_name: str) -> Tuple[str, bool]:
+        """Prompt for a new content file/folder name with persistent dialog size."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Rename {str(label or '').title()}")
+        dialog.setMinimumWidth(600)
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(f"New {label} name:"))
+        txt_name = QLineEdit(dialog)
+        txt_name.setText(str(old_name or ""))
+        txt_name.selectAll()
+        layout.addWidget(txt_name)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        settings = self._new_settings()
+        geometry = settings.value("contentRenameDialogGeometry")
+        restored = False
+        if geometry:
+            try:
+                restored = bool(dialog.restoreGeometry(geometry))
+            except Exception:
+                restored = False
+        if not restored:
+            default_height = max(140, dialog.sizeHint().height())
+            dialog.resize(600, default_height)
+        if dialog.width() < 600:
+            dialog.resize(600, dialog.height())
+
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        try:
+            settings.setValue("contentRenameDialogGeometry", dialog.saveGeometry())
+            settings.sync()
+        except Exception:
+            pass
+
+        if not accepted:
+            return "", False
+        return str(txt_name.text() or ""), True
 
     def _on_taxonomy_action_done(self, action_name: str, result: Dict):
         """Callback for create/edit/delete category/tag actions."""

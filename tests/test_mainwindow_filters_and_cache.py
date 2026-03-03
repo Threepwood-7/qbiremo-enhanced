@@ -2454,17 +2454,36 @@ def test_force_recheck_and_priority_actions_apply_to_all_selected_hashes(window,
     assert all(args[0] == ["h1", "h2"] for _, _, args in calls)
 
 
-def test_edit_content_submenu_contains_priority_and_rename_actions(window):
-    expected_content_actions = [
-        "&Skip",
-        "&Normal Priority",
-        "&High Priority",
-        "&Maximum Priority",
-        "&Rename...",
-    ]
-    for text in expected_content_actions:
-        action = _find_submenu_action(window, "&Edit", "Con&tent", text)
-        assert action is not None
+def test_content_panel_contains_priority_and_rename_actions(window, qtbot, monkeypatch):
+    assert _find_submenu_action(window, "&Edit", "Con&tent", "&Skip") is None
+
+    assert window.btn_content_skip.text() == "Skip"
+    assert window.btn_content_normal.text() == "Normal Priority"
+    assert window.btn_content_high.text() == "High Priority"
+    assert window.btn_content_max.text() == "Maximum Priority"
+    assert window.btn_content_rename.text() == "Rename..."
+
+    priority_calls = []
+    rename_calls = {"count": 0}
+    monkeypatch.setattr(
+        window,
+        "_set_selected_content_priority",
+        lambda priority: priority_calls.append(int(priority)),
+    )
+    monkeypatch.setattr(
+        window,
+        "_rename_selected_content_item",
+        lambda: rename_calls.__setitem__("count", rename_calls["count"] + 1),
+    )
+
+    qtbot.mouseClick(window.btn_content_skip, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.btn_content_normal, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.btn_content_high, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.btn_content_max, Qt.MouseButton.LeftButton)
+    qtbot.mouseClick(window.btn_content_rename, Qt.MouseButton.LeftButton)
+
+    assert priority_calls == [0, 1, 6, 7]
+    assert rename_calls["count"] == 1
 
 
 def test_set_torrent_download_limit_queues_selected_hashes_and_converts_kib(window, monkeypatch):
@@ -2600,7 +2619,11 @@ def test_rename_selected_content_item_queues_expected_api_payload(window, monkey
     folder_item = window.tree_files.topLevelItem(0)
     file_item = folder_item.child(0)
     window.tree_files.setCurrentItem(file_item)
-    monkeypatch.setattr(appmod.QInputDialog, "getText", lambda *args, **kwargs: ("new_name.mkv", True))
+    monkeypatch.setattr(
+        window,
+        "_prompt_content_rename_name",
+        lambda *args, **kwargs: ("new_name.mkv", True),
+    )
 
     calls = []
     monkeypatch.setattr(
