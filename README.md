@@ -64,6 +64,12 @@ qb_password = "your_password"
 # Optional HTTP Basic Auth (reverse proxy layer)
 http_basic_auth_username = ""
 http_basic_auth_password = ""
+
+# Optional title-bar speed format
+# Placeholders: {down_text}, {up_text}
+title_bar_speed_format = "[D: {down_text}, U: {up_text}]"
+# Example (old style): f"U:{up_text} D:{down_text}"
+# title_bar_speed_format = "U:{up_text} D:{down_text}"
 ```
 
 `auto_refresh`, `refresh_interval`, window size, and default status filter are
@@ -193,6 +199,19 @@ All errors are handled gracefully:
 - Reduces data transfer and processing
 - Local filters applied after API fetch
 - Size buckets calculated dynamically
+
+## API Documentation References
+
+This project relies on the following upstream API docs as implementation references:
+
+- [qBittorrent WebUI API: Get Torrent List (`/api/v2/torrents/info`)](https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(qBittorrent-5.0)#get-torrent-list)  
+  Used as the canonical field reference for torrent-list data shown in the grid, including column naming and filter behavior (for example the `private` field).
+
+- [qbittorrent-api: `TorrentsAPIMixIn.torrents_info`](https://qbittorrent-api.readthedocs.io/en/latest/apidoc/torrents.html#qbittorrentapi.torrents.TorrentsAPIMixIn.torrents_info)  
+  Used for Python client call semantics in this app when fetching torrent lists with server-side filters (`status_filter`, `category`, `tag`, and `private`).
+
+- [qbittorrent-api: Client API](https://qbittorrent-api.readthedocs.io/en/latest/apidoc/client.html)  
+  Used as the primary reference for all client operations used throughout the UI queue layer (for example list/refresh calls, torrent mutations, peer actions, and export operations).
 
 ## Performance Notes
 

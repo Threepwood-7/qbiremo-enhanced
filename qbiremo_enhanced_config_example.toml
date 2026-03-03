@@ -20,5 +20,11 @@ qb_port = 8080
 qb_username = "admin"
 qb_password = "CHANGE_ME"
 
+# Optional title-bar speed format
+# Placeholders: {down_text}, {up_text}
+title_bar_speed_format = "[D: {down_text}, U: {up_text}]"
+# Example (old style): f"U:{up_text} D:{down_text}"
+# title_bar_speed_format = "U:{up_text} D:{down_text}"
+
 # Optional logging target
 # log_file = "qbiremo_enhanced.log"

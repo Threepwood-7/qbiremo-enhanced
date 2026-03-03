@@ -8,7 +8,9 @@ import os
 import sys
 import argparse
 import atexit
+import copy
 import html
+import hashlib
 import json
 import logging
 import traceback
@@ -49,15 +51,18 @@ import qbittorrentapi
 G_ORG_NAME = "qBiremo"
 G_APP_NAME = "qBiremoEnhanced"
 DEFAULT_REFRESH_INTERVAL = 60  # seconds
-DEFAULT_AUTO_REFRESH = False
+DEFAULT_AUTO_REFRESH = True
 DEFAULT_STATUS_FILTER = 'active'
 DEFAULT_WINDOW_WIDTH = 1400
 DEFAULT_WINDOW_HEIGHT = 800
+DEFAULT_LEFT_PANEL_WIDTH = 220
 DEFAULT_DISPLAY_SIZE_MODE = 'bytes'
 DEFAULT_DISPLAY_SPEED_MODE = 'bytes'
+DEFAULT_TITLE_BAR_SPEED_FORMAT = "[D: {down_text}, U: {up_text}]"
 CACHE_TEMP_SUBDIR = "qbiremo_enhanced_temp"
 CACHE_FILE_NAME = "qbiremo_enhanced.cache"
 CACHE_MAX_AGE_DAYS = 3
+INSTANCE_ID_LENGTH = 6
 CLIPBOARD_SEEN_LIMIT = 256
 
 logger = logging.getLogger(G_APP_NAME)
@@ -73,7 +78,7 @@ STATUS_FILTERS = [
 SIZE_BUCKET_COUNT = 5
 
 TORRENT_COLUMNS = [
-    {"key": "hash", "label": "Hash", "width": 240, "default_visible": False},
+    {"key": "hash", "label": "Hash", "width": 240, "default_visible": True},
     {"key": "name", "label": "Name", "width": 360, "default_visible": True},
     {"key": "size", "label": "Size", "width": 110, "default_visible": True},
     {"key": "total_size", "label": "Total Size", "width": 110, "default_visible": True},
@@ -81,25 +86,92 @@ TORRENT_COLUMNS = [
     {"key": "state", "label": "Status", "width": 110, "default_visible": True},
     {"key": "dlspeed", "label": "DL Speed", "width": 100, "default_visible": True},
     {"key": "upspeed", "label": "UP Speed", "width": 100, "default_visible": True},
+    {"key": "dl_limit", "label": "Download Speed Limit", "width": 150, "default_visible": True},
+    {"key": "up_limit", "label": "Upload Speed Limit", "width": 150, "default_visible": True},
     {"key": "downloaded", "label": "Downloaded", "width": 110, "default_visible": True},
     {"key": "uploaded", "label": "Uploaded", "width": 110, "default_visible": True},
+    {"key": "amount_left", "label": "Amount Left", "width": 120, "default_visible": True},
+    {"key": "completed", "label": "Completed", "width": 110, "default_visible": True},
+    {"key": "downloaded_session", "label": "Downloaded Session", "width": 160, "default_visible": True},
+    {"key": "uploaded_session", "label": "Uploaded Session", "width": 160, "default_visible": True},
     {"key": "ratio", "label": "Ratio", "width": 70, "default_visible": True},
+    {"key": "ratio_limit", "label": "Ratio Limit", "width": 100, "default_visible": True},
+    {"key": "max_ratio", "label": "Max Ratio", "width": 90, "default_visible": True},
+    {"key": "availability", "label": "Availability", "width": 110, "default_visible": True},
     {"key": "num_seeds", "label": "Seeds", "width": 70, "default_visible": True},
     {"key": "num_leechs", "label": "Peers", "width": 70, "default_visible": True},
     {"key": "num_complete", "label": "Complete", "width": 80, "default_visible": True},
     {"key": "num_incomplete", "label": "Incomplete", "width": 90, "default_visible": True},
+    {"key": "priority", "label": "Priority", "width": 80, "default_visible": True},
     {"key": "eta", "label": "ETA", "width": 90, "default_visible": True},
+    {"key": "reannounce", "label": "Reannounce", "width": 110, "default_visible": True},
+    {"key": "seeding_time", "label": "Seeding Time", "width": 120, "default_visible": True},
+    {"key": "seeding_time_limit", "label": "Seeding Time Limit", "width": 140, "default_visible": True},
+    {"key": "max_seeding_time", "label": "Max Seeding Time", "width": 130, "default_visible": True},
+    {"key": "time_active", "label": "Time Active", "width": 120, "default_visible": True},
     {"key": "added_on", "label": "Added On", "width": 150, "default_visible": True},
     {"key": "completion_on", "label": "Completed On", "width": 150, "default_visible": True},
     {"key": "last_activity", "label": "Last Activity", "width": 150, "default_visible": True},
+    {"key": "seen_complete", "label": "Seen Complete", "width": 150, "default_visible": True},
+    {"key": "auto_tmm", "label": "Auto TMM", "width": 100, "default_visible": True},
+    {"key": "force_start", "label": "Force Start", "width": 100, "default_visible": True},
+    {"key": "seq_dl", "label": "Sequential Download", "width": 150, "default_visible": True},
+    {"key": "f_l_piece_prio", "label": "First/Last Piece Prio", "width": 160, "default_visible": True},
+    {"key": "super_seeding", "label": "Super Seeding", "width": 120, "default_visible": True},
+    {"key": "private", "label": "Private", "width": 80, "default_visible": True},
     {"key": "category", "label": "Category", "width": 120, "default_visible": True},
     {"key": "tags", "label": "Tags", "width": 150, "default_visible": True},
     {"key": "tracker", "label": "Tracker", "width": 170, "default_visible": True},
-    {"key": "is_private", "label": "Private", "width": 80, "default_visible": True},
-    {"key": "num_files", "label": "Files", "width": 70, "default_visible": True},
     {"key": "save_path", "label": "Save Path", "width": 220, "default_visible": True},
     {"key": "content_path", "label": "Content Path", "width": 260, "default_visible": True},
+    {"key": "magnet_uri", "label": "Magnet URI", "width": 280, "default_visible": True},
+    {"key": "num_files", "label": "Files", "width": 70, "default_visible": True},
 ]
+
+BASIC_TORRENT_VIEW_KEYS = (
+    "name",
+    "state",
+    "progress",
+    "size",
+    "dlspeed",
+    "upspeed",
+    "eta",
+    "num_seeds",
+    "num_leechs",
+    "category",
+    "tags",
+)
+
+MEDIUM_TORRENT_VIEW_KEYS = (
+    "name",
+    "state",
+    "progress",
+    "size",
+    "total_size",
+    "dlspeed",
+    "upspeed",
+    "dl_limit",
+    "up_limit",
+    "downloaded",
+    "uploaded",
+    "ratio",
+    "eta",
+    "num_seeds",
+    "num_leechs",
+    "num_complete",
+    "num_incomplete",
+    "category",
+    "tags",
+    "tracker",
+    "private",
+    "added_on",
+    "last_activity",
+    "save_path",
+)
+
+_medium_default_keys = set(MEDIUM_TORRENT_VIEW_KEYS)
+for _column in TORRENT_COLUMNS:
+    _column["default_visible"] = _column["key"] in _medium_default_keys
 
 
 # ============================================================================
@@ -241,6 +313,43 @@ class APITaskQueue(QObject):
             self.task_cancelled.emit(task_name)
         except Exception as e:
             logger.error("Error in _on_task_cancelled for %s: %s", task_name, e)
+
+
+class _DebugAPIClientProxy:
+    """Proxy that logs qBittorrent API calls and responses."""
+
+    def __init__(self, client: Any, owner: "MainWindow"):
+        self._client = client
+        self._owner = owner
+
+    def __enter__(self):
+        entered = self._client.__enter__()
+        if entered is self._client:
+            return self
+        return _DebugAPIClientProxy(entered, self._owner)
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._client.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._client, name)
+        if not callable(attr):
+            return attr
+
+        def _wrapped(*args, **kwargs):
+            self._owner._debug_log_api_call(name, args, kwargs)
+            start_time = time.time()
+            try:
+                result = attr(*args, **kwargs)
+            except Exception as e:
+                elapsed = time.time() - start_time
+                self._owner._debug_log_api_error(name, e, elapsed)
+                raise
+            elapsed = time.time() - start_time
+            self._owner._debug_log_api_response(name, result, elapsed)
+            return result
+
+        return _wrapped
 
 
 # ============================================================================
@@ -957,6 +1066,341 @@ class SpeedLimitsDialog(QDialog):
 
 
 # ============================================================================
+# Application Preferences Editor Dialog
+# ============================================================================
+
+class AppPreferencesDialog(QDialog):
+    """Dialog to edit raw qBittorrent application preferences in a tree view."""
+
+    apply_requested = Signal(dict)
+
+    ROLE_PATH = int(Qt.ItemDataRole.UserRole) + 200
+    ROLE_IS_LEAF = int(Qt.ItemDataRole.UserRole) + 201
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit App Preferences")
+        self.resize(980, 640)
+        self._updating_tree = False
+        self._original_preferences: Dict[str, Any] = {}
+        self._edited_preferences: Dict[str, Any] = {}
+        self._path_items: Dict[Tuple[Any, ...], QTreeWidgetItem] = {}
+        self._leaf_original_values: Dict[Tuple[Any, ...], Any] = {}
+        self._leaf_current_values: Dict[Tuple[Any, ...], Any] = {}
+        self._leaf_items: Dict[Tuple[Any, ...], QTreeWidgetItem] = {}
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        self.tree_preferences = QTreeWidget()
+        self.tree_preferences.setAlternatingRowColors(True)
+        self.tree_preferences.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        self.tree_preferences.setColumnCount(3)
+        self.tree_preferences.setHeaderLabels(["Preference", "Value", "Type"])
+        header = self.tree_preferences.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree_preferences.itemChanged.connect(self._on_tree_item_changed)
+        layout.addWidget(self.tree_preferences, 1)
+
+        self.lbl_message = QLabel("No preferences loaded.")
+        layout.addWidget(self.lbl_message)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.Apply
+        )
+        self.btn_apply = buttons.button(QDialogButtonBox.StandardButton.Apply)
+        self.btn_apply.clicked.connect(self._emit_apply)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def set_busy(self, busy: bool, message: str = ""):
+        """Enable/disable dialog controls while API operation runs."""
+        enabled = not bool(busy)
+        self.tree_preferences.setEnabled(enabled)
+        self.btn_apply.setEnabled(enabled)
+        self.lbl_message.setText(str(message or ""))
+
+    def set_preferences(self, preferences: Dict[str, Any]):
+        """Load preferences into editable tree and reset change tracking."""
+        self._updating_tree = True
+        try:
+            source = dict(preferences or {}) if isinstance(preferences, dict) else {}
+            self._original_preferences = copy.deepcopy(source)
+            self._edited_preferences = copy.deepcopy(source)
+            self._path_items.clear()
+            self._leaf_original_values.clear()
+            self._leaf_current_values.clear()
+            self._leaf_items.clear()
+            self.tree_preferences.clear()
+
+            for key in sorted(self._edited_preferences.keys(), key=lambda v: str(v)):
+                self._add_pref_item(
+                    parent_item=None,
+                    path=(key,),
+                    label=str(key),
+                    value=self._edited_preferences.get(key),
+                )
+            self.tree_preferences.expandToDepth(0)
+            self._refresh_changed_highlights()
+            self.lbl_message.setText(f"Loaded {len(self._edited_preferences)} preferences.")
+        finally:
+            self._updating_tree = False
+
+    @staticmethod
+    def _is_container(value: Any) -> bool:
+        return isinstance(value, (dict, list))
+
+    @staticmethod
+    def _value_type_name(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, int):
+            return "int"
+        if isinstance(value, float):
+            return "float"
+        if isinstance(value, str):
+            return "str"
+        if isinstance(value, list):
+            return "list"
+        if isinstance(value, dict):
+            return "dict"
+        return type(value).__name__
+
+    @staticmethod
+    def _value_to_text(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (dict, list)):
+            try:
+                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    @staticmethod
+    def _container_summary(value: Any) -> str:
+        if isinstance(value, dict):
+            count = len(value)
+            suffix = "key" if count == 1 else "keys"
+            return f"{{{count} {suffix}}}"
+        if isinstance(value, list):
+            count = len(value)
+            suffix = "item" if count == 1 else "items"
+            return f"[{count} {suffix}]"
+        return AppPreferencesDialog._value_to_text(value)
+
+    def _add_pref_item(
+        self,
+        parent_item: Optional[QTreeWidgetItem],
+        path: Tuple[Any, ...],
+        label: str,
+        value: Any,
+    ):
+        item = QTreeWidgetItem([str(label), "", self._value_type_name(value)])
+        item.setData(0, self.ROLE_PATH, path)
+        item.setData(0, self.ROLE_IS_LEAF, False)
+        if parent_item is None:
+            self.tree_preferences.addTopLevelItem(item)
+        else:
+            parent_item.addChild(item)
+        self._path_items[path] = item
+
+        if isinstance(value, dict) and value:
+            item.setText(1, self._container_summary(value))
+            for child_key in sorted(value.keys(), key=lambda v: str(v)):
+                child_path = path + (child_key,)
+                self._add_pref_item(item, child_path, str(child_key), value.get(child_key))
+            return
+
+        if isinstance(value, list) and value:
+            item.setText(1, self._container_summary(value))
+            for index, child_value in enumerate(value):
+                child_path = path + (index,)
+                self._add_pref_item(item, child_path, f"[{index}]", child_value)
+            return
+
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        item.setData(0, self.ROLE_IS_LEAF, True)
+        item.setText(1, self._value_to_text(value))
+        self._leaf_original_values[path] = copy.deepcopy(value)
+        self._leaf_current_values[path] = copy.deepcopy(value)
+        self._leaf_items[path] = item
+
+    @staticmethod
+    def _normalize_item_path(path_data: Any) -> Tuple[Any, ...]:
+        if isinstance(path_data, tuple):
+            return path_data
+        if isinstance(path_data, list):
+            return tuple(path_data)
+        return tuple()
+
+    @staticmethod
+    def _path_label(path: Tuple[Any, ...]) -> str:
+        if not path:
+            return ""
+        parts: List[str] = []
+        for part in path:
+            if isinstance(part, int):
+                parts.append(f"[{part}]")
+            else:
+                if parts:
+                    parts.append(".")
+                parts.append(str(part))
+        return "".join(parts)
+
+    @staticmethod
+    def _set_path_value(container: Any, path: Tuple[Any, ...], value: Any):
+        target = container
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+
+    @staticmethod
+    def _get_path_value(container: Any, path: Tuple[Any, ...]) -> Any:
+        target = container
+        for key in path:
+            target = target[key]
+        return target
+
+    @staticmethod
+    def _parse_bool(text: str) -> bool:
+        token = str(text or "").strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError("expected boolean (true/false)")
+
+    @staticmethod
+    def _parse_value_by_example(text: str, example: Any) -> Any:
+        raw = str(text or "")
+        stripped = raw.strip()
+
+        if isinstance(example, bool):
+            return AppPreferencesDialog._parse_bool(stripped)
+        if isinstance(example, int) and not isinstance(example, bool):
+            if not stripped:
+                raise ValueError("expected integer")
+            return int(stripped, 10)
+        if isinstance(example, float):
+            if not stripped:
+                raise ValueError("expected float")
+            return float(stripped)
+        if isinstance(example, dict):
+            if not stripped:
+                return {}
+            parsed = json.loads(stripped)
+            if not isinstance(parsed, dict):
+                raise ValueError("expected JSON object")
+            return parsed
+        if isinstance(example, list):
+            if not stripped:
+                return []
+            parsed = json.loads(stripped)
+            if not isinstance(parsed, list):
+                raise ValueError("expected JSON array")
+            return parsed
+        if example is None:
+            if stripped.lower() in {"", "null", "none"}:
+                return None
+            try:
+                return json.loads(stripped)
+            except Exception:
+                return raw
+        if isinstance(example, str):
+            return raw
+        try:
+            return json.loads(stripped)
+        except Exception:
+            return raw
+
+    def _refresh_changed_highlights(self):
+        coral_brush = QBrush(QColor("coral"))
+        clear_brush = QBrush()
+        for path, item in self._leaf_items.items():
+            original = self._leaf_original_values.get(path)
+            current = self._leaf_current_values.get(path)
+            changed = current != original
+            item.setBackground(1, coral_brush if changed else clear_brush)
+
+    def changed_preferences(self) -> Dict[str, Any]:
+        """Return only top-level preferences changed by the user."""
+        changes: Dict[str, Any] = {}
+        for key, edited_value in self._edited_preferences.items():
+            original_value = self._original_preferences.get(key, None)
+            if key not in self._original_preferences or edited_value != original_value:
+                changes[str(key)] = copy.deepcopy(edited_value)
+        return changes
+
+    def _on_tree_item_changed(self, item: QTreeWidgetItem, column: int):
+        if self._updating_tree:
+            return
+        if column != 1:
+            return
+
+        path = self._normalize_item_path(item.data(0, self.ROLE_PATH))
+        if not path:
+            return
+        if not bool(item.data(0, self.ROLE_IS_LEAF)):
+            return
+
+        current_value = self._leaf_current_values.get(path)
+        original_value = self._leaf_original_values.get(path)
+        try:
+            parsed = self._parse_value_by_example(item.text(1), original_value)
+        except Exception as e:
+            self._updating_tree = True
+            try:
+                item.setText(1, self._value_to_text(current_value))
+            finally:
+                self._updating_tree = False
+            self.lbl_message.setText(f"{self._path_label(path)}: {e}")
+            return
+
+        self._leaf_current_values[path] = copy.deepcopy(parsed)
+        self._set_path_value(self._edited_preferences, path, copy.deepcopy(parsed))
+
+        self._updating_tree = True
+        try:
+            item.setText(2, self._value_type_name(parsed))
+            for depth in range(len(path) - 1, 0, -1):
+                ancestor_path = path[:depth]
+                ancestor_item = self._path_items.get(ancestor_path)
+                if ancestor_item is None:
+                    continue
+                ancestor_value = self._get_path_value(self._edited_preferences, ancestor_path)
+                ancestor_item.setText(1, self._container_summary(ancestor_value))
+                ancestor_item.setText(2, self._value_type_name(ancestor_value))
+        finally:
+            self._updating_tree = False
+
+        self._refresh_changed_highlights()
+        change_count = len(self.changed_preferences())
+        if change_count <= 0:
+            self.lbl_message.setText("No changed preferences.")
+        else:
+            self.lbl_message.setText(f"Changed preferences: {change_count}")
+
+    def _emit_apply(self):
+        changes = self.changed_preferences()
+        if not changes:
+            self.lbl_message.setText("No changed preferences to apply.")
+            return
+        self.apply_requested.emit(changes)
+
+
+# ============================================================================
 # Tracker Health Dashboard Dialog
 # ============================================================================
 
@@ -1312,9 +1756,81 @@ def format_eta(seconds: int) -> str:
     return f"{secs}s"
 
 
-def resolve_cache_file_path(cache_file_name: str = CACHE_FILE_NAME) -> Path:
+def _normalize_instance_host(raw_host: Any) -> str:
+    """Normalize host input used for per-instance file ID generation."""
+    if raw_host is None:
+        return "localhost"
+    host = str(raw_host).strip()
+    return host if host else "localhost"
+
+
+def _normalize_instance_port(raw_port: Any) -> int:
+    """Normalize port input used for per-instance file ID generation."""
+    try:
+        port = int(raw_port)
+    except Exception:
+        port = 8080
+    if port < 1 or port > 65535:
+        return 8080
+    return port
+
+
+def compute_instance_id(qb_host: Any, qb_port: Any, length: int = INSTANCE_ID_LENGTH) -> str:
+    """Compute a short deterministic ID from qb_host + qb_port."""
+    host = _normalize_instance_host(qb_host)
+    port = _normalize_instance_port(qb_port)
+    digest = hashlib.sha1(f"{host}:{port}".encode("utf-8")).hexdigest()
+    try:
+        max_len = max(1, int(length))
+    except Exception:
+        max_len = INSTANCE_ID_LENGTH
+    return digest[:max_len]
+
+
+def compute_instance_id_from_config(config: Dict[str, Any]) -> str:
+    """Compute instance ID from a config dict using normalized host/port values."""
+    cfg = config if isinstance(config, dict) else {}
+    host = cfg.get("qb_host", cfg.get("host", "localhost"))
+    port = cfg.get("qb_port", cfg.get("port", 8080))
+    return compute_instance_id(host, port)
+
+
+def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
+    """Append _<instance_id> before file extension, preserving directory."""
+    raw = str(path_value or "").strip()
+    if not raw:
+        return raw
+    ident = str(instance_id or "").strip().lower()
+    if not ident:
+        return raw
+    path_obj = Path(raw)
+    suffix_marker = f"_{ident}"
+    stem = path_obj.stem
+    if stem.lower().endswith(suffix_marker):
+        return str(path_obj)
+    if path_obj.suffix:
+        new_name = f"{stem}{suffix_marker}{path_obj.suffix}"
+    else:
+        new_name = f"{path_obj.name}{suffix_marker}"
+    return str(path_obj.with_name(new_name))
+
+
+def settings_app_name_for_instance(instance_id: str) -> str:
+    """Build QSettings app name for a given instance ID."""
+    ident = str(instance_id or "").strip().lower()
+    if not ident:
+        return G_APP_NAME
+    return f"{G_APP_NAME}_{ident}"
+
+
+def resolve_cache_file_path(
+    cache_file_name: str = CACHE_FILE_NAME,
+    instance_id: str = "",
+) -> Path:
     """Resolve cache file path under OS temp dir unless absolute override is used."""
     raw_path = Path(str(cache_file_name))
+    if instance_id:
+        raw_path = Path(_append_instance_id_to_filename(str(raw_path), instance_id))
     if raw_path.is_absolute():
         return raw_path
     return Path(tempfile.gettempdir()) / CACHE_TEMP_SUBDIR / raw_path
@@ -1390,7 +1906,11 @@ class MainWindow(QMainWindow):
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
 
-        self.config = config
+        self.config = config if isinstance(config, dict) else {}
+        config = self.config
+        self.instance_id = str(config.get("_instance_id", "") or "").strip().lower()
+        if not self.instance_id:
+            self.instance_id = compute_instance_id_from_config(config)
         self.base_window_title = "qBiremo Enhanced"
         self.setWindowTitle(self.base_window_title)
 
@@ -1410,9 +1930,11 @@ class MainWindow(QMainWindow):
             col["key"]: idx for idx, col in enumerate(self.torrent_columns)
         }
         self.column_visibility_actions: Dict[str, QAction] = {}
+        self.saved_torrent_views_menu: Optional[QMenu] = None
         self._torrent_open_shortcuts: List[QShortcut] = []
         self._content_open_shortcuts: List[QShortcut] = []
         self.clipboard_monitor_enabled = False
+        self.debug_logging_enabled = False
         self._last_clipboard_text = ""
         self._clipboard_seen_keys = set()
         self._clipboard_seen_order = deque()
@@ -1442,13 +1964,14 @@ class MainWindow(QMainWindow):
         self._sync_torrent_map: Dict[str, Dict[str, Any]] = {}
         self._taxonomy_dialog: Optional[TaxonomyManagerDialog] = None
         self._speed_limits_dialog: Optional[SpeedLimitsDialog] = None
+        self._app_preferences_dialog: Optional[AppPreferencesDialog] = None
         self._tracker_health_dialog: Optional[TrackerHealthDialog] = None
         self._session_timeline_dialog: Optional[SessionTimelineDialog] = None
         self.session_timeline_history = deque(maxlen=720)
         self._last_alt_speed_mode = False
 
         # Persistent per-torrent content cache (JSON file)
-        self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME)
+        self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME, self.instance_id)
         self.content_cache: Dict[str, Dict[str, Any]] = {}
         self._remove_expired_cache_file()
         self._load_content_cache()
@@ -1465,13 +1988,20 @@ class MainWindow(QMainWindow):
         self.analytics_api_queue = APITaskQueue(self)
 
         # Log file path (set by main() before constructing MainWindow)
-        self.log_file_path = config.get('_log_file_path', 'qbiremo_enhanced.log')
+        self.log_file_path = config.get(
+            '_log_file_path',
+            _append_instance_id_to_filename('qbiremo_enhanced.log', self.instance_id),
+        )
 
         # Auto-refresh settings
         self.auto_refresh_enabled = self.default_auto_refresh_enabled
         self.refresh_interval = self.default_refresh_interval
         self.display_size_mode = DEFAULT_DISPLAY_SIZE_MODE
         self.display_speed_mode = DEFAULT_DISPLAY_SPEED_MODE
+        self.title_bar_speed_format = str(
+            config.get("title_bar_speed_format", DEFAULT_TITLE_BAR_SPEED_FORMAT)
+            or DEFAULT_TITLE_BAR_SPEED_FORMAT
+        )
 
         # UI Setup
         self._create_ui()
@@ -1498,6 +2028,7 @@ class MainWindow(QMainWindow):
             | Qt.WindowState.WindowMaximized
         )
         self.show()
+        QTimer.singleShot(500, self._bring_to_front_startup)
 
     def _create_ui(self):
         """Create the main UI layout"""
@@ -1582,6 +2113,8 @@ class MainWindow(QMainWindow):
         self.tbl_peers.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.tbl_peers.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tbl_peers.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_peers.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tbl_peers.customContextMenuRequested.connect(self._show_peers_context_menu)
         self.tbl_peers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.tbl_peers.horizontalHeader().setStretchLastSection(True)
         peers_layout.addWidget(self.tbl_peers)
@@ -1660,6 +2193,20 @@ class MainWindow(QMainWindow):
         edit_form.addRow("Tags:", tags_row)
         self.btn_torrent_edit_add_tags = btn_add_tags
 
+        self.spn_torrent_edit_download_limit = QSpinBox()
+        self.spn_torrent_edit_download_limit.setRange(0, 10_000_000)
+        self.spn_torrent_edit_download_limit.setSpecialValueText("Unlimited")
+        self.spn_torrent_edit_download_limit.setSuffix(" KiB/s")
+        self.spn_torrent_edit_download_limit.setToolTip("Per-torrent download limit (0 = unlimited)")
+        edit_form.addRow("Download Speed Limit:", self.spn_torrent_edit_download_limit)
+
+        self.spn_torrent_edit_upload_limit = QSpinBox()
+        self.spn_torrent_edit_upload_limit.setRange(0, 10_000_000)
+        self.spn_torrent_edit_upload_limit.setSpecialValueText("Unlimited")
+        self.spn_torrent_edit_upload_limit.setSuffix(" KiB/s")
+        self.spn_torrent_edit_upload_limit.setToolTip("Per-torrent upload limit (0 = unlimited)")
+        edit_form.addRow("Upload Speed Limit:", self.spn_torrent_edit_upload_limit)
+
         self.txt_torrent_edit_save_path = QLineEdit()
         save_path_row = QHBoxLayout()
         save_path_row.addWidget(self.txt_torrent_edit_save_path)
@@ -1699,7 +2246,7 @@ class MainWindow(QMainWindow):
         self.main_splitter.addWidget(self.right_splitter)
 
         # Set initial sizes
-        self.main_splitter.setSizes([250, 1000])
+        self.main_splitter.setSizes([DEFAULT_LEFT_PANEL_WIDTH, 1000])
         self.right_splitter.setSizes([600, 200])
 
         main_layout.addWidget(self.main_splitter)
@@ -1894,6 +2441,22 @@ class MainWindow(QMainWindow):
     def _create_torrent_columns_menu(self, parent_menu: QMenu):
         """Create View -> Torrent Columns submenu with per-column visibility toggles."""
         columns_menu = parent_menu.addMenu("Torrent &Columns")
+        action_basic_view = QAction("Basic View", self)
+        action_basic_view.triggered.connect(self._apply_basic_torrent_view)
+        columns_menu.addAction(action_basic_view)
+
+        action_medium_view = QAction("Medium View", self)
+        action_medium_view.triggered.connect(self._apply_medium_torrent_view)
+        columns_menu.addAction(action_medium_view)
+
+        action_save_current = QAction("Save Current View..", self)
+        action_save_current.triggered.connect(self._save_current_torrent_view)
+        columns_menu.addAction(action_save_current)
+
+        self.saved_torrent_views_menu = columns_menu.addMenu("Saved Views")
+        self._refresh_saved_torrent_views_menu()
+
+        columns_menu.addSeparator()
         self.column_visibility_actions = {}
 
         for idx, column in enumerate(self.torrent_columns):
@@ -1948,6 +2511,182 @@ class MainWindow(QMainWindow):
             self.tbl_torrents.setColumnHidden(idx, col["key"] in hidden)
         self._sync_torrent_column_actions()
 
+    def _apply_torrent_view(
+        self,
+        visible_keys: List[str],
+        widths: Optional[Dict[str, Any]] = None,
+    ):
+        """Apply a torrent-table view by visible column keys and optional widths."""
+        visible_set = {str(key) for key in list(visible_keys or [])}
+        known_keys = set(self.torrent_column_index.keys())
+        visible_set = {key for key in visible_set if key in known_keys}
+
+        for idx, column in enumerate(self.torrent_columns):
+            key = column["key"]
+            self.tbl_torrents.setColumnHidden(idx, key not in visible_set)
+
+        if isinstance(widths, dict):
+            for key, raw_width in widths.items():
+                column_key = str(key)
+                idx = self.torrent_column_index.get(column_key)
+                if idx is None or self.tbl_torrents.isColumnHidden(idx):
+                    continue
+                width = self._safe_int(raw_width, 0)
+                if width > 0:
+                    self.tbl_torrents.setColumnWidth(idx, width)
+
+        self._sync_torrent_column_actions()
+        self._save_settings()
+
+    def _current_torrent_view_payload(self) -> Dict[str, Any]:
+        """Return visible columns + widths for the current torrent-table view."""
+        visible_columns: List[str] = []
+        widths: Dict[str, int] = {}
+        for idx, column in enumerate(self.torrent_columns):
+            key = column["key"]
+            if self.tbl_torrents.isColumnHidden(idx):
+                continue
+            visible_columns.append(key)
+            widths[key] = int(self._safe_int(self.tbl_torrents.columnWidth(idx), 0))
+        return {
+            "visible_columns": visible_columns,
+            "widths": widths,
+        }
+
+    def _saved_torrent_views(self) -> Dict[str, Dict[str, Any]]:
+        """Load named torrent-table views from QSettings."""
+        settings = self._new_settings()
+        raw_json = settings.value("torrentColumnNamedViewsJson", "")
+        if isinstance(raw_json, (bytes, bytearray)):
+            raw_json = raw_json.decode("utf-8", errors="ignore")
+        text = str(raw_json or "").strip()
+        if not text:
+            return {}
+
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return {}
+
+        if not isinstance(parsed, dict):
+            return {}
+
+        known_keys = set(self.torrent_column_index.keys())
+        cleaned: Dict[str, Dict[str, Any]] = {}
+        for raw_name, payload in parsed.items():
+            view_name = str(raw_name or "").strip()
+            if not view_name or not isinstance(payload, dict):
+                continue
+
+            raw_visible = payload.get("visible_columns", [])
+            visible_columns: List[str] = []
+            if isinstance(raw_visible, str):
+                raw_visible = [raw_visible]
+            if isinstance(raw_visible, (list, tuple, set)):
+                for raw_key in raw_visible:
+                    key = str(raw_key or "").strip()
+                    if key in known_keys:
+                        visible_columns.append(key)
+
+            raw_widths = payload.get("widths", {})
+            widths: Dict[str, int] = {}
+            if isinstance(raw_widths, dict):
+                for raw_key, raw_width in raw_widths.items():
+                    key = str(raw_key or "").strip()
+                    if key not in known_keys:
+                        continue
+                    width = self._safe_int(raw_width, 0)
+                    if width > 0:
+                        widths[key] = width
+
+            cleaned[view_name] = {
+                "visible_columns": visible_columns,
+                "widths": widths,
+            }
+
+        return cleaned
+
+    def _store_saved_torrent_views(self, views: Dict[str, Dict[str, Any]]):
+        """Store named torrent-table views into QSettings."""
+        settings = self._new_settings()
+        payload = views if isinstance(views, dict) else {}
+        settings.setValue(
+            "torrentColumnNamedViewsJson",
+            json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+        )
+        settings.sync()
+
+    def _refresh_saved_torrent_views_menu(self):
+        """Rebuild the Saved Views submenu from QSettings."""
+        menu = getattr(self, "saved_torrent_views_menu", None)
+        if menu is None:
+            return
+
+        menu.clear()
+        views = self._saved_torrent_views()
+        if not views:
+            empty_action = QAction("(No saved views)", self)
+            empty_action.setEnabled(False)
+            menu.addAction(empty_action)
+            return
+
+        for view_name in sorted(views.keys(), key=lambda name: name.lower()):
+            action = QAction(view_name, self)
+            action.triggered.connect(
+                lambda _checked=False, name=view_name: self._apply_saved_torrent_view(name)
+            )
+            menu.addAction(action)
+
+    def _apply_saved_torrent_view(self, view_name: str):
+        """Apply one named saved torrent-table view."""
+        name = str(view_name or "").strip()
+        if not name:
+            return
+        views = self._saved_torrent_views()
+        payload = views.get(name, {})
+        visible_columns = payload.get("visible_columns", []) if isinstance(payload, dict) else []
+        widths = payload.get("widths", {}) if isinstance(payload, dict) else {}
+        if not isinstance(visible_columns, list):
+            self._set_status(f"Saved view is invalid: {name}")
+            return
+        self._apply_torrent_view(visible_columns, widths=widths if isinstance(widths, dict) else {})
+        self._set_status(f"Applied view: {name}")
+
+    def _save_current_torrent_view(self):
+        """Prompt for a name and save current column visibility/widths as a named view."""
+        name, ok = QInputDialog.getText(
+            self,
+            "Save Torrent View",
+            "View name:",
+        )
+        if not ok:
+            return
+        view_name = str(name or "").strip()
+        if not view_name:
+            self._set_status("View name cannot be empty")
+            return
+
+        payload = self._current_torrent_view_payload()
+        if not payload.get("visible_columns"):
+            self._set_status("Cannot save a view with no visible columns")
+            return
+
+        views = self._saved_torrent_views()
+        views[view_name] = payload
+        self._store_saved_torrent_views(views)
+        self._refresh_saved_torrent_views_menu()
+        self._set_status(f"Saved view: {view_name}")
+
+    def _apply_basic_torrent_view(self):
+        """Apply built-in Basic torrent-table view preset."""
+        self._apply_torrent_view(list(BASIC_TORRENT_VIEW_KEYS))
+        self._set_status("Applied view: Basic")
+
+    def _apply_medium_torrent_view(self):
+        """Apply built-in Medium torrent-table view preset."""
+        self._apply_torrent_view(list(MEDIUM_TORRENT_VIEW_KEYS))
+        self._set_status("Applied view: Medium")
+
     def _fit_torrent_columns(self):
         """Resize visible torrent table columns to fit their contents."""
         self.tbl_torrents.resizeColumnsToContents()
@@ -1964,10 +2703,14 @@ class MainWindow(QMainWindow):
         add_action.triggered.connect(self._show_add_torrent_dialog)
         file_menu.addAction(add_action)
 
+        export_action = QAction("&Export Torrent...", self)
+        export_action.triggered.connect(self._export_selected_torrents)
+        file_menu.addAction(export_action)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)
-        exit_action.setShortcut("Ctrl+Q")
+        exit_action.setShortcuts([QKeySequence("Ctrl+Q"), QKeySequence("Alt+X")])
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
@@ -2013,18 +2756,6 @@ class MainWindow(QMainWindow):
         action_bottom_priority.setShortcut("Ctrl+Shift+-")
         action_bottom_priority.triggered.connect(self._minimum_torrent_priority)
         edit_menu.addAction(action_bottom_priority)
-
-        edit_menu.addSeparator()
-
-        action_set_torrent_dl_limit = QAction("Set Torrent &Download Limit...", self)
-        action_set_torrent_dl_limit.setShortcut("Ctrl+Alt+D")
-        action_set_torrent_dl_limit.triggered.connect(self._set_torrent_download_limit)
-        edit_menu.addAction(action_set_torrent_dl_limit)
-
-        action_set_torrent_ul_limit = QAction("Set Torrent &Upload Limit...", self)
-        action_set_torrent_ul_limit.setShortcut("Ctrl+Alt+U")
-        action_set_torrent_ul_limit.triggered.connect(self._set_torrent_upload_limit)
-        edit_menu.addAction(action_set_torrent_ul_limit)
 
         edit_menu.addSeparator()
 
@@ -2131,9 +2862,19 @@ class MainWindow(QMainWindow):
         self.action_clipboard_monitor.triggered.connect(self._toggle_clipboard_monitor)
         tools_menu.addAction(self.action_clipboard_monitor)
 
+        self.action_debug_logging = QAction("Enable &Debug logging", self)
+        self.action_debug_logging.setCheckable(True)
+        self.action_debug_logging.setChecked(self.debug_logging_enabled)
+        self.action_debug_logging.triggered.connect(self._toggle_debug_logging)
+        tools_menu.addAction(self.action_debug_logging)
+
         action_edit_ini = QAction("&Edit .ini file", self)
         action_edit_ini.triggered.connect(self._edit_settings_ini_file)
         tools_menu.addAction(action_edit_ini)
+
+        action_edit_app_preferences = QAction("Edit App Preferences", self)
+        action_edit_app_preferences.triggered.connect(self._show_app_preferences_editor)
+        tools_menu.addAction(action_edit_app_preferences)
 
         tools_menu.addSeparator()
 
@@ -2258,6 +2999,7 @@ class MainWindow(QMainWindow):
             ),
             'FORCE_SCHEME_FROM_HOST': True,
             'VERIFY_WEBUI_CERTIFICATE': False,
+            'DISABLE_LOGGING_DEBUG_OUTPUT': False
         }
         if extra_headers:
             conn['EXTRA_HEADERS'] = extra_headers
@@ -2266,7 +3008,12 @@ class MainWindow(QMainWindow):
 
     def _create_client(self) -> qbittorrentapi.Client:
         """Create and authenticate a qBittorrent API client."""
-        qb = qbittorrentapi.Client(**self.qb_conn_info)
+        qb_client = qbittorrentapi.Client(**self.qb_conn_info)
+        qb = (
+            _DebugAPIClientProxy(qb_client, self)
+            if self.debug_logging_enabled
+            else qb_client
+        )
         qb.auth_log_in()
         return qb
 
@@ -2420,6 +3167,18 @@ class MainWindow(QMainWindow):
         self._default_right_splitter_state = self.right_splitter.saveState()
         self._default_torrent_header_state = self.tbl_torrents.horizontalHeader().saveState()
 
+    def _apply_default_main_splitter_width(self):
+        """Apply default left-panel width in pixels on current splitter geometry."""
+        total_width = self.main_splitter.width()
+        if total_width <= 0:
+            total_width = self.width()
+        if total_width <= 0:
+            total_width = DEFAULT_WINDOW_WIDTH
+
+        left_width = min(max(1, int(DEFAULT_LEFT_PANEL_WIDTH)), max(1, total_width - 1))
+        right_width = max(1, total_width - left_width)
+        self.main_splitter.setSizes([left_width, right_width])
+
     def _apply_default_torrent_header_layout(self):
         """Apply default torrent-table column order/widths/sort indicator."""
         header = self.tbl_torrents.horizontalHeader()
@@ -2441,12 +3200,9 @@ class MainWindow(QMainWindow):
     def _restore_default_view_state(self):
         """Restore baseline splitter/header states for Reset View."""
         try:
-            if getattr(self, "_default_main_splitter_state", None):
-                self.main_splitter.restoreState(self._default_main_splitter_state)
-            else:
-                self.main_splitter.setSizes([250, 1000])
+            self._apply_default_main_splitter_width()
         except Exception:
-            self.main_splitter.setSizes([250, 1000])
+            self.main_splitter.setSizes([DEFAULT_LEFT_PANEL_WIDTH, 1000])
 
         try:
             if getattr(self, "_default_right_splitter_state", None):
@@ -2482,14 +3238,17 @@ class MainWindow(QMainWindow):
             return False
         return default
 
-    @staticmethod
-    def _new_settings() -> QSettings:
+    def _settings_app_name(self) -> str:
+        """Return per-instance QSettings app name."""
+        return settings_app_name_for_instance(self.instance_id)
+
+    def _new_settings(self) -> QSettings:
         """Create QSettings configured to use INI backend."""
         return QSettings(
             QSettings.Format.IniFormat,
             QSettings.Scope.UserScope,
             G_ORG_NAME,
-            G_APP_NAME,
+            self._settings_app_name(),
         )
 
     def _settings_ini_path(self) -> Path:
@@ -2497,7 +3256,8 @@ class MainWindow(QMainWindow):
         settings = self._new_settings()
         settings.sync()
         file_name = str(settings.fileName() or "").strip()
-        return Path(file_name) if file_name else Path(f"{G_APP_NAME}.ini").resolve()
+        fallback_name = f"{self._settings_app_name()}.ini"
+        return Path(file_name) if file_name else Path(fallback_name).resolve()
 
     def _save_refresh_settings(self):
         """Persist only auto-refresh runtime settings."""
@@ -2650,6 +3410,8 @@ class MainWindow(QMainWindow):
         main_sizes = settings.value("mainSplitter")
         if main_sizes:
             self.main_splitter.restoreState(main_sizes)
+        else:
+            self._apply_default_main_splitter_width()
         right_sizes = settings.value("rightSplitter")
         if right_sizes:
             self.right_splitter.restoreState(right_sizes)
@@ -2658,8 +3420,9 @@ class MainWindow(QMainWindow):
         header_state = settings.value("torrentTableHeader")
         if header_state:
             self.tbl_torrents.horizontalHeader().restoreState(header_state)
+        has_hidden_columns_key = settings.contains("torrentTableHiddenColumns")
         hidden_columns = settings.value("torrentTableHiddenColumns")
-        if hidden_columns:
+        if has_hidden_columns_key:
             if isinstance(hidden_columns, str):
                 hidden_list = [hidden_columns]
             elif isinstance(hidden_columns, (list, tuple, set)):
@@ -2668,7 +3431,13 @@ class MainWindow(QMainWindow):
                 hidden_list = []
             self._apply_hidden_columns_by_keys(hidden_list)
         else:
-            self._sync_torrent_column_actions()
+            medium_keys = set(MEDIUM_TORRENT_VIEW_KEYS)
+            hidden_default = [
+                col["key"]
+                for col in self.torrent_columns
+                if col["key"] not in medium_keys
+            ]
+            self._apply_hidden_columns_by_keys(hidden_default)
 
         # Filter selection
         status = settings.value("filterStatus")
@@ -2727,6 +3496,14 @@ class MainWindow(QMainWindow):
         if self.clipboard_monitor_enabled:
             QTimer.singleShot(0, self._on_clipboard_changed)
 
+        # Debug logging
+        self.debug_logging_enabled = self._to_bool(
+            settings.value("debugLoggingEnabled"),
+            self.debug_logging_enabled,
+        )
+        if hasattr(self, "action_debug_logging"):
+            self.action_debug_logging.setChecked(self.debug_logging_enabled)
+
     def _save_settings(self):
         """Save window geometry, splitter sizes, column widths, sort order,
         and filter selection to QSettings."""
@@ -2764,6 +3541,7 @@ class MainWindow(QMainWindow):
         settings.setValue("displaySizeMode", self.display_size_mode)
         settings.setValue("displaySpeedMode", self.display_speed_mode)
         settings.setValue("clipboardMonitorEnabled", bool(self.clipboard_monitor_enabled))
+        settings.setValue("debugLoggingEnabled", bool(self.debug_logging_enabled))
 
     # ========================================================================
     # Initial Data Loading
@@ -2816,7 +3594,7 @@ class MainWindow(QMainWindow):
             return {'data': [], 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
     def _selected_remote_torrent_filters(self) -> Dict[str, Any]:
-        """Build remote API filter kwargs from selected status/category/tag filters."""
+        """Build remote API filter kwargs from selected status/category/tag/private filters."""
         filters: Dict[str, Any] = {}
 
         status = str(self.current_status_filter or "").strip()
@@ -2828,6 +3606,9 @@ class MainWindow(QMainWindow):
 
         if self.current_tag_filter is not None:
             filters["tag"] = str(self.current_tag_filter or "")
+
+        if self.current_private_filter is not None:
+            filters["private"] = bool(self.current_private_filter)
 
         return filters
 
@@ -3150,6 +3931,67 @@ class MainWindow(QMainWindow):
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
+    def _api_export_torrents(
+        self,
+        torrent_hashes: List[str],
+        export_dir: str,
+        name_map: Dict[str, str],
+        **_kw,
+    ) -> Dict:
+        """Export selected torrents into .torrent files in the target directory."""
+        start_time = time.time()
+        try:
+            destination_text = str(export_dir or "").strip()
+            if not destination_text:
+                raise ValueError("Missing export directory")
+            destination = Path(destination_text)
+            destination.mkdir(parents=True, exist_ok=True)
+
+            normalized_hashes = [str(h or "").strip() for h in list(torrent_hashes or []) if str(h or "").strip()]
+            if not normalized_hashes:
+                raise ValueError("No torrents selected for export")
+
+            exported_files: List[str] = []
+            failed: Dict[str, str] = {}
+            used_names: set = set()
+            with self._create_client() as qb:
+                for torrent_hash in normalized_hashes:
+                    try:
+                        payload = qb.torrents_export(torrent_hash=torrent_hash)
+                        file_path = self._unique_export_file_path(
+                            destination,
+                            str((name_map or {}).get(torrent_hash, "") or torrent_hash),
+                            torrent_hash,
+                            used_names,
+                        )
+                        with open(file_path, "wb") as handle:
+                            handle.write(bytes(payload or b""))
+                        exported_files.append(str(file_path))
+                    except Exception as ex:
+                        failed[torrent_hash] = str(ex)
+
+            elapsed = time.time() - start_time
+            if failed:
+                return {
+                    'data': {'exported': exported_files, 'failed': failed},
+                    'elapsed': elapsed,
+                    'success': False,
+                    'error': "Some torrent exports failed",
+                }
+            return {
+                'data': {'exported': exported_files, 'failed': {}},
+                'elapsed': elapsed,
+                'success': True,
+            }
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {
+                'data': {'exported': [], 'failed': {}},
+                'elapsed': elapsed,
+                'success': False,
+                'error': str(e),
+            }
+
     def _api_pause_torrent(self, torrent_hashes: List[str], **_kw) -> Dict:
         """Pause one or more torrents via API."""
         start_time = time.time()
@@ -3321,6 +4163,18 @@ class MainWindow(QMainWindow):
                             "Editing incomplete save path is not supported by this qBittorrent version."
                         )
 
+                if "download_limit_bytes" in normalized_updates:
+                    qb.torrents_set_download_limit(
+                        torrent_hashes=hashes,
+                        limit=max(0, int(normalized_updates.get("download_limit_bytes", 0))),
+                    )
+
+                if "upload_limit_bytes" in normalized_updates:
+                    qb.torrents_set_upload_limit(
+                        torrent_hashes=hashes,
+                        limit=max(0, int(normalized_updates.get("upload_limit_bytes", 0))),
+                    )
+
             elapsed = time.time() - start_time
             return {'data': True, 'elapsed': elapsed, 'success': True}
         except Exception as e:
@@ -3466,6 +4320,39 @@ class MainWindow(QMainWindow):
         except Exception as e:
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_fetch_app_preferences(self, **_kw) -> Dict:
+        """Fetch raw qBittorrent application preferences."""
+        start_time = time.time()
+        try:
+            with self._create_client() as qb:
+                prefs_raw = qb.app_preferences()
+            prefs = self._entry_to_dict(prefs_raw)
+            elapsed = time.time() - start_time
+            return {'data': prefs, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_apply_app_preferences(self, updates: Dict[str, Any], **_kw) -> Dict:
+        """Apply only changed application preferences."""
+        start_time = time.time()
+        try:
+            normalized_updates = dict(updates or {})
+            if not normalized_updates:
+                elapsed = time.time() - start_time
+                return {'data': {'applied': 0}, 'elapsed': elapsed, 'success': True}
+            with self._create_client() as qb:
+                qb.app_set_preferences(prefs=normalized_updates)
+            elapsed = time.time() - start_time
+            return {
+                'data': {'applied': len(normalized_updates)},
+                'elapsed': elapsed,
+                'success': True,
+            }
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': {'applied': 0}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
     def _api_set_content_priority(
         self,
@@ -3677,6 +4564,25 @@ class MainWindow(QMainWindow):
         except Exception as e:
             elapsed = time.time() - start_time
             return {'data': False, 'elapsed': elapsed, 'success': False, 'error': str(e)}
+
+    def _api_ban_peers(self, peers: List[str], **_kw) -> Dict:
+        """Ban one or more peer endpoints (IP:port) globally in qBittorrent."""
+        start_time = time.time()
+        try:
+            endpoints = [
+                str(peer or "").strip()
+                for peer in list(peers or [])
+                if str(peer or "").strip()
+            ]
+            if not endpoints:
+                raise ValueError("No peer endpoints provided")
+            with self._create_client() as qb:
+                qb.transfer_ban_peers(peers=endpoints)
+            elapsed = time.time() - start_time
+            return {'data': {'peers': endpoints}, 'elapsed': elapsed, 'success': True}
+        except Exception as e:
+            elapsed = time.time() - start_time
+            return {'data': {'peers': []}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
     # ========================================================================
     # API Callbacks
@@ -4317,7 +5223,7 @@ class MainWindow(QMainWindow):
                 try:
                     filtered = [
                         t for t in filtered
-                        if bool(getattr(t, 'is_private', False)) == self.current_private_filter
+                        if bool(getattr(t, "private", False)) == self.current_private_filter
                     ]
                 except Exception as e:
                     self._log("ERROR", f"Error applying private filter: {e}")
@@ -4507,54 +5413,82 @@ class MainWindow(QMainWindow):
         align_right = Qt.AlignmentFlag.AlignRight
         align_center = Qt.AlignmentFlag.AlignCenter
 
-        if column_key == "hash":
-            return str(getattr(torrent, "hash", "") or ""), align_left, None
-        if column_key == "name":
-            return str(getattr(torrent, "name", "") or ""), align_left, None
-        if column_key in {"size", "total_size", "downloaded", "uploaded"}:
-            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+        def _raw_value(key: str, default: Any = None) -> Any:
+            return getattr(torrent, key, default)
+
+        def _as_bool(value: Any) -> Optional[bool]:
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            text = str(value).strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            if text in {"0", "false", "no", "off"}:
+                return False
+            return None
+
+        if column_key in {"hash", "name", "state", "category", "save_path", "content_path", "magnet_uri"}:
+            return str(_raw_value(column_key, "") or ""), align_left, None
+        if column_key in {
+            "size",
+            "total_size",
+            "downloaded",
+            "uploaded",
+            "amount_left",
+            "completed",
+            "downloaded_session",
+            "uploaded_session",
+        }:
+            raw = self._safe_int(_raw_value(column_key, 0), 0)
             return format_size_mode(raw, self.display_size_mode), align_right, float(raw)
         if column_key == "progress":
-            raw = self._safe_float(getattr(torrent, "progress", 0), 0.0)
+            raw = self._safe_float(_raw_value("progress", 0), 0.0)
             return f"{raw * 100:.1f}%", align_right, float(raw)
-        if column_key == "state":
-            return str(getattr(torrent, "state", "") or ""), align_left, None
-        if column_key in {"dlspeed", "upspeed"}:
-            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+        if column_key in {"dlspeed", "upspeed", "dl_limit", "up_limit"}:
+            raw = self._safe_int(_raw_value(column_key, 0), 0)
             return format_speed_mode(raw, self.display_speed_mode), align_right, float(raw)
-        if column_key == "ratio":
-            raw = self._safe_float(getattr(torrent, "ratio", 0), 0.0)
+        if column_key in {"ratio", "availability", "max_ratio", "ratio_limit"}:
+            raw = self._safe_float(_raw_value(column_key, 0), 0.0)
             return format_float(raw), align_right, float(raw)
-        if column_key in {"num_seeds", "num_leechs", "num_complete", "num_incomplete", "num_files"}:
-            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+        if column_key in {
+            "num_seeds",
+            "num_leechs",
+            "num_complete",
+            "num_incomplete",
+            "num_files",
+            "priority",
+        }:
+            raw = self._safe_int(_raw_value(column_key, 0), 0)
             return format_int(raw), align_right, float(raw)
-        if column_key == "eta":
-            raw = self._safe_int(getattr(torrent, "eta", 0), 0)
+        if column_key in {"eta", "reannounce", "seeding_time", "time_active"}:
+            raw = self._safe_int(_raw_value(column_key, 0), 0)
             return format_eta(raw), align_right, float(raw)
-        if column_key in {"added_on", "completion_on", "last_activity"}:
-            raw = self._safe_int(getattr(torrent, column_key, 0), 0)
+        if column_key in {"seeding_time_limit", "max_seeding_time"}:
+            raw = self._safe_int(_raw_value(column_key, 0), 0)
+            if raw < 0:
+                return "Unlimited", align_right, float(raw)
+            return format_eta(raw), align_right, float(raw)
+        if column_key in {"added_on", "completion_on", "last_activity", "seen_complete"}:
+            raw = self._safe_int(_raw_value(column_key, 0), 0)
             return format_datetime(raw), align_left, float(raw)
-        if column_key == "category":
-            return str(getattr(torrent, "category", "") or ""), align_left, None
         if column_key == "tags":
-            tags_text = ", ".join(parse_tags(getattr(torrent, "tags", None)))
+            tags_text = ", ".join(parse_tags(_raw_value("tags", None)))
             return tags_text, align_left, None
         if column_key == "tracker":
-            tracker_text = self._tracker_display_text(getattr(torrent, "tracker", ""))
+            tracker_text = self._tracker_display_text(_raw_value("tracker", ""))
             return tracker_text, align_left, None
-        if column_key == "is_private":
-            private = getattr(torrent, "is_private", None)
-            if private is True:
+        if column_key in {"auto_tmm", "force_start", "seq_dl", "f_l_piece_prio", "super_seeding", "private"}:
+            bool_value = _as_bool(_raw_value(column_key, None))
+            if bool_value is True:
                 return "Yes", align_center, 1.0
-            if private is False:
+            if bool_value is False:
                 return "No", align_center, 0.0
             return "", align_center, -1.0
-        if column_key == "save_path":
-            return str(getattr(torrent, "save_path", "") or ""), align_left, None
-        if column_key == "content_path":
-            return str(getattr(torrent, "content_path", "") or ""), align_left, None
 
-        return str(getattr(torrent, column_key, "") or ""), align_left, None
+        return str(_raw_value(column_key, "") or ""), align_left, None
 
     def _update_torrents_table(self):
         """Update the torrents table with filtered data"""
@@ -4601,6 +5535,170 @@ class MainWindow(QMainWindow):
         self._set_status("General details copied to clipboard")
 
     @staticmethod
+    def _details_table_has_data_rows(table: QTableWidget) -> bool:
+        """Return True when details table contains actual data rows (not info placeholder)."""
+        if table.rowCount() <= 0 or table.columnCount() <= 0:
+            return False
+        if table.columnCount() == 1:
+            header = table.horizontalHeaderItem(0)
+            if header and str(header.text() or "").strip().lower() == "info":
+                return False
+        return True
+
+    @staticmethod
+    def _details_table_column_index(table: QTableWidget, column_name: str) -> int:
+        """Find one details-table column index by header name (case-insensitive)."""
+        target = str(column_name or "").strip().lower()
+        if not target:
+            return -1
+        for col_idx in range(table.columnCount()):
+            header = table.horizontalHeaderItem(col_idx)
+            if not header:
+                continue
+            if str(header.text() or "").strip().lower() == target:
+                return col_idx
+        return -1
+
+    @staticmethod
+    def _selected_table_row(table: QTableWidget) -> Optional[int]:
+        """Return first selected row index for table, if any."""
+        sel_model = table.selectionModel()
+        if sel_model:
+            selected_rows = sel_model.selectedRows()
+            if selected_rows:
+                return selected_rows[0].row()
+        current = table.currentRow()
+        return current if current >= 0 else None
+
+    def _details_table_to_tsv(self, table: QTableWidget, row_indexes: Optional[List[int]] = None) -> str:
+        """Serialize one details table subset to TSV (header + rows)."""
+        headers: List[str] = []
+        for col_idx in range(table.columnCount()):
+            header = table.horizontalHeaderItem(col_idx)
+            headers.append(str(header.text() if header else f"column_{col_idx}"))
+
+        rows = list(row_indexes) if row_indexes is not None else list(range(table.rowCount()))
+        lines = ["\t".join(headers)]
+        for row_idx in rows:
+            values: List[str] = []
+            for col_idx in range(table.columnCount()):
+                item = table.item(row_idx, col_idx)
+                values.append(str(item.text() if item else ""))
+            lines.append("\t".join(values))
+        return "\n".join(lines)
+
+    def _selected_peer_endpoint(self) -> str:
+        """Return selected peer endpoint as IP:port."""
+        if not self._details_table_has_data_rows(self.tbl_peers):
+            return ""
+        row_idx = self._selected_table_row(self.tbl_peers)
+        if row_idx is None:
+            return ""
+        ip_col = self._details_table_column_index(self.tbl_peers, "ip")
+        port_col = self._details_table_column_index(self.tbl_peers, "port")
+        if ip_col < 0 or port_col < 0:
+            return ""
+
+        ip_item = self.tbl_peers.item(row_idx, ip_col)
+        port_item = self.tbl_peers.item(row_idx, port_col)
+        ip_text = str(ip_item.text() if ip_item else "").strip()
+        port_text = str(port_item.text() if port_item else "").strip()
+        if not ip_text or not port_text:
+            return ""
+        return f"{ip_text}:{port_text}"
+
+    def _copy_all_peers_info(self):
+        """Copy all currently visible peers rows (including headers) to clipboard."""
+        if not self._details_table_has_data_rows(self.tbl_peers):
+            self._set_status("No peers info to copy")
+            return
+        text = self._details_table_to_tsv(self.tbl_peers)
+        QApplication.clipboard().setText(text)
+        self._set_status("All peers info copied to clipboard")
+
+    def _copy_selected_peer_info(self):
+        """Copy selected peer row (including headers) to clipboard."""
+        if not self._details_table_has_data_rows(self.tbl_peers):
+            self._set_status("No peers info to copy")
+            return
+        row_idx = self._selected_table_row(self.tbl_peers)
+        if row_idx is None:
+            self._set_status("Select one peer first")
+            return
+        text = self._details_table_to_tsv(self.tbl_peers, [row_idx])
+        QApplication.clipboard().setText(text)
+        self._set_status("Peer info copied to clipboard")
+
+    def _copy_selected_peer_ip_port(self):
+        """Copy selected peer endpoint to clipboard."""
+        endpoint = self._selected_peer_endpoint()
+        if not endpoint:
+            self._set_status("Select one peer with valid IP and port")
+            return
+        QApplication.clipboard().setText(endpoint)
+        self._set_status("Peer IP:port copied to clipboard")
+
+    def _build_peers_context_menu(self) -> QMenu:
+        """Build context menu for peers table."""
+        menu = QMenu(self)
+        has_data = self._details_table_has_data_rows(self.tbl_peers)
+        has_selection = has_data and self._selected_table_row(self.tbl_peers) is not None
+        endpoint = self._selected_peer_endpoint()
+        has_endpoint = bool(endpoint)
+
+        action_copy_all = menu.addAction("Copy All Peers Info")
+        action_copy_all.triggered.connect(self._copy_all_peers_info)
+        action_copy_all.setEnabled(has_data)
+
+        action_copy_peer = menu.addAction("Copy Peer Info")
+        action_copy_peer.triggered.connect(self._copy_selected_peer_info)
+        action_copy_peer.setEnabled(has_selection)
+
+        action_copy_ip_port = menu.addAction("Copy Peer IP:port")
+        action_copy_ip_port.triggered.connect(self._copy_selected_peer_ip_port)
+        action_copy_ip_port.setEnabled(has_endpoint)
+
+        menu.addSeparator()
+
+        action_ban = menu.addAction("Ban Peer")
+        action_ban.triggered.connect(self._ban_selected_peer)
+        action_ban.setEnabled(has_endpoint)
+        return menu
+
+    def _show_peers_context_menu(self, pos):
+        """Show peers context menu and keep right-clicked row selected."""
+        row_idx = self.tbl_peers.rowAt(pos.y())
+        if row_idx >= 0:
+            self.tbl_peers.selectRow(row_idx)
+        menu = self._build_peers_context_menu()
+        menu.exec(self.tbl_peers.viewport().mapToGlobal(pos))
+
+    def _ban_selected_peer(self):
+        """Ban selected peer endpoint via qBittorrent API."""
+        endpoint = self._selected_peer_endpoint()
+        if not endpoint:
+            self._set_status("Select one peer with valid IP and port")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Ban Peer",
+            f"Ban peer {endpoint}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._show_progress("Banning peer...")
+        self.api_queue.add_task(
+            "ban_peer",
+            self._api_ban_peers,
+            lambda r, peer=endpoint: self._on_ban_peer_done(peer, r),
+            [endpoint],
+        )
+
+    @staticmethod
     def _display_detail_value(value: Any, fallback: str = "N/A") -> str:
         """Normalize one detail value for display."""
         if value is None:
@@ -4635,6 +5733,8 @@ class MainWindow(QMainWindow):
         self.cmb_torrent_edit_category.setEnabled(enabled_flag)
         self.txt_torrent_edit_tags.setEnabled(enabled_flag)
         self.btn_torrent_edit_add_tags.setEnabled(enabled_flag)
+        self.spn_torrent_edit_download_limit.setEnabled(enabled_flag)
+        self.spn_torrent_edit_upload_limit.setEnabled(enabled_flag)
         self.txt_torrent_edit_save_path.setEnabled(enabled_flag)
         self.btn_torrent_edit_browse_save_path.setEnabled(enabled_flag)
         self.txt_torrent_edit_incomplete_path.setEnabled(enabled_flag)
@@ -4652,6 +5752,8 @@ class MainWindow(QMainWindow):
         self.cmb_torrent_edit_category.addItems([""] + self.categories)
         self.cmb_torrent_edit_category.blockSignals(False)
         self.txt_torrent_edit_tags.clear()
+        self.spn_torrent_edit_download_limit.setValue(0)
+        self.spn_torrent_edit_upload_limit.setValue(0)
         self.txt_torrent_edit_save_path.clear()
         self.txt_torrent_edit_incomplete_path.clear()
         self._set_torrent_edit_enabled(False, message)
@@ -4700,6 +5802,8 @@ class MainWindow(QMainWindow):
         tags = parse_tags(getattr(torrent, "tags", None))
         save_path = str(getattr(torrent, "save_path", "") or "").strip()
         download_path = str(getattr(torrent, "download_path", "") or "").strip()
+        download_limit_kib = self._bytes_to_kib(getattr(torrent, "dl_limit", 0))
+        upload_limit_kib = self._bytes_to_kib(getattr(torrent, "up_limit", 0))
 
         self._torrent_edit_original = {
             "hash": str(getattr(torrent, "hash", "") or ""),
@@ -4709,6 +5813,8 @@ class MainWindow(QMainWindow):
             "tags": ",".join(tags),
             "save_path": save_path,
             "download_path": download_path,
+            "download_limit_kib": download_limit_kib,
+            "upload_limit_kib": upload_limit_kib,
         }
 
         if auto_tmm is None:
@@ -4721,6 +5827,8 @@ class MainWindow(QMainWindow):
         self.txt_torrent_edit_name.setText(torrent_name)
         self._refresh_torrent_edit_categories(category)
         self.txt_torrent_edit_tags.setText(", ".join(tags))
+        self.spn_torrent_edit_download_limit.setValue(download_limit_kib)
+        self.spn_torrent_edit_upload_limit.setValue(upload_limit_kib)
         self.txt_torrent_edit_save_path.setText(save_path)
         self.txt_torrent_edit_incomplete_path.setText(download_path)
 
@@ -5044,8 +6152,8 @@ class MainWindow(QMainWindow):
 
             completion_on = getattr(torrent, 'completion_on', 0)
             last_activity = getattr(torrent, 'last_activity', 0)
-            is_private = getattr(torrent, 'is_private', None)
-            private_str = 'Yes' if is_private else ('No' if is_private is False else 'N/A')
+            private_value = getattr(torrent, 'private', None)
+            private_str = 'Yes' if private_value else ('No' if private_value is False else 'N/A')
             num_files = getattr(torrent, 'num_files', 'N/A')
             content_path = self._display_detail_value(getattr(torrent, 'content_path', None))
             tracker_url = getattr(torrent, 'tracker', '') or ''
@@ -5158,6 +6266,16 @@ class MainWindow(QMainWindow):
         if new_tags != str(original.get("tags", "") or ""):
             updates["tags"] = new_tags
 
+        new_download_limit_kib = self._safe_int(self.spn_torrent_edit_download_limit.value(), 0)
+        old_download_limit_kib = self._safe_int(original.get("download_limit_kib", 0), 0)
+        if new_download_limit_kib != old_download_limit_kib:
+            updates["download_limit_bytes"] = self._kib_to_bytes(new_download_limit_kib)
+
+        new_upload_limit_kib = self._safe_int(self.spn_torrent_edit_upload_limit.value(), 0)
+        old_upload_limit_kib = self._safe_int(original.get("upload_limit_kib", 0), 0)
+        if new_upload_limit_kib != old_upload_limit_kib:
+            updates["upload_limit_bytes"] = self._kib_to_bytes(new_upload_limit_kib)
+
         new_save_path = str(self.txt_torrent_edit_save_path.text() or "").strip()
         if new_save_path != str(original.get("save_path", "") or ""):
             updates["save_path"] = new_save_path
@@ -5232,6 +6350,102 @@ class MainWindow(QMainWindow):
                     self._on_add_torrent_complete,
                     torrent_data
                 )
+
+    @staticmethod
+    def _sanitize_export_filename(name: Any, fallback: str = "torrent") -> str:
+        """Sanitize one torrent name for safe local .torrent filenames."""
+        text = str(name or "").strip()
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", text)
+        text = text.strip().strip(".")
+        text = re.sub(r"\s+", " ", text)
+        return text or fallback
+
+    @staticmethod
+    def _unique_export_file_path(export_dir: Path, base_name: str, torrent_hash: str, used_names: set) -> Path:
+        """Return a unique destination file path for one exported torrent file."""
+        sanitized_base = MainWindow._sanitize_export_filename(base_name, fallback=torrent_hash[:12] or "torrent")
+        candidate_name = f"{sanitized_base}.torrent"
+        candidate_path = export_dir / candidate_name
+        if candidate_name not in used_names and not candidate_path.exists():
+            used_names.add(candidate_name)
+            return candidate_path
+
+        suffix = str(torrent_hash or "")[:8] or "dup"
+        candidate_name = f"{sanitized_base}-{suffix}.torrent"
+        candidate_path = export_dir / candidate_name
+        counter = 2
+        while candidate_name in used_names or candidate_path.exists():
+            candidate_name = f"{sanitized_base}-{suffix}-{counter}.torrent"
+            candidate_path = export_dir / candidate_name
+            counter += 1
+        used_names.add(candidate_name)
+        return candidate_path
+
+    def _build_selected_torrent_name_map(self, torrent_hashes: List[str]) -> Dict[str, str]:
+        """Build hash->name mapping for selected torrents to name exported files."""
+        name_map: Dict[str, str] = {}
+        for torrent_hash in list(torrent_hashes or []):
+            torrent = self._find_torrent_by_hash(str(torrent_hash or ""))
+            name_map[str(torrent_hash or "")] = str(getattr(torrent, "name", "") or "")
+        return name_map
+
+    def _export_selected_torrents(self):
+        """Prompt destination directory and export selected torrents as .torrent files."""
+        torrent_hashes = self._get_selected_torrent_hashes()
+        if not torrent_hashes:
+            self._set_status("Select at least one torrent to export")
+            return
+
+        initial_dir = str(Path.home())
+        export_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Export Directory",
+            initial_dir,
+        )
+        if not export_dir:
+            return
+
+        name_map = self._build_selected_torrent_name_map(torrent_hashes)
+        count = len(torrent_hashes)
+        progress_text = (
+            "Exporting torrent..."
+            if count == 1
+            else f"Exporting {count} torrents..."
+        )
+        self._show_progress(progress_text)
+        self.api_queue.add_task(
+            "export_selected_torrents",
+            self._api_export_torrents,
+            self._on_export_selected_torrents_done,
+            torrent_hashes,
+            export_dir,
+            name_map,
+        )
+
+    def _on_export_selected_torrents_done(self, result: Dict):
+        """Handle completion of selected-torrent export action."""
+        data = result.get("data", {}) or {}
+        exported = list(data.get("exported", []) or [])
+        failed = dict(data.get("failed", {}) or {})
+        exported_count = len(exported)
+        failed_count = len(failed)
+        if result.get("success"):
+            self._log("INFO", f"Export Torrent succeeded ({exported_count} file(s))", result.get("elapsed", 0))
+            self._set_status(
+                "Exported 1 torrent file"
+                if exported_count == 1
+                else f"Exported {exported_count} torrent files"
+            )
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"Export Torrent failed: {error}", result.get("elapsed", 0))
+            if exported_count > 0:
+                self._set_status(
+                    f"Exported {exported_count} torrent files, {failed_count} failed"
+                )
+            else:
+                self._set_status(f"Export Torrent failed: {error}")
+        self._hide_progress()
 
     def _find_torrent_by_hash(self, torrent_hash: str):
         """Find one torrent object by hash, preferring the currently filtered list."""
@@ -5420,6 +6634,23 @@ class MainWindow(QMainWindow):
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
 
+    def _on_ban_peer_done(self, endpoint: str, result: Dict):
+        """Callback for peer ban action."""
+        if result.get("success"):
+            self._log("INFO", f"Ban Peer succeeded: {endpoint}", result.get("elapsed", 0))
+            self._set_status(f"Banned peer: {endpoint}")
+            torrent_hash = self._selected_torrent_hash().strip()
+            if torrent_hash:
+                QTimer.singleShot(
+                    300,
+                    lambda h=torrent_hash: self._load_selected_torrent_network_details(h),
+                )
+        else:
+            error = result.get("error", "Unknown error")
+            self._log("ERROR", f"Ban Peer failed: {error}", result.get("elapsed", 0))
+            self._set_status(f"Ban Peer failed: {error}")
+        self._hide_progress()
+
     def _queue_bulk_torrent_action(self, task_name: str, api_method, action_name: str,
                                    singular_progress: str, plural_progress: str):
         """Queue a bulk action for currently selected torrents."""
@@ -5521,6 +6752,14 @@ class MainWindow(QMainWindow):
         """Convert KiB/s to bytes/s for API calls."""
         return max(0, int(limit_kib)) * 1024
 
+    @staticmethod
+    def _bytes_to_kib(limit_bytes: Any) -> int:
+        """Convert bytes/s to KiB/s for UI controls."""
+        try:
+            return max(0, int(limit_bytes)) // 1024
+        except Exception:
+            return 0
+
     def _prompt_limit_kib(self, title: str, label: str) -> Optional[int]:
         """Prompt for a speed limit in KiB/s (0 means unlimited)."""
         value, ok = QInputDialog.getInt(
@@ -5600,6 +6839,88 @@ class MainWindow(QMainWindow):
             error = result.get("error", "Unknown error")
             self._log("ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0))
             self._set_status(f"{action_name} failed: {error}")
+        self._hide_progress()
+
+    def _show_app_preferences_editor(self):
+        """Open application preferences editor dialog."""
+        if self._app_preferences_dialog is not None and self._app_preferences_dialog.isVisible():
+            self._app_preferences_dialog.raise_()
+            self._app_preferences_dialog.activateWindow()
+            self._request_app_preferences_refresh()
+            return
+
+        dialog = AppPreferencesDialog(self)
+        dialog.apply_requested.connect(self._on_app_preferences_apply_requested)
+        dialog.finished.connect(self._on_app_preferences_dialog_closed)
+        self._app_preferences_dialog = dialog
+        dialog.show()
+        self._request_app_preferences_refresh()
+
+    def _on_app_preferences_dialog_closed(self, _result: int):
+        """Clear cached app-preferences dialog reference."""
+        self._app_preferences_dialog = None
+
+    def _set_app_preferences_dialog_busy(self, busy: bool, message: str = ""):
+        """Set app-preferences dialog busy state when open."""
+        dialog = self._app_preferences_dialog
+        if dialog is None:
+            return
+        if not dialog.isVisible():
+            return
+        dialog.set_busy(bool(busy), message)
+
+    def _request_app_preferences_refresh(self):
+        """Load raw app preferences into editor dialog."""
+        self._show_progress("Loading app preferences...")
+        self._set_app_preferences_dialog_busy(True, "Loading application preferences...")
+        self.api_queue.add_task(
+            "fetch_app_preferences",
+            self._api_fetch_app_preferences,
+            self._on_app_preferences_loaded,
+        )
+
+    def _on_app_preferences_loaded(self, result: Dict):
+        """Populate app-preferences dialog from API response."""
+        dialog = self._app_preferences_dialog
+        if result.get("success"):
+            data = result.get("data", {}) or {}
+            if dialog is not None and dialog.isVisible():
+                dialog.set_preferences(data if isinstance(data, dict) else {})
+                dialog.set_busy(False, "Loaded")
+            self._set_status("App preferences loaded")
+        else:
+            error = result.get("error", "Unknown error")
+            if dialog is not None and dialog.isVisible():
+                dialog.set_busy(False, f"Failed: {error}")
+            self._set_status(f"Failed to load app preferences: {error}")
+        self._hide_progress()
+
+    def _on_app_preferences_apply_requested(self, changed_preferences: Dict[str, Any]):
+        """Queue changed app preferences from editor dialog."""
+        updates = dict(changed_preferences or {})
+        if not updates:
+            self._set_status("No app preference changes to apply")
+            self._set_app_preferences_dialog_busy(False, "No changed preferences to apply.")
+            return
+        self._show_progress("Applying app preferences...")
+        self._set_app_preferences_dialog_busy(True, "Applying application preferences...")
+        self.api_queue.add_task(
+            "apply_app_preferences",
+            self._api_apply_app_preferences,
+            self._on_app_preferences_applied,
+            updates,
+        )
+
+    def _on_app_preferences_applied(self, result: Dict):
+        """Handle completion of app preferences apply."""
+        if result.get("success"):
+            self._set_status("App preferences applied")
+            self._set_app_preferences_dialog_busy(False, "Applied")
+            self._request_app_preferences_refresh()
+            return
+        error = result.get("error", "Unknown error")
+        self._set_status(f"Failed to apply app preferences: {error}")
+        self._set_app_preferences_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
 
     def _show_speed_limits_manager(self):
@@ -6446,6 +7767,17 @@ class MainWindow(QMainWindow):
             self._log("INFO", "Auto-refresh disabled")
         self._save_refresh_settings()
 
+    def _toggle_debug_logging(self, checked: bool):
+        """Enable/disable comprehensive debug logging including API calls/responses."""
+        self.debug_logging_enabled = bool(checked)
+        if self.debug_logging_enabled:
+            self._log("INFO", "Debug logging enabled (API calls/responses)")
+            self._set_status("Debug logging enabled")
+        else:
+            self._log("INFO", "Debug logging disabled")
+            self._set_status("Debug logging disabled")
+        self._save_settings()
+
     def _toggle_human_readable(self, checked: bool):
         """Toggle display of size/speed values between human-readable and bytes."""
         mode = "human_readable" if checked else "bytes"
@@ -6498,6 +7830,14 @@ class MainWindow(QMainWindow):
         """Set status bar message"""
         self.lbl_status.setText(message)
 
+    def _bring_to_front_startup(self):
+        """Bring the main window to front shortly after startup."""
+        try:
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Handle Enter in content tree consistently across Qt styles/platforms."""
         if (
@@ -6521,11 +7861,63 @@ class MainWindow(QMainWindow):
             up_text = format_speed_mode(total_up, self.display_speed_mode) or "0"
             down_text = format_speed_mode(total_down, self.display_speed_mode) or "0"
             self.setWindowTitle(
-                f"U:{up_text} D:{down_text}"
+                self.title_bar_speed_format.format(
+                    up_text=up_text,
+                    down_text=down_text,
+                )
             )
         except Exception:
             # Keep title stable even if malformed data appears.
-            self.setWindowTitle(f"0")
+            self.setWindowTitle(
+                DEFAULT_TITLE_BAR_SPEED_FORMAT.format(
+                    up_text="0",
+                    down_text="0",
+                )
+            )
+
+    @staticmethod
+    def _safe_debug_repr(value: Any, max_len: Optional[int] = 2000) -> str:
+        """Build bounded repr for debug log messages."""
+        try:
+            text = repr(value)
+        except Exception:
+            text = f"<unrepr {type(value).__name__}>"
+        if isinstance(max_len, int) and max_len > 0 and len(text) > max_len:
+            return text[:max_len] + "...<truncated>"
+        return text
+
+    def _debug_log_api_call(self, method_name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]):
+        """Log one qBittorrent API call invocation when debug logging is enabled."""
+        if not self.debug_logging_enabled:
+            return
+        logger.debug(
+            "[API CALL] %s args=%s kwargs=%s",
+            str(method_name),
+            self._safe_debug_repr(args),
+            self._safe_debug_repr(kwargs),
+        )
+
+    def _debug_log_api_response(self, method_name: str, result: Any, elapsed: float):
+        """Log one qBittorrent API call response when debug logging is enabled."""
+        if not self.debug_logging_enabled:
+            return
+        logger.debug(
+            "[API RESP] %s elapsed=%.3fs result=%s",
+            str(method_name),
+            float(elapsed),
+            self._safe_debug_repr(result, max_len=None),
+        )
+
+    def _debug_log_api_error(self, method_name: str, error: Exception, elapsed: float):
+        """Log one qBittorrent API call failure when debug logging is enabled."""
+        if not self.debug_logging_enabled:
+            return
+        logger.debug(
+            "[API ERR] %s elapsed=%.3fs error=%s",
+            str(method_name),
+            float(elapsed),
+            self._safe_debug_repr(error),
+        )
 
     def _log(self, level: str, message: str, elapsed: Optional[float] = None):
         """Write to Python file logger."""
@@ -6602,7 +7994,9 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
         "qb_host", "qb_port", "qb_username", "qb_password",
         "http_basic_auth_username", "http_basic_auth_password",
         "log_file",
+        "title_bar_speed_format",
         "_log_file_path",
+        "_instance_id",
     }
 
     legacy_map = {
@@ -6686,6 +8080,29 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
     else:
         normalized["log_file"] = raw_log_file.strip()
 
+    # title_bar_speed_format
+    raw_title_fmt = normalized.get(
+        "title_bar_speed_format",
+        DEFAULT_TITLE_BAR_SPEED_FORMAT,
+    )
+    if not isinstance(raw_title_fmt, str) or not raw_title_fmt.strip():
+        _warn(
+            "'title_bar_speed_format' invalid; using default "
+            f"{DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
+        )
+        title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
+    else:
+        title_fmt = raw_title_fmt.strip()
+    try:
+        title_fmt.format(up_text="0", down_text="0")
+    except Exception:
+        _warn(
+            "'title_bar_speed_format' failed to format with {up_text}/{down_text}; "
+            f"using default {DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
+        )
+        title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
+    normalized["title_bar_speed_format"] = title_fmt
+
     # Unknown keys warning (except explicit internal keys)
     unknown_keys = sorted(
         key for key in normalized.keys()
@@ -6700,10 +8117,16 @@ def validate_and_normalize_config(config: Dict[str, Any], config_file: str) -> D
 
 def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
     """Configure file logging and return the handler so it can be flushed."""
+    instance_id = str(config.get("_instance_id", "") or "").strip().lower()
+    if not instance_id:
+        instance_id = compute_instance_id_from_config(config)
+    config["_instance_id"] = instance_id
+
     log_file = config.get('log_file', 'qbiremo_enhanced.log')
     if not isinstance(log_file, str) or not log_file.strip():
         log_file = 'qbiremo_enhanced.log'
     log_file = log_file.strip()
+    log_file = _append_instance_id_to_filename(log_file, instance_id)
     config['_log_file_path'] = log_file
 
     try:
@@ -6718,7 +8141,10 @@ def _setup_logging(config: Dict[str, Any]) -> logging.FileHandler:
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
     except Exception:
         # Fallback to local path if configured log path is not writable.
-        fallback_log_file = 'qbiremo_enhanced.log'
+        fallback_log_file = _append_instance_id_to_filename(
+            'qbiremo_enhanced.log',
+            instance_id,
+        )
         config['_log_file_path'] = fallback_log_file
         file_handler = logging.FileHandler(fallback_log_file, encoding='utf-8')
 
@@ -6786,6 +8212,7 @@ def main():
 
     # Load configuration (collect load-time issues before logging is configured)
     config, load_issues = load_config_with_issues(args.config_file)
+    config["_instance_id"] = compute_instance_id_from_config(config)
 
     # Set up logging *first*, then install the global exception hook
     file_handler = _setup_logging(config)
@@ -6795,6 +8222,7 @@ def main():
 
     # Validate and normalize config values now that file logging is active.
     config = validate_and_normalize_config(config, args.config_file)
+    config["_instance_id"] = compute_instance_id_from_config(config)
 
     try:
         # Create application
