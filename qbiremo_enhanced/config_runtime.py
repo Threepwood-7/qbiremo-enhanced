@@ -22,7 +22,6 @@ from .utils import (
 
 logger = logging.getLogger(G_APP_NAME)
 
-
 CONFIG_VALIDATION_KNOWN_KEYS = {
     "qb_host", "qb_port", "qb_username", "qb_password",
     "http_basic_auth_username", "http_basic_auth_password",
@@ -55,7 +54,6 @@ CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS = (
     "display_size_mode",
     "display_speed_mode",
 )
-
 
 def load_config(config_file: str) -> NormalizedConfig:
     """Load one TOML configuration file."""
@@ -97,16 +95,12 @@ def load_config_with_issues(config_file: str) -> Tuple[NormalizedConfig, List[st
 def _config_validation_warn(message: str) -> None:
     """Log one configuration validation warning message.
 
-    Side effects: None.
-    Failure modes: None.
     """
     logger.warning("Config validation: %s", message)
 
 def _config_validation_coerce_int(value: object, default: int) -> int:
     """Coerce one value to int with fallback default.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     try:
         return int(value)
@@ -116,8 +110,6 @@ def _config_validation_coerce_int(value: object, default: int) -> int:
 def _apply_legacy_config_mappings(normalized: Dict[str, object]) -> None:
     """Map legacy config keys to current keys with warnings.
 
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: None.
     """
     for old_key, new_key in CONFIG_VALIDATION_LEGACY_MAP.items():
         if new_key not in normalized and old_key in normalized:
@@ -130,8 +122,6 @@ def _apply_legacy_config_mappings(normalized: Dict[str, object]) -> None:
 def _remove_settings_managed_config_keys(normalized: Dict[str, object]) -> None:
     """Drop config keys that are intentionally managed by QSettings.
 
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: None.
     """
     for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
         if key in normalized:
@@ -141,8 +131,6 @@ def _remove_settings_managed_config_keys(normalized: Dict[str, object]) -> None:
 def _normalize_qb_host_value(normalized: Dict[str, object]) -> None:
     """Normalize qb_host value.
 
-    Side effects: None.
-    Failure modes: None.
     """
     host_val = normalized.get("qb_host", "localhost")
     if not isinstance(host_val, str) or not host_val.strip():
@@ -154,8 +142,6 @@ def _normalize_qb_host_value(normalized: Dict[str, object]) -> None:
 def _normalize_qb_port_value(normalized: Dict[str, object]) -> None:
     """Normalize qb_port value.
 
-    Side effects: None.
-    Failure modes: None.
     """
     raw_port = normalized.get("qb_port", 8080)
     port = _config_validation_coerce_int(raw_port, 8080)
@@ -167,8 +153,6 @@ def _normalize_qb_port_value(normalized: Dict[str, object]) -> None:
 def _normalize_http_protocol_scheme_value(normalized: Dict[str, object]) -> None:
     """Normalize optional http_protocol_scheme value.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if "http_protocol_scheme" not in normalized:
         return
@@ -188,8 +172,6 @@ def _normalize_http_protocol_scheme_value(normalized: Dict[str, object]) -> None
 def _normalize_http_timeout_value(normalized: Dict[str, object]) -> None:
     """Normalize optional http_timeout value (seconds).
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     raw_timeout = normalized.get("http_timeout", DEFAULT_HTTP_TIMEOUT_SECONDS)
     try:
@@ -209,8 +191,6 @@ def _normalize_http_timeout_value(normalized: Dict[str, object]) -> None:
 def _normalize_credential_values(normalized: Dict[str, object]) -> None:
     """Normalize credential-related string values.
 
-    Side effects: None.
-    Failure modes: None.
     """
     for key, default_value in [
         ("qb_username", "admin"),
@@ -229,8 +209,6 @@ def _normalize_credential_values(normalized: Dict[str, object]) -> None:
 def _normalize_log_file_value(normalized: Dict[str, object]) -> None:
     """Normalize optional log_file path value.
 
-    Side effects: None.
-    Failure modes: None.
     """
     raw_log_file = normalized.get("log_file", "qbiremo_enhanced.log")
     if not isinstance(raw_log_file, str) or not raw_log_file.strip():
@@ -244,8 +222,6 @@ def _normalize_log_file_value(normalized: Dict[str, object]) -> None:
 def _normalize_title_bar_speed_format_value(normalized: Dict[str, object]) -> None:
     """Normalize title_bar_speed_format template string.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     raw_title_fmt = normalized.get(
         "title_bar_speed_format",
@@ -272,8 +248,6 @@ def _normalize_title_bar_speed_format_value(normalized: Dict[str, object]) -> No
 def _warn_unknown_config_keys(normalized: Dict[str, object]) -> None:
     """Warn for unknown config keys.
 
-    Side effects: None.
-    Failure modes: None.
     """
     unknown_keys = sorted(
         key for key in normalized.keys()
@@ -387,3 +361,4 @@ def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
 
     # Also flush the log file on normal exit so nothing is lost
     atexit.register(file_handler.flush)
+

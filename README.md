@@ -317,7 +317,7 @@ qbiremo-enhanced/
 |-- qbiremo_enhanced_config_example.toml # Annotated example configuration
 |-- requirements.txt                     # Runtime dependencies
 |-- requirements-dev.txt                 # Dev/test dependencies
-|-- pytest.ini                           # Pytest configuration
+|-- pyproject.toml                       # Central project/tool config (pytest/ruff/mypy)
 |-- qbiremo_enhanced_launch.cmd          # Windows batch launcher
 |-- qbiremo_enhanced_test.cmd            # Windows batch test runner
 |-- README.md

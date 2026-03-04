@@ -7,6 +7,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
+import qbittorrentapi
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from .constants import G_APP_NAME
@@ -15,8 +16,24 @@ from .types import TaskCallable, TaskCallback
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-
 logger = logging.getLogger(G_APP_NAME)
+
+RECOVERABLE_TASK_QUEUE_EXCEPTIONS = (
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
+RECOVERABLE_API_CALL_EXCEPTIONS = (
+    ConnectionError,
+    OSError,
+    qbittorrentapi.APIError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 class WorkerSignals(QObject):
     """Signals available from a running worker thread"""
@@ -173,7 +190,7 @@ class APITaskQueue(QObject):
             if callback:
                 callback(result)
             self.task_completed.emit(task_name, result)
-        except Exception as e:
+        except RECOVERABLE_TASK_QUEUE_EXCEPTIONS as e:
             self.task_failed.emit(task_name, str(e))
 
     def _on_task_error(
@@ -194,7 +211,7 @@ class APITaskQueue(QObject):
             error_msg = f"{exctype.__name__}: {value}"
             logger.error("Task %s failed:\n%s", task_name, trace)
             self.task_failed.emit(task_name, error_msg)
-        except Exception as e:
+        except RECOVERABLE_TASK_QUEUE_EXCEPTIONS as e:
             logger.error("Error in _on_task_error for %s: %s", task_name, e)
             self.task_failed.emit(task_name, str(e))
 
@@ -204,7 +221,7 @@ class APITaskQueue(QObject):
             return
         try:
             self.task_cancelled.emit(task_name)
-        except Exception as e:
+        except RECOVERABLE_TASK_QUEUE_EXCEPTIONS as e:
             logger.error("Error in _on_task_cancelled for %s: %s", task_name, e)
 
     def _on_worker_finished(self, worker: Worker) -> None:
@@ -253,7 +270,7 @@ class _DebugAPIClientProxy:
             start_time = time.time()
             try:
                 result = attr(*args, **kwargs)
-            except Exception as e:
+            except RECOVERABLE_API_CALL_EXCEPTIONS as e:
                 elapsed = time.time() - start_time
                 self._owner._debug_log_api_error(name, e, elapsed)
                 raise
@@ -262,3 +279,4 @@ class _DebugAPIClientProxy:
             return result
 
         return _wrapped
+

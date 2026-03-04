@@ -17,3 +17,4 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return self._sort_value < other._sort_value
         return super().__lt__(other)
 
+

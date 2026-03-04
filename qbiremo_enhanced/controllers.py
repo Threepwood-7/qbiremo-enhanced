@@ -97,9 +97,22 @@ from .widgets import NumericTableWidgetItem
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-
 logger = logging.getLogger(G_APP_NAME)
 
+RECOVERABLE_CONTROLLER_EXCEPTIONS = (
+    AttributeError,
+    ConnectionError,
+    json.JSONDecodeError,
+    KeyError,
+    LookupError,
+    OSError,
+    qbittorrentapi.APIError,
+    RuntimeError,
+    subprocess.SubprocessError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
 
 class WindowControllerBase:
     """Proxy unknown attribute access/assignment to the owning MainWindow."""
@@ -116,15 +129,12 @@ class WindowControllerBase:
             return
         setattr(self.window, name, value)
 
-
 class NetworkApiController(WindowControllerBase):
     """Handle API calls, cache I/O, and queue callbacks for network data."""
 
     def _build_connection_info(self, config: NormalizedConfig) -> Dict[str, object]:
         """Build qBittorrent connection info from TOML config with env var fallback.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         # Host URL may contain scheme, basic-auth credentials, and port.
         raw_host = (
@@ -216,8 +226,6 @@ class NetworkApiController(WindowControllerBase):
     def _create_client(self) -> qbittorrentapi.Client:
         """Create and authenticate a qBittorrent API client.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         qb_client = qbittorrentapi.Client(**self.qb_conn_info)
         qb = (
@@ -231,8 +239,6 @@ class NetworkApiController(WindowControllerBase):
     def _remove_expired_cache_file(self) -> None:
         """Delete cache file when older than configured maximum age.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             if not self.cache_file_path.exists():
@@ -250,14 +256,12 @@ class NetworkApiController(WindowControllerBase):
                 self.cache_file_path,
                 age_seconds / (24 * 60 * 60),
             )
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             logger.warning("Failed to remove expired content cache %s: %s", self.cache_file_path, e)
 
     def _load_content_cache(self) -> None:
         """Load persistent content cache from JSON file.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         self.content_cache = {}
         try:
@@ -286,15 +290,13 @@ class NetworkApiController(WindowControllerBase):
                 }
             self.content_cache = normalized
             logger.info("Loaded content cache: %d torrents", len(self.content_cache))
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             logger.warning("Failed to load content cache from %s: %s", self.cache_file_path, e)
             self.content_cache = {}
 
     def _save_content_cache(self) -> None:
         """Persist content cache to disk as JSON.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self.cache_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,15 +306,13 @@ class NetworkApiController(WindowControllerBase):
                 encoding='utf-8'
             )
             tmp_path.replace(self.cache_file_path)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             logger.warning("Failed to save content cache to %s: %s", self.cache_file_path, e)
 
     @staticmethod
     def _safe_int(value: object, default: int = 0) -> int:
         """Convert value to int and return default when conversion fails.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             return int(value)
@@ -323,8 +323,6 @@ class NetworkApiController(WindowControllerBase):
     def _safe_float(value: object, default: float = 0.0) -> float:
         """Convert value to float and return default when conversion fails.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             return float(value)
@@ -334,8 +332,6 @@ class NetworkApiController(WindowControllerBase):
     def _normalize_cached_file(self, entry: Dict[str, object]) -> TorrentFileEntry:
         """Normalize one cached file entry.
 
-        Side effects: None.
-        Failure modes: None.
         """
         return {
             'name': str(entry.get('name', '') or ''),
@@ -347,8 +343,6 @@ class NetworkApiController(WindowControllerBase):
     def _serialize_file_for_cache(self, file_obj: object) -> TorrentFileEntry:
         """Serialize API file object to cache-safe dict.
 
-        Side effects: None.
-        Failure modes: None.
         """
         return self._normalize_cached_file({
             'name': getattr(file_obj, 'name', '') or '',
@@ -360,8 +354,6 @@ class NetworkApiController(WindowControllerBase):
     def _get_cached_files(self, torrent_hash: str) -> List[TorrentFileEntry]:
         """Return cached files for torrent hash, or empty list.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not torrent_hash:
             return []
@@ -372,8 +364,6 @@ class NetworkApiController(WindowControllerBase):
     def _get_cache_refresh_candidates(self) -> Dict[str, str]:
         """Return torrent hashes that need cache refresh (new/missing/status change).
 
-        Side effects: None.
-        Failure modes: None.
         """
         candidates: Dict[str, str] = {}
         for torrent in self.all_torrents:
@@ -392,8 +382,6 @@ class NetworkApiController(WindowControllerBase):
     def _matches_file_filter(self, torrent_hash: str, pattern: str) -> bool:
         """Return True when any cached file name/path matches the pattern.
 
-        Side effects: None.
-        Failure modes: None.
         """
         cached_files = self._get_cached_files(torrent_hash)
         if not cached_files:
@@ -409,8 +397,6 @@ class NetworkApiController(WindowControllerBase):
     def _fetch_categories(self, **_kw: object) -> APITaskResult:
         """Fetch categories from qBittorrent.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -418,15 +404,13 @@ class NetworkApiController(WindowControllerBase):
                 result = qb.torrents_categories()
             elapsed = time.time() - start_time
             return api_task_result(data=result, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=None, elapsed=elapsed, success=False, error=str(e))
 
     def _fetch_tags(self, **_kw: object) -> APITaskResult:
         """Fetch tags from qBittorrent.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -434,15 +418,13 @@ class NetworkApiController(WindowControllerBase):
                 result = qb.torrents_tags()
             elapsed = time.time() - start_time
             return api_task_result(data=sorted(result), elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
     def _selected_remote_torrent_filters(self) -> Dict[str, object]:
         """Build remote API filter kwargs from selected status/category/tag/private filters.
 
-        Side effects: None.
-        Failure modes: None.
         """
         filters: Dict[str, object] = {}
 
@@ -464,8 +446,6 @@ class NetworkApiController(WindowControllerBase):
     def _fetch_torrents(self, **_kw: object) -> APITaskResult:
         """Fetch torrents via incremental sync/maindata and return current full list.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
 
@@ -495,7 +475,7 @@ class NetworkApiController(WindowControllerBase):
                 if hasattr(qb, "transfer_speed_limits_mode"):
                     try:
                         alt_speed_mode = self._safe_int(qb.transfer_speed_limits_mode(), 0) == 1
-                    except Exception:
+                    except RECOVERABLE_CONTROLLER_EXCEPTIONS:
                         pass
                 if hasattr(qb, "transfer_info"):
                     try:
@@ -505,21 +485,21 @@ class NetworkApiController(WindowControllerBase):
                                 0,
                                 self._safe_int(transfer_info.get("dht_nodes"), dht_nodes),
                             )
-                    except Exception:
+                    except RECOVERABLE_CONTROLLER_EXCEPTIONS:
                         pass
                 if hasattr(qb, "transfer_download_limit"):
                     try:
                         global_download_limit = max(
                             0, self._safe_int(qb.transfer_download_limit(), 0)
                         )
-                    except Exception:
+                    except RECOVERABLE_CONTROLLER_EXCEPTIONS:
                         pass
                 if hasattr(qb, "transfer_upload_limit"):
                     try:
                         global_upload_limit = max(
                             0, self._safe_int(qb.transfer_upload_limit(), 0)
                         )
-                    except Exception:
+                    except RECOVERABLE_CONTROLLER_EXCEPTIONS:
                         pass
 
             elapsed = time.time() - start_time
@@ -533,15 +513,13 @@ class NetworkApiController(WindowControllerBase):
                 'elapsed': elapsed,
                 'success': True
             }
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
     def _merge_sync_maindata(self, maindata: object) -> List[object]:
         """Merge one sync/maindata payload into local torrent map and return ordered list.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         payload = self._entry_to_dict(maindata)
         full_update = bool(payload.get("full_update", False))
@@ -587,15 +565,13 @@ class NetworkApiController(WindowControllerBase):
     def _entry_to_dict(entry: object) -> Dict[str, object]:
         """Convert qBittorrent API list/dict entry objects to plain dict.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if isinstance(entry, dict):
             return dict(entry)
         if hasattr(entry, "items"):
             try:
                 return {str(k): v for k, v in entry.items()}
-            except Exception:
+            except RECOVERABLE_CONTROLLER_EXCEPTIONS:
                 pass
         result: Dict[str, object] = {}
         for key in dir(entry):
@@ -603,7 +579,7 @@ class NetworkApiController(WindowControllerBase):
                 continue
             try:
                 value = getattr(entry, key)
-            except Exception:
+            except RECOVERABLE_CONTROLLER_EXCEPTIONS:
                 continue
             if callable(value):
                 continue
@@ -613,8 +589,6 @@ class NetworkApiController(WindowControllerBase):
     def _fetch_selected_torrent_trackers(self, torrent_hash: str, **_kw: object) -> APITaskResult:
         """Fetch all tracker rows for one torrent.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -626,15 +600,13 @@ class NetworkApiController(WindowControllerBase):
             ]
             elapsed = time.time() - start_time
             return api_task_result(data=rows, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
     def _fetch_selected_torrent_peers(self, torrent_hash: str, **_kw: object) -> APITaskResult:
         """Fetch all peer rows for one torrent.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -658,7 +630,7 @@ class NetworkApiController(WindowControllerBase):
 
             elapsed = time.time() - start_time
             return api_task_result(data=rows, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
@@ -666,8 +638,6 @@ class NetworkApiController(WindowControllerBase):
     def _tracker_host_from_url(url: str) -> str:
         """Extract tracker hostname from URL where possible.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         text = str(url or "").strip()
         if not text:
@@ -682,8 +652,6 @@ class NetworkApiController(WindowControllerBase):
     def _classify_tracker_health_status(status_code: int, message: str) -> str:
         """Classify one tracker row into working/failing/unknown buckets.
 
-        Side effects: None.
-        Failure modes: None.
         """
         msg = str(message or "").strip().lower()
         if status_code in {2, 3, 5}:
@@ -707,8 +675,6 @@ class NetworkApiController(WindowControllerBase):
     def _fetch_tracker_health_data(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Fetch and aggregate tracker health metrics across provided torrents.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -719,7 +685,7 @@ class NetworkApiController(WindowControllerBase):
                         continue
                     try:
                         tracker_rows = list(qb.torrents_trackers(torrent_hash=torrent_hash) or [])
-                    except Exception:
+                    except RECOVERABLE_CONTROLLER_EXCEPTIONS:
                         continue
                     for entry in tracker_rows:
                         row = self._entry_to_dict(entry)
@@ -799,15 +765,13 @@ class NetworkApiController(WindowControllerBase):
             )
             elapsed = time.time() - start_time
             return api_task_result(data=rows, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=[], elapsed=elapsed, success=False, error=str(e))
 
     def _refresh_content_cache_for_torrents(self, torrent_states: Dict[str, str], **_kw: object) -> APITaskResult:
         """Refresh cached file trees for provided torrent hashes.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         start_time = time.time()
         try:
@@ -821,7 +785,7 @@ class NetworkApiController(WindowControllerBase):
                             'state': str(state or ''),
                             'files': [self._serialize_file_for_cache(f) for f in files],
                         }
-                    except Exception as ex:
+                    except RECOVERABLE_CONTROLLER_EXCEPTIONS as ex:
                         errors[torrent_hash] = str(ex)
             elapsed = time.time() - start_time
             return {
@@ -830,15 +794,13 @@ class NetworkApiController(WindowControllerBase):
                 'elapsed': elapsed,
                 'success': True
             }
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return {'data': {}, 'errors': {}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
     def _add_torrent_api(self, torrent_data: Dict, **_kw: object) -> APITaskResult:
         """Add a torrent via API.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         start_time = time.time()
         data = dict(torrent_data)  # avoid mutating caller's dict
@@ -887,7 +849,7 @@ class NetworkApiController(WindowControllerBase):
                                 details["failed_sources"].append(
                                     {"source": file_path, "error": f"API response: {file_result!r}"}
                                 )
-                        except Exception as ex:
+                        except RECOVERABLE_CONTROLLER_EXCEPTIONS as ex:
                             result_ok = False
                             details["failed_sources"].append(
                                 {"source": file_path, "error": str(ex)}
@@ -903,7 +865,7 @@ class NetworkApiController(WindowControllerBase):
                 'success': True,
                 'details': details,
             }
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
@@ -916,8 +878,6 @@ class NetworkApiController(WindowControllerBase):
     ) -> APITaskResult:
         """Export selected torrents into .torrent files in the target directory.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -947,7 +907,7 @@ class NetworkApiController(WindowControllerBase):
                         with open(file_path, "wb") as handle:
                             handle.write(bytes(payload or b""))
                         exported_files.append(str(file_path))
-                    except Exception as ex:
+                    except RECOVERABLE_CONTROLLER_EXCEPTIONS as ex:
                         failed[torrent_hash] = str(ex)
 
             elapsed = time.time() - start_time
@@ -963,7 +923,7 @@ class NetworkApiController(WindowControllerBase):
                 'elapsed': elapsed,
                 'success': True,
             }
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return {
                 'data': {'exported': [], 'failed': {}},
@@ -975,8 +935,6 @@ class NetworkApiController(WindowControllerBase):
     def _api_pause_torrent(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Pause one or more torrents via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -984,15 +942,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_pause(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_resume_torrent(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Resume one or more torrents via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1000,15 +956,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_resume(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_force_start_torrent(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Enable force start for one or more torrents via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1016,15 +970,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_set_force_start(enable=True, torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_recheck_torrent(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Recheck one or more torrents via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1032,15 +984,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_recheck(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_increase_torrent_priority(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Increase queue priority for one or more torrents via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1048,15 +998,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_increase_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_decrease_torrent_priority(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Decrease queue priority for one or more torrents via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1064,15 +1012,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_decrease_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_top_torrent_priority(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Move one or more torrents to top queue priority via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1080,15 +1026,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_top_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_minimum_torrent_priority(self, torrent_hashes: List[str], **_kw: object) -> APITaskResult:
         """Move one or more torrents to minimum queue priority via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1096,7 +1040,7 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_bottom_priority(torrent_hashes=list(torrent_hashes))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
@@ -1108,8 +1052,6 @@ class NetworkApiController(WindowControllerBase):
     ) -> APITaskResult:
         """Apply editable properties for a single torrent.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1193,15 +1135,13 @@ class NetworkApiController(WindowControllerBase):
 
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_set_torrent_download_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw: object) -> APITaskResult:
         """Set per-torrent download limit (bytes/sec) for selected torrents.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1212,15 +1152,13 @@ class NetworkApiController(WindowControllerBase):
                 )
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_set_torrent_upload_limit(self, torrent_hashes: List[str], limit_bytes: int, **_kw: object) -> APITaskResult:
         """Set per-torrent upload limit (bytes/sec) for selected torrents.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1231,15 +1169,13 @@ class NetworkApiController(WindowControllerBase):
                 )
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_set_global_download_limit(self, limit_bytes: int, **_kw: object) -> APITaskResult:
         """Set global download limit (bytes/sec).
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1247,15 +1183,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.transfer_set_download_limit(limit=max(0, int(limit_bytes)))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_set_global_upload_limit(self, limit_bytes: int, **_kw: object) -> APITaskResult:
         """Set global upload limit (bytes/sec).
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1263,15 +1197,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.transfer_set_upload_limit(limit=max(0, int(limit_bytes)))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_toggle_alt_speed_mode(self, **_kw: object) -> APITaskResult:
         """Toggle alternative/global speed-limit mode.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1279,15 +1211,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.transfer_toggle_speed_limits_mode()
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_fetch_speed_limits_profile(self, **_kw: object) -> APITaskResult:
         """Fetch normal/alternative speed limits and current alt-speed mode.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1321,7 +1251,7 @@ class NetworkApiController(WindowControllerBase):
                 'elapsed': elapsed,
                 'success': True,
             }
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data={}, elapsed=elapsed, success=False, error=str(e))
 
@@ -1336,8 +1266,6 @@ class NetworkApiController(WindowControllerBase):
     ) -> APITaskResult:
         """Apply normal/alternative speed limits and desired alt-speed mode.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1361,15 +1289,13 @@ class NetworkApiController(WindowControllerBase):
 
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_fetch_app_preferences(self, **_kw: object) -> APITaskResult:
         """Fetch raw qBittorrent application preferences.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1378,15 +1304,13 @@ class NetworkApiController(WindowControllerBase):
             prefs = self._entry_to_dict(prefs_raw)
             elapsed = time.time() - start_time
             return api_task_result(data=prefs, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data={}, elapsed=elapsed, success=False, error=str(e))
 
     def _api_apply_app_preferences(self, updates: Dict[str, object], **_kw: object) -> APITaskResult:
         """Apply only changed application preferences.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1402,7 +1326,7 @@ class NetworkApiController(WindowControllerBase):
                 'elapsed': elapsed,
                 'success': True,
             }
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return {'data': {'applied': 0}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
@@ -1416,8 +1340,6 @@ class NetworkApiController(WindowControllerBase):
     ) -> APITaskResult:
         """Set file priority for one file or a whole folder subtree.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1456,7 +1378,7 @@ class NetworkApiController(WindowControllerBase):
                 'elapsed': elapsed,
                 'success': True
             }
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data={}, elapsed=elapsed, success=False, error=str(e))
 
@@ -1470,8 +1392,6 @@ class NetworkApiController(WindowControllerBase):
     ) -> APITaskResult:
         """Rename one file or folder inside a torrent.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1495,7 +1415,7 @@ class NetworkApiController(WindowControllerBase):
                     )
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
@@ -1509,8 +1429,6 @@ class NetworkApiController(WindowControllerBase):
     ) -> APITaskResult:
         """Create a new category.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1526,7 +1444,7 @@ class NetworkApiController(WindowControllerBase):
                 )
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
@@ -1540,8 +1458,6 @@ class NetworkApiController(WindowControllerBase):
     ) -> APITaskResult:
         """Edit one existing category.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1557,15 +1473,13 @@ class NetworkApiController(WindowControllerBase):
                 )
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_delete_category(self, name: str, **_kw: object) -> APITaskResult:
         """Delete one category.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1573,15 +1487,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_remove_categories(categories=[name])
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_create_tags(self, tags: List[str], **_kw: object) -> APITaskResult:
         """Create one or more tags.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1589,15 +1501,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_create_tags(tags=list(tags))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_delete_tags(self, tags: List[str], **_kw: object) -> APITaskResult:
         """Delete one or more tags.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1605,15 +1515,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_delete_tags(tags=list(tags))
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_pause_session(self, **_kw: object) -> APITaskResult:
         """Pause all torrents in current qBittorrent session.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1621,15 +1529,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_pause(torrent_hashes="all")
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_resume_session(self, **_kw: object) -> APITaskResult:
         """Resume all torrents in current qBittorrent session.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1637,15 +1543,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_resume(torrent_hashes="all")
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_delete_torrent(self, torrent_hashes: List[str], delete_files: bool, **_kw: object) -> APITaskResult:
         """Delete one or more torrents via API.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1653,15 +1557,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.torrents_delete(torrent_hashes=list(torrent_hashes), delete_files=delete_files)
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(data=False, elapsed=elapsed, success=False, error=str(e))
 
     def _api_ban_peers(self, peers: List[str], **_kw: object) -> APITaskResult:
         """Ban one or more peer endpoints (IP:port) globally in qBittorrent.
 
-        Side effects: Performs qBittorrent API/network I/O and returns normalized task payload data.
-        Failure modes: Captures runtime/API exceptions and returns failure payloads with error details.
         """
         start_time = time.time()
         try:
@@ -1676,15 +1578,13 @@ class NetworkApiController(WindowControllerBase):
                 qb.transfer_ban_peers(peers=endpoints)
             elapsed = time.time() - start_time
             return {'data': {'peers': endpoints}, 'elapsed': elapsed, 'success': True}
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return {'data': {'peers': []}, 'elapsed': elapsed, 'success': False, 'error': str(e)}
 
     def _set_categories_from_payload(self, payload: object) -> None:
         """Normalize categories payload and update category state/tree.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         category_details: Dict[str, Dict[str, object]] = {}
         if isinstance(payload, dict):
@@ -1704,8 +1604,6 @@ class NetworkApiController(WindowControllerBase):
     def _category_save_path_by_name(self, category_name: str) -> str:
         """Resolve default save path for one category from cached details.
 
-        Side effects: None.
-        Failure modes: None.
         """
         details = self.category_details.get(str(category_name or ""), {})
         if not isinstance(details, dict):
@@ -1719,8 +1617,6 @@ class NetworkApiController(WindowControllerBase):
     def _category_incomplete_path_by_name(self, category_name: str) -> str:
         """Resolve incomplete path for one category from cached details.
 
-        Side effects: None.
-        Failure modes: None.
         """
         details = self.category_details.get(str(category_name or ""), {})
         if not isinstance(details, dict):
@@ -1734,8 +1630,6 @@ class NetworkApiController(WindowControllerBase):
     def _category_use_incomplete_path_by_name(self, category_name: str) -> bool:
         """Resolve whether incomplete path is enabled for one category.
 
-        Side effects: None.
-        Failure modes: None.
         """
         details = self.category_details.get(str(category_name or ""), {})
         if not isinstance(details, dict):
@@ -1753,8 +1647,6 @@ class NetworkApiController(WindowControllerBase):
     def _taxonomy_category_data(self) -> Dict[str, Dict[str, object]]:
         """Build category metadata mapping for manager dialog.
 
-        Side effects: None.
-        Failure modes: None.
         """
         return {
             name: {
@@ -1768,8 +1660,6 @@ class NetworkApiController(WindowControllerBase):
     def _sync_taxonomy_dialog_data(self) -> None:
         """Refresh taxonomy dialog data when open.
 
-        Side effects: None.
-        Failure modes: None.
         """
         dialog = self._taxonomy_dialog
         if dialog is None:
@@ -1781,8 +1671,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_categories_loaded(self, result: Dict) -> None:
         """Handle categories loaded.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             if not result.get('success', False):
@@ -1818,7 +1706,7 @@ class NetworkApiController(WindowControllerBase):
                 self._fetch_tags,
                 self._on_tags_loaded
             )
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Exception in _on_categories_loaded: {e}")
             self._hide_progress()
             self._set_status(f"Error loading categories: {e}")
@@ -1826,8 +1714,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_tags_loaded(self, result: Dict) -> None:
         """Handle tags loaded.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             if not result.get('success', False):
@@ -1858,7 +1744,7 @@ class NetworkApiController(WindowControllerBase):
                 self._fetch_torrents,
                 self._on_torrents_loaded
             )
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Exception in _on_tags_loaded: {e}")
             self._hide_progress()
             self._set_status(f"Error loading tags: {e}")
@@ -1866,8 +1752,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_torrents_loaded(self, result: Dict) -> None:
         """Handle torrents loaded.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             if not result.get('success', False):
@@ -1942,7 +1826,7 @@ class NetworkApiController(WindowControllerBase):
             self._apply_filters()
             self._select_first_torrent_after_refresh(previous_selected_hash)
             self._hide_progress()
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._latest_torrent_fetch_remote_filtered = False
             self._log("ERROR", f"Exception in _on_torrents_loaded: {e}")
             self._hide_progress()
@@ -1960,8 +1844,6 @@ class NetworkApiController(WindowControllerBase):
     def _select_first_torrent_after_refresh(self, previous_selected_hash: Optional[str] = None) -> None:
         """Select/restore one row after refresh without overriding a valid existing selection.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if self.tbl_torrents.rowCount() <= 0:
             return
@@ -1999,8 +1881,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_content_cache_refreshed(self, result: Dict[str, object]) -> None:
         """Handle background refresh of cached torrent content trees.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             if not result.get('success', False):
@@ -2037,14 +1917,12 @@ class NetworkApiController(WindowControllerBase):
             errors = result.get('errors', {})
             if isinstance(errors, dict) and errors:
                 self._log("ERROR", f"Content cache refresh errors for {len(errors)} torrents")
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Exception in _on_content_cache_refreshed: {e}")
 
     def _on_add_torrent_complete(self, result: Dict[str, object]) -> None:
         """Handle torrent add completion.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         details = result.get("details", {}) if isinstance(result, dict) else {}
         if isinstance(details, dict):
@@ -2087,8 +1965,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_apply_selected_torrent_edits_done(self, result: Dict) -> None:
         """Handle completion of selected torrent edit apply action.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._log("INFO", "Torrent edits applied", result.get("elapsed", 0))
@@ -2103,8 +1979,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_task_completed(self, task_name: str, result: APITaskResult) -> None:
         """Handle task completion.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._maybe_bump_auto_refresh_interval_from_api_elapsed(task_name, result)
         self._log("DEBUG", f"Task completed: {task_name}")
@@ -2112,8 +1986,6 @@ class NetworkApiController(WindowControllerBase):
     def _maybe_bump_auto_refresh_interval_from_api_elapsed(self, task_name: str, result: object) -> None:
         """Increase auto-refresh interval when one API task exceeds current interval.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if not isinstance(result, dict):
             return
@@ -2145,8 +2017,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_task_failed(self, task_name: str, error_msg: str) -> None:
         """Handle task failure.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if task_name == "refresh_torrents":
             self._set_refresh_torrents_in_progress(False)
@@ -2157,8 +2027,6 @@ class NetworkApiController(WindowControllerBase):
     def _on_task_cancelled(self, task_name: str) -> None:
         """Handle task cancellation.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if task_name == "refresh_torrents":
             self._set_refresh_torrents_in_progress(False)
@@ -2167,8 +2035,6 @@ class NetworkApiController(WindowControllerBase):
     def _refresh_torrents(self) -> None:
         """Refresh torrent list.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if self._refresh_torrents_in_progress:
             self._log("DEBUG", "Refresh skipped: refresh_torrents already in progress")
@@ -2208,7 +2074,7 @@ class NetworkApiController(WindowControllerBase):
                 self._fetch_torrents,
                 self._on_torrents_loaded
             )
-        except Exception:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS:
             self._set_refresh_torrents_in_progress(False)
             raise
 
@@ -2218,8 +2084,6 @@ class FilterTableController(WindowControllerBase):
     def _is_filter_item_active(self, kind: str, value: object) -> bool:
         """Return whether a filter tree item is currently active.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if kind == 'status':
             return value == self.current_status_filter
@@ -2236,8 +2100,6 @@ class FilterTableController(WindowControllerBase):
     def _refresh_filter_tree_highlights(self) -> None:
         """Highlight all currently active filters in the unified tree.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if not hasattr(self, 'tree_filters'):
             return
@@ -2273,8 +2135,6 @@ class FilterTableController(WindowControllerBase):
     def _create_torrent_columns_menu(self, parent_menu: QMenu) -> None:
         """Create View -> Torrent Columns submenu with per-column visibility toggles.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         columns_menu = parent_menu.addMenu("Torrent &Columns")
         action_basic_view = QAction("Basic View", self)
@@ -2314,8 +2174,6 @@ class FilterTableController(WindowControllerBase):
     def _set_torrent_column_visible(self, column_key: str, visible: bool) -> None:
         """Show or hide one torrent-table column by stable column key.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         idx = self.torrent_column_index.get(column_key)
         if idx is None:
@@ -2327,8 +2185,6 @@ class FilterTableController(WindowControllerBase):
     def _show_all_torrent_columns(self) -> None:
         """Make every torrent-table column visible.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         for idx in range(self.tbl_torrents.columnCount()):
             self.tbl_torrents.setColumnHidden(idx, False)
@@ -2338,8 +2194,6 @@ class FilterTableController(WindowControllerBase):
     def _sync_torrent_column_actions(self) -> None:
         """Refresh column visibility action checked states from current table state.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not getattr(self, "column_visibility_actions", None):
             return
@@ -2355,8 +2209,6 @@ class FilterTableController(WindowControllerBase):
     def _apply_hidden_columns_by_keys(self, hidden_keys: List[str]) -> None:
         """Apply hidden column state from stable key list.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         hidden = {str(k) for k in hidden_keys}
         for idx, col in enumerate(self.torrent_columns):
@@ -2370,8 +2222,6 @@ class FilterTableController(WindowControllerBase):
     ) -> None:
         """Apply a torrent-table view by visible column keys and optional widths.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         visible_set = {str(key) for key in list(visible_keys or [])}
         known_keys = set(self.torrent_column_index.keys())
@@ -2397,8 +2247,6 @@ class FilterTableController(WindowControllerBase):
     def _current_torrent_view_payload(self) -> Dict[str, object]:
         """Return visible columns + widths for the current torrent-table view.
 
-        Side effects: None.
-        Failure modes: None.
         """
         visible_columns: List[str] = []
         widths: Dict[str, int] = {}
@@ -2416,8 +2264,6 @@ class FilterTableController(WindowControllerBase):
     def _saved_torrent_views(self) -> Dict[str, Dict[str, object]]:
         """Load named torrent-table views from QSettings.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         settings = self._new_settings()
         raw_json = settings.value("torrentColumnNamedViewsJson", "")
@@ -2473,8 +2319,6 @@ class FilterTableController(WindowControllerBase):
     def _store_saved_torrent_views(self, views: Dict[str, Dict[str, object]]) -> None:
         """Store named torrent-table views into QSettings.
 
-        Side effects: None.
-        Failure modes: None.
         """
         settings = self._new_settings()
         payload = views if isinstance(views, dict) else {}
@@ -2487,8 +2331,6 @@ class FilterTableController(WindowControllerBase):
     def _refresh_saved_torrent_views_menu(self) -> None:
         """Rebuild the Saved Views submenu from QSettings.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         menu = getattr(self, "saved_torrent_views_menu", None)
         if menu is None:
@@ -2512,8 +2354,6 @@ class FilterTableController(WindowControllerBase):
     def _apply_saved_torrent_view(self, view_name: str) -> None:
         """Apply one named saved torrent-table view.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         name = str(view_name or "").strip()
         if not name:
@@ -2531,8 +2371,6 @@ class FilterTableController(WindowControllerBase):
     def _save_current_torrent_view(self) -> None:
         """Prompt for a name and save current column visibility/widths as a named view.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         name, ok = QInputDialog.getText(
             self,
@@ -2560,8 +2398,6 @@ class FilterTableController(WindowControllerBase):
     def _apply_basic_torrent_view(self) -> None:
         """Apply built-in Basic torrent-table view preset.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._apply_torrent_view(list(BASIC_TORRENT_VIEW_KEYS))
         self._set_status("Applied view: Basic")
@@ -2569,8 +2405,6 @@ class FilterTableController(WindowControllerBase):
     def _apply_medium_torrent_view(self) -> None:
         """Apply built-in Medium torrent-table view preset.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._apply_torrent_view(list(MEDIUM_TORRENT_VIEW_KEYS))
         self._set_status("Applied view: Medium")
@@ -2578,16 +2412,12 @@ class FilterTableController(WindowControllerBase):
     def _fit_torrent_columns(self) -> None:
         """Resize visible torrent table columns to fit their contents.
 
-        Side effects: None.
-        Failure modes: None.
         """
         self.tbl_torrents.resizeColumnsToContents()
 
     def _count_status_filter_matches(self, status_filter: str) -> int:
         """Count torrents matching one status filter using current in-memory torrent list.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrents = list(self.all_torrents or [])
         if not torrents:
@@ -2600,8 +2430,6 @@ class FilterTableController(WindowControllerBase):
     def _count_category_filter_matches(self, category_filter: object) -> int:
         """Count torrents matching one category filter using current in-memory torrent list.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrents = list(self.all_torrents or [])
         if not torrents:
@@ -2617,8 +2445,6 @@ class FilterTableController(WindowControllerBase):
     def _count_tag_filter_matches(self, tag_filter: object) -> int:
         """Count torrents matching one tag filter using current in-memory torrent list.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrents = list(self.all_torrents or [])
         if not torrents:
@@ -2630,8 +2456,6 @@ class FilterTableController(WindowControllerBase):
     def _status_filter_item_text(self, status_filter: str) -> str:
         """Build display text for one status filter row with live torrent count.
 
-        Side effects: None.
-        Failure modes: None.
         """
         status = str(status_filter or "all").strip().lower() or "all"
         label = status.replace("_", " ").title()
@@ -2641,8 +2465,6 @@ class FilterTableController(WindowControllerBase):
     def _category_filter_item_text(self, category_filter: object) -> str:
         """Build display text for one category filter row with live torrent count.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if category_filter is None:
             label = "All"
@@ -2655,8 +2477,6 @@ class FilterTableController(WindowControllerBase):
     def _tag_filter_item_text(self, tag_filter: object) -> str:
         """Build display text for one tag filter row with live torrent count.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if tag_filter is None:
             label = "All"
@@ -2669,8 +2489,6 @@ class FilterTableController(WindowControllerBase):
     def _update_filter_tree_count_labels(self) -> None:
         """Refresh status/category/tag tree labels using latest in-memory torrent snapshot.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if not hasattr(self, "tree_filters"):
             return
@@ -2693,14 +2511,12 @@ class FilterTableController(WindowControllerBase):
                         item.setText(0, self._category_filter_item_text(value))
                     elif kind == "tag":
                         item.setText(0, self._tag_filter_item_text(value))
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating filter tree counts: {e}")
 
     def _update_category_tree(self) -> None:
         """Update category section in the unified filter tree.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             # Remove existing children
@@ -2722,14 +2538,12 @@ class FilterTableController(WindowControllerBase):
 
             self._section_category.setExpanded(True)
             self._refresh_filter_tree_highlights()
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating category tree: {e}")
 
     def _update_tag_tree(self) -> None:
         """Update tag section in the unified filter tree.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             while self._section_tag.childCount():
@@ -2750,14 +2564,12 @@ class FilterTableController(WindowControllerBase):
 
             self._section_tag.setExpanded(True)
             self._refresh_filter_tree_highlights()
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating tag tree: {e}")
 
     def _calculate_size_buckets(self) -> None:
         """Calculate dynamic size buckets.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             if not self.all_torrents:
@@ -2772,15 +2584,13 @@ class FilterTableController(WindowControllerBase):
             min_size = min(sizes)
             max_size = max(sizes)
             self.size_buckets = calculate_size_buckets(min_size, max_size, SIZE_BUCKET_COUNT)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error calculating size buckets: {e}")
             self.size_buckets = []
 
     def _update_size_tree(self) -> None:
         """Update size section in the unified filter tree.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             while self._section_size.childCount():
@@ -2801,14 +2611,12 @@ class FilterTableController(WindowControllerBase):
 
             self._section_size.setExpanded(True)
             self._refresh_filter_tree_highlights()
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating size tree: {e}")
 
     def _extract_trackers(self) -> None:
         """Extract unique tracker hostnames from loaded torrents.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             tracker_set = set()
@@ -2829,8 +2637,6 @@ class FilterTableController(WindowControllerBase):
     def _update_tracker_tree(self) -> None:
         """Update tracker section in the unified filter tree.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             while self._section_tracker.childCount():
@@ -2847,22 +2653,18 @@ class FilterTableController(WindowControllerBase):
 
             self._section_tracker.setExpanded(True)
             self._refresh_filter_tree_highlights()
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating tracker tree: {e}")
 
     def _on_quick_filter_changed(self, *_args: object) -> None:
         """Apply filter-bar changes immediately.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._apply_filters()
 
     def _on_filter_changed(self) -> None:
         """Handle filter change from filter bar.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         # Store current filter values
         private_text = self.cmb_private.currentText()
@@ -2879,8 +2681,6 @@ class FilterTableController(WindowControllerBase):
     def _apply_filters(self) -> None:
         """Apply all current filters to torrents.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self._on_filter_changed()
@@ -2915,7 +2715,7 @@ class FilterTableController(WindowControllerBase):
                         t for t in filtered
                         if matches_wildcard(getattr(t, 'name', ''), self.current_text_filter)
                     ]
-                except Exception as e:
+                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
                     self._log("ERROR", f"Error applying text filter: {e}")
 
             # Apply private filter
@@ -2925,7 +2725,7 @@ class FilterTableController(WindowControllerBase):
                         t for t in filtered
                         if bool(getattr(t, "private", False)) == self.current_private_filter
                     ]
-                except Exception as e:
+                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
                     self._log("ERROR", f"Error applying private filter: {e}")
 
             # Apply tracker filter
@@ -2935,7 +2735,7 @@ class FilterTableController(WindowControllerBase):
                         t for t in filtered
                         if self._torrent_matches_tracker(t, self.current_tracker_filter)
                     ]
-                except Exception as e:
+                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
                     self._log("ERROR", f"Error applying tracker filter: {e}")
 
             # Apply size bucket filter
@@ -2946,7 +2746,7 @@ class FilterTableController(WindowControllerBase):
                         t for t in filtered
                         if start <= getattr(t, 'size', 0) <= end
                     ]
-                except Exception as e:
+                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
                     self._log("ERROR", f"Error applying size filter: {e}")
 
             # Apply file-name filter (local cache only)
@@ -2959,7 +2759,7 @@ class FilterTableController(WindowControllerBase):
             self.filtered_torrents = filtered
             self._update_torrents_table()
             self._log("INFO", f"Filters applied: {len(self.filtered_torrents)} torrents match")
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error applying filters: {e}")
             self.filtered_torrents = []
             self._update_torrents_table()
@@ -2967,8 +2767,6 @@ class FilterTableController(WindowControllerBase):
     def _torrent_matches_status_filter(self, torrent: object, status_filter: str) -> bool:
         """Approximate qBittorrent status filters from torrent state/speeds.
 
-        Side effects: None.
-        Failure modes: None.
         """
         state = str(getattr(torrent, "state", "") or "").strip().lower()
         status = str(status_filter or "").strip().lower()
@@ -3019,8 +2817,6 @@ class FilterTableController(WindowControllerBase):
     def _torrent_matches_category_filter(torrent: object, category_filter: object) -> bool:
         """Match one torrent against selected category filter.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrent_category = str(getattr(torrent, "category", "") or "")
         return torrent_category == str(category_filter or "")
@@ -3028,8 +2824,6 @@ class FilterTableController(WindowControllerBase):
     def _torrent_matches_tag_filter(self, torrent: object, tag_filter: object) -> bool:
         """Match one torrent against selected tag filter.
 
-        Side effects: None.
-        Failure modes: None.
         """
         tag = str(tag_filter or "")
         tags = parse_tags(getattr(torrent, "tags", None))
@@ -3040,8 +2834,6 @@ class FilterTableController(WindowControllerBase):
     def _clear_filters(self) -> None:
         """Clear all filters.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.current_status_filter = 'all'
         self._clear_non_status_filters()
@@ -3055,8 +2847,6 @@ class FilterTableController(WindowControllerBase):
     def _clear_non_status_filters(self) -> None:
         """Clear non-status torrent filters from quick bar and tree sections.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         private_signals = self.cmb_private.blockSignals(True)
         self.cmb_private.setCurrentIndex(0)
@@ -3079,8 +2869,6 @@ class FilterTableController(WindowControllerBase):
     def _show_status_filter_only(self, status_filter: str) -> None:
         """Show one status bucket and clear all other torrent filters.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         status = str(status_filter or "all").strip().lower()
         if status not in STATUS_FILTERS:
@@ -3097,32 +2885,24 @@ class FilterTableController(WindowControllerBase):
     def _show_active_torrents_only(self) -> None:
         """Show only active torrents and clear all non-status filters.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._show_status_filter_only("active")
 
     def _show_completed_torrents_only(self) -> None:
         """Show only completed torrents and clear all non-status filters.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._show_status_filter_only("completed")
 
     def _show_all_torrents_only(self) -> None:
         """Show all torrents and clear all non-status filters.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._show_status_filter_only("all")
 
     def _on_filter_tree_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         """Handle click on the unified filter tree.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data is None and item.childCount() > 0:
@@ -3157,15 +2937,13 @@ class FilterTableController(WindowControllerBase):
                 self._log("INFO", f"Tracker filter selected: {value}")
                 self._refresh_filter_tree_highlights()
                 self._apply_filters()
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error handling filter click: {e}")
 
     @staticmethod
     def _torrent_matches_tracker(torrent: object, tracker_hostname: str) -> bool:
         """Check if a torrent's tracker matches the given hostname.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         tracker_url = getattr(torrent, 'tracker', '') or ''
         if not tracker_url:
@@ -3179,8 +2957,6 @@ class FilterTableController(WindowControllerBase):
     def _tracker_display_text(self, tracker_url: str) -> str:
         """Render tracker URL as hostname where possible.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         text = str(tracker_url or "")
         if not text:
@@ -3198,8 +2974,6 @@ class FilterTableController(WindowControllerBase):
     ) -> Tuple[str, Qt.AlignmentFlag, Optional[float]]:
         """Return display text, alignment, and optional numeric sort value.
 
-        Side effects: None.
-        Failure modes: None.
         """
         align_left = Qt.AlignmentFlag.AlignLeft
         align_right = Qt.AlignmentFlag.AlignRight
@@ -3208,16 +2982,12 @@ class FilterTableController(WindowControllerBase):
         def _raw_value(key: str, default: object = None) -> object:
             """Read one attribute from torrent object with fallback.
 
-            Side effects: None.
-            Failure modes: None.
             """
             return getattr(torrent, key, default)
 
         def _as_bool(value: object) -> Optional[bool]:
             """Normalize bool-like values, returning None when undecidable.
 
-            Side effects: None.
-            Failure modes: None.
             """
             if value is None:
                 return None
@@ -3295,8 +3065,6 @@ class FilterTableController(WindowControllerBase):
     def _update_torrents_table(self) -> None:
         """Update the torrents table with filtered data.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self.tbl_torrents.setSortingEnabled(False)
@@ -3311,13 +3079,13 @@ class FilterTableController(WindowControllerBase):
                         self._set_table_item(
                             row, col_idx, text, align=align, sort_value=sort_value
                         )
-                except Exception as e:
+                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
                     self._log("ERROR", f"Error updating row {row}: {e}")
                     continue
 
             self.tbl_torrents.setSortingEnabled(True)
             self.lbl_count.setText(f"{len(self.filtered_torrents)} torrents")
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating torrents table: {e}")
             self.lbl_count.setText("0 torrents")
 
@@ -3327,8 +3095,6 @@ class DetailsContentController(WindowControllerBase):
     def _populate_content_tree(self, files: List[TorrentFileEntry]) -> None:
         """Populate the content tab from cached/serialized file entries.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self.tree_files.clear()
@@ -3387,14 +3153,12 @@ class DetailsContentController(WindowControllerBase):
                     self.tree_files.addTopLevelItem(file_item)
 
             self.tree_files.expandAll()
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error populating file tree: {e}")
 
     def _on_content_filter_changed(self, text: str) -> None:
         """Apply in-tab content filter for selected torrent files.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.current_content_filter = normalize_filter_pattern(text)
         self._apply_content_filter()
@@ -3402,8 +3166,6 @@ class DetailsContentController(WindowControllerBase):
     def _apply_content_filter(self) -> None:
         """Apply content-file filter to currently loaded selected torrent files.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             files = self.current_content_files or []
@@ -3435,14 +3197,12 @@ class DetailsContentController(WindowControllerBase):
                 return
 
             self._populate_content_tree(filtered_files)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error applying content filter: {e}")
 
     def _show_cached_torrent_content(self, torrent_hash: str) -> None:
         """Display content tree from local cache for selected torrent.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.current_content_files = self._get_cached_files(torrent_hash)
         self._apply_content_filter()
@@ -3452,8 +3212,6 @@ class DetailsContentController(WindowControllerBase):
                        sort_value: Optional[float] = None) -> None:
         """Helper to set table item with alignment and optional numeric sort.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if sort_value is not None:
             item = NumericTableWidgetItem(str(text), sort_value)
@@ -3465,8 +3223,6 @@ class DetailsContentController(WindowControllerBase):
     def _copy_general_details(self) -> None:
         """Copy general details panel content to clipboard.
 
-        Side effects: None.
-        Failure modes: None.
         """
         text = self.txt_general_details.toPlainText().strip()
         if not text:
@@ -3478,8 +3234,6 @@ class DetailsContentController(WindowControllerBase):
     def _details_table_has_data_rows(table: QTableWidget) -> bool:
         """Return True when details table contains actual data rows (not info placeholder).
 
-        Side effects: None.
-        Failure modes: None.
         """
         if table.rowCount() <= 0 or table.columnCount() <= 0:
             return False
@@ -3493,8 +3247,6 @@ class DetailsContentController(WindowControllerBase):
     def _details_table_column_index(table: QTableWidget, column_name: str) -> int:
         """Find one details-table column index by header name (case-insensitive).
 
-        Side effects: None.
-        Failure modes: None.
         """
         target = str(column_name or "").strip().lower()
         if not target:
@@ -3511,8 +3263,6 @@ class DetailsContentController(WindowControllerBase):
     def _selected_table_row(table: QTableWidget) -> Optional[int]:
         """Return first selected row index for table, if any.
 
-        Side effects: None.
-        Failure modes: None.
         """
         sel_model = table.selectionModel()
         if sel_model:
@@ -3525,8 +3275,6 @@ class DetailsContentController(WindowControllerBase):
     def _details_table_to_tsv(self, table: QTableWidget, row_indexes: Optional[List[int]] = None) -> str:
         """Serialize one details table subset to TSV (header + rows).
 
-        Side effects: None.
-        Failure modes: None.
         """
         headers: List[str] = []
         for col_idx in range(table.columnCount()):
@@ -3546,8 +3294,6 @@ class DetailsContentController(WindowControllerBase):
     def _selected_peer_endpoint(self) -> str:
         """Return selected peer endpoint as IP:port.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not self._details_table_has_data_rows(self.tbl_peers):
             return ""
@@ -3570,8 +3316,6 @@ class DetailsContentController(WindowControllerBase):
     def _copy_all_peers_info(self) -> None:
         """Copy all currently visible peers rows (including headers) to clipboard.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not self._details_table_has_data_rows(self.tbl_peers):
             self._set_status("No peers info to copy")
@@ -3583,8 +3327,6 @@ class DetailsContentController(WindowControllerBase):
     def _copy_selected_peer_info(self) -> None:
         """Copy selected peer row (including headers) to clipboard.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not self._details_table_has_data_rows(self.tbl_peers):
             self._set_status("No peers info to copy")
@@ -3600,8 +3342,6 @@ class DetailsContentController(WindowControllerBase):
     def _copy_selected_peer_ip_port(self) -> None:
         """Copy selected peer endpoint to clipboard.
 
-        Side effects: None.
-        Failure modes: None.
         """
         endpoint = self._selected_peer_endpoint()
         if not endpoint:
@@ -3613,8 +3353,6 @@ class DetailsContentController(WindowControllerBase):
     def _build_peers_context_menu(self) -> QMenu:
         """Build context menu for peers table.
 
-        Side effects: None.
-        Failure modes: None.
         """
         menu = QMenu(self)
         has_data = self._details_table_has_data_rows(self.tbl_peers)
@@ -3644,8 +3382,6 @@ class DetailsContentController(WindowControllerBase):
     def _show_peers_context_menu(self, pos: QPoint) -> None:
         """Show peers context menu and keep right-clicked row selected.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         row_idx = self.tbl_peers.rowAt(pos.y())
         if row_idx >= 0:
@@ -3656,8 +3392,6 @@ class DetailsContentController(WindowControllerBase):
     def _ban_selected_peer(self) -> None:
         """Ban selected peer endpoint via qBittorrent API.
 
-        Side effects: None.
-        Failure modes: None.
         """
         endpoint = self._selected_peer_endpoint()
         if not endpoint:
@@ -3686,8 +3420,6 @@ class DetailsContentController(WindowControllerBase):
     def _display_detail_value(value: object, fallback: str = "N/A") -> str:
         """Normalize one detail value for display.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if value is None:
             return fallback
@@ -3702,8 +3434,6 @@ class DetailsContentController(WindowControllerBase):
     ) -> str:
         """Build rich read-only HTML layout for the General details panel.
 
-        Side effects: None.
-        Failure modes: None.
         """
         chunks = ["<html><body>"]
         for title, rows in sections:
@@ -3722,8 +3452,6 @@ class DetailsContentController(WindowControllerBase):
     def _set_torrent_edit_enabled(self, enabled: bool, message: str) -> None:
         """Enable/disable torrent edit controls and update state message.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.lbl_torrent_edit_state.setText(str(message or ""))
         enabled_flag = bool(enabled)
@@ -3744,8 +3472,6 @@ class DetailsContentController(WindowControllerBase):
     def _clear_torrent_edit_panel(self, message: str) -> None:
         """Reset editable torrent fields.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._torrent_edit_original = {}
         self.txt_torrent_edit_name.clear()
@@ -3764,8 +3490,6 @@ class DetailsContentController(WindowControllerBase):
     def _refresh_torrent_edit_categories(self, current_category: str = "") -> None:
         """Refresh category combo options while preserving text selection.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         current_text = str(current_category or self.cmb_torrent_edit_category.currentText() or "").strip()
         self.cmb_torrent_edit_category.blockSignals(True)
@@ -3782,8 +3506,6 @@ class DetailsContentController(WindowControllerBase):
     def _torrent_auto_management_value(torrent: object) -> Optional[bool]:
         """Extract automatic torrent management state when available.
 
-        Side effects: None.
-        Failure modes: None.
         """
         for key in (
             "auto_tmm",
@@ -3808,8 +3530,6 @@ class DetailsContentController(WindowControllerBase):
     def _populate_torrent_edit_panel(self, torrent: object) -> None:
         """Populate the editable torrent panel from selected torrent data.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_name = str(getattr(torrent, "name", "") or "").strip()
         auto_tmm = self._torrent_auto_management_value(torrent)
@@ -3856,16 +3576,12 @@ class DetailsContentController(WindowControllerBase):
     def _normalize_tags_csv(value: str) -> str:
         """Normalize tag CSV to comma-separated string without extra spaces.
 
-        Side effects: None.
-        Failure modes: None.
         """
         return ",".join(parse_tags(value))
 
     def _add_tags_to_torrent_edit(self) -> None:
         """Append selected tags from a multi-select dialog into edit tags field.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         available_tags = sorted(
             {str(tag).strip() for tag in list(self.tags or []) if str(tag).strip()},
@@ -3890,8 +3606,6 @@ class DetailsContentController(WindowControllerBase):
     def _pick_tags_for_torrent_edit(self, available_tags: List[str], selected_tags: List[str]) -> Optional[List[str]]:
         """Show multi-select picker for known tags and return selected values.
 
-        Side effects: None.
-        Failure modes: None.
         """
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Tags")
@@ -3931,8 +3645,6 @@ class DetailsContentController(WindowControllerBase):
     def _path_exists_on_local_machine(self, raw_path: object) -> bool:
         """Return True when a provided path exists on this machine.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         candidate = self._expand_local_path(raw_path)
         if candidate is None:
@@ -3945,8 +3657,6 @@ class DetailsContentController(WindowControllerBase):
     def _update_torrent_edit_path_browse_buttons(self) -> None:
         """Show browse buttons only for paths that exist on this machine.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         save_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_save_path.text())
         incomplete_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_incomplete_path.text())
@@ -3956,16 +3666,12 @@ class DetailsContentController(WindowControllerBase):
     def _on_detail_tab_changed(self, _index: int) -> None:
         """React to details tab switches that affect auto-refresh policy.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._sync_auto_refresh_timer_state()
 
     def _is_torrent_edit_tab_active(self) -> bool:
         """Return True when Edit tab is selected and active for editing.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not self.detail_tabs.isEnabled():
             return False
@@ -3979,8 +3685,6 @@ class DetailsContentController(WindowControllerBase):
     def _detail_cell_text(value: object) -> str:
         """Render one trackers/peers cell value to text.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if value is None:
             return ""
@@ -3995,8 +3699,6 @@ class DetailsContentController(WindowControllerBase):
     def _detail_sort_value(value: object) -> Optional[float]:
         """Return numeric sort value when possible.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if isinstance(value, bool):
             return 1.0 if value else 0.0
@@ -4016,8 +3718,6 @@ class DetailsContentController(WindowControllerBase):
     def _build_details_columns(rows: List[Dict[str, object]], preferred: List[str]) -> List[str]:
         """Build ordered column list with preferred first, then remaining keys.
 
-        Side effects: None.
-        Failure modes: None.
         """
         key_set = set()
         for row in rows:
@@ -4030,8 +3730,6 @@ class DetailsContentController(WindowControllerBase):
     def _set_details_table_message(self, table: QTableWidget, message: str) -> None:
         """Show one-line status message inside details table.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         table.setSortingEnabled(False)
         table.clearContents()
@@ -4047,8 +3745,6 @@ class DetailsContentController(WindowControllerBase):
                                 preferred_columns: List[str]) -> None:
         """Populate one details table (trackers/peers) with dynamic columns.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if not rows:
             self._set_details_table_message(table, "No data available.")
@@ -4083,8 +3779,6 @@ class DetailsContentController(WindowControllerBase):
     def _selected_torrent_hash(self) -> str:
         """Return selected torrent hash, or empty string when none selected.
 
-        Side effects: None.
-        Failure modes: None.
         """
         selected = getattr(self, "_selected_torrent", None)
         return str(getattr(selected, "hash", "") or "")
@@ -4092,8 +3786,6 @@ class DetailsContentController(WindowControllerBase):
     def _load_selected_torrent_network_details(self, torrent_hash: str) -> None:
         """Load full trackers and peers information for selected torrent.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._set_details_table_message(self.tbl_trackers, "Loading trackers...")
         self._set_details_table_message(self.tbl_peers, "Loading peers...")
@@ -4108,8 +3800,6 @@ class DetailsContentController(WindowControllerBase):
     def _on_selected_trackers_loaded(self, torrent_hash: str, result: Dict) -> None:
         """Populate Trackers table and then load Peers for same selection.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._selected_torrent_hash() != torrent_hash:
             return
@@ -4135,8 +3825,6 @@ class DetailsContentController(WindowControllerBase):
     def _on_selected_peers_loaded(self, torrent_hash: str, result: Dict) -> None:
         """Populate Peers table for currently selected torrent.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._selected_torrent_hash() != torrent_hash:
             return
@@ -4160,8 +3848,6 @@ class DetailsContentController(WindowControllerBase):
     def _set_details_panels_enabled(self, enabled: bool) -> None:
         """Enable/disable bottom details tabs.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.detail_tabs.setEnabled(bool(enabled))
         self._sync_auto_refresh_timer_state()
@@ -4169,8 +3855,6 @@ class DetailsContentController(WindowControllerBase):
     def _clear_details_panels(self, reason: str) -> None:
         """Clear all details panels with a reason message for trackers/peers.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.txt_general_details.clear()
         self._set_details_table_message(self.tbl_trackers, reason)
@@ -4186,8 +3870,6 @@ class DetailsContentController(WindowControllerBase):
     def _on_torrent_selected(self) -> None:
         """Handle torrent selection in table.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         selected_hashes = self._get_selected_torrent_hashes()
         if not selected_hashes:
@@ -4219,8 +3901,6 @@ class DetailsContentController(WindowControllerBase):
     def _display_torrent_details(self, torrent: object) -> None:
         """Display detailed information about selected torrent.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         self._selected_torrent = torrent
         self._set_details_panels_enabled(True)
@@ -4282,7 +3962,7 @@ class DetailsContentController(WindowControllerBase):
 
             # Show file content from local cache
             self._show_cached_torrent_content(torrent.hash)
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error displaying torrent details: {e}")
             self.txt_general_details.setPlainText(f"Error displaying details: {e}")
             self._set_details_table_message(self.tbl_trackers, "Failed to render trackers.")
@@ -4292,8 +3972,6 @@ class DetailsContentController(WindowControllerBase):
     def _copy_torrent_hash(self) -> None:
         """Copy selected torrent hash to clipboard.
 
-        Side effects: None.
-        Failure modes: None.
         """
         hashes = self._get_selected_torrent_hashes()
         if hashes:
@@ -4306,8 +3984,6 @@ class DetailsContentController(WindowControllerBase):
     def _browse_torrent_edit_save_path(self) -> None:
         """Browse for a new torrent save path.
 
-        Side effects: None.
-        Failure modes: None.
         """
         initial = self.txt_torrent_edit_save_path.text().strip()
         selected = QFileDialog.getExistingDirectory(self, "Select Save Path", initial)
@@ -4317,8 +3993,6 @@ class DetailsContentController(WindowControllerBase):
     def _browse_torrent_edit_incomplete_path(self) -> None:
         """Browse for a new torrent incomplete save path.
 
-        Side effects: None.
-        Failure modes: None.
         """
         initial = self.txt_torrent_edit_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(self, "Select Incomplete Save Path", initial)
@@ -4328,8 +4002,6 @@ class DetailsContentController(WindowControllerBase):
     def _collect_selected_torrent_edit_updates(self) -> Dict[str, object]:
         """Collect changed edit fields for currently selected torrent.
 
-        Side effects: None.
-        Failure modes: None.
         """
         original = dict(self._torrent_edit_original or {})
         updates: Dict[str, object] = {}
@@ -4379,8 +4051,6 @@ class DetailsContentController(WindowControllerBase):
     def _apply_selected_torrent_edits(self) -> None:
         """Apply torrent edits for exactly one selected torrent.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         selected_hashes = self._get_selected_torrent_hashes()
         if len(selected_hashes) != 1:
@@ -4425,8 +4095,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _build_new_instance_command(config_file_path: str, instance_counter: Optional[int] = None) -> List[str]:
         """Build command line used to spawn one new application instance.
 
-        Side effects: None.
-        Failure modes: None.
         """
         config_path = str(Path(str(config_file_path)).expanduser().resolve())
         command = [
@@ -4449,8 +4117,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     ) -> None:
         """Spawn one new process instance with the provided config path.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             command = self._build_new_instance_command(config_file_path, instance_counter)
@@ -4464,8 +4130,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _launch_new_instance_current_config(self) -> None:
         """Launch a new app instance using the currently loaded config file.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         raw_config_path = str(
             (self.config.get("_config_file_path") if isinstance(self.config, dict) else "")
@@ -4484,8 +4148,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _launch_new_instance_from_config(self) -> None:
         """Launch a new app instance after selecting a .toml config file.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         current_config_path = str(
             (self.config.get("_config_file_path") if isinstance(self.config, dict) else "")
@@ -4508,8 +4170,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _show_add_torrent_dialog(self) -> None:
         """Show add torrent dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._add_torrent_dialog is not None and self._add_torrent_dialog.isVisible():
             self._add_torrent_dialog.raise_()
@@ -4531,16 +4191,12 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_add_torrent_dialog_closed(self, _result: int) -> None:
         """Clear cached Add Torrent dialog reference.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._add_torrent_dialog = None
 
     def _on_add_torrent_dialog_accepted(self) -> None:
         """Queue torrent add task when Add Torrent dialog is accepted.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._add_torrent_dialog
         if dialog is None:
@@ -4561,8 +4217,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _sanitize_export_filename(name: object, fallback: str = "torrent") -> str:
         """Sanitize one torrent name for safe local .torrent filenames.
 
-        Side effects: None.
-        Failure modes: None.
         """
         text = str(name or "").strip()
         text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", text)
@@ -4574,8 +4228,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _unique_export_file_path(export_dir: Path, base_name: str, torrent_hash: str, used_names: set) -> Path:
         """Return a unique destination file path for one exported torrent file.
 
-        Side effects: None.
-        Failure modes: None.
         """
         sanitized_base = ActionsTaxonomyController._sanitize_export_filename(
             base_name,
@@ -4601,8 +4253,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _build_selected_torrent_name_map(self, torrent_hashes: List[str]) -> Dict[str, str]:
         """Build hash->name mapping for selected torrents to name exported files.
 
-        Side effects: None.
-        Failure modes: None.
         """
         name_map: Dict[str, str] = {}
         for torrent_hash in list(torrent_hashes or []):
@@ -4613,8 +4263,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _export_selected_torrents(self) -> None:
         """Prompt destination directory and export selected torrents as .torrent files.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -4650,8 +4298,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_export_selected_torrents_done(self, result: Dict) -> None:
         """Handle completion of selected-torrent export action.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         data = result.get("data", {}) or {}
         exported = list(data.get("exported", []) or [])
@@ -4679,8 +4325,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _find_torrent_by_hash(self, torrent_hash: str) -> Optional[object]:
         """Find one torrent object by hash, preferring the currently filtered list.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not torrent_hash:
             return None
@@ -4697,8 +4341,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _expand_local_path(raw_path: object) -> Optional[Path]:
         """Expand user/env vars for a local path string.
 
-        Side effects: None.
-        Failure modes: None.
         """
         text = str(raw_path or "").strip().strip('"').strip("'")
         if not text:
@@ -4711,8 +4353,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _resolve_local_torrent_directory(self, torrent: object) -> Optional[Path]:
         """Return an existing local directory for a torrent, if available.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if torrent is None:
             return None
@@ -4735,8 +4375,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _open_selected_torrent_location(self) -> None:
         """Open selected torrent local directory when it exists on this machine.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         selected_hashes = self._get_selected_torrent_hashes()
         if len(selected_hashes) != 1:
@@ -4749,8 +4387,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _open_torrent_location_by_hash(self, torrent_hash: str) -> None:
         """Open local torrent directory for one hash when available.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if not torrent_hash:
             self._set_status("Selected torrent was not found")
@@ -4772,8 +4408,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_torrent_table_item_double_clicked(self, item: QTableWidgetItem) -> None:
         """Open local torrent directory for the row that was double-clicked.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if item is None:
             return
@@ -4784,16 +4418,12 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_content_tree_item_activated(self, item: QTreeWidgetItem, _column: int) -> None:
         """Open activated content-tree item (Enter/double-click behavior).
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._open_selected_content_path(item=item)
 
     def _open_selected_content_path(self, item: Optional[QTreeWidgetItem] = None) -> None:
         """Open selected content-tree item in the local filesystem when available.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if item is None:
             item = self.tree_files.currentItem()
@@ -4865,8 +4495,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _get_selected_torrent_hash(self) -> Optional[str]:
         """Get the hash of the currently selected torrent, or None.
 
-        Side effects: None.
-        Failure modes: None.
         """
         hashes = self._get_selected_torrent_hashes()
         if not hashes:
@@ -4876,8 +4504,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _get_selected_torrent_hashes(self) -> List[str]:
         """Get unique selected torrent hashes preserving current row order.
 
-        Side effects: None.
-        Failure modes: None.
         """
         hashes: List[str] = []
         seen = set()
@@ -4895,8 +4521,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_torrent_action_done(self, action_name: str, result: Dict) -> None:
         """Generic callback for pause/resume/delete actions.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get('success'):
             self._log("INFO", f"{action_name} succeeded", result.get('elapsed', 0))
@@ -4910,8 +4534,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_ban_peer_done(self, endpoint: str, result: Dict) -> None:
         """Callback for peer ban action.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._log("INFO", f"Ban Peer succeeded: {endpoint}", result.get("elapsed", 0))
@@ -4938,8 +4560,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     ) -> None:
         """Queue a bulk action for currently selected torrents.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -4957,8 +4577,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _pause_torrent(self) -> None:
         """Pause selected torrent(s).
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "pause_torrent",
@@ -4971,8 +4589,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _resume_torrent(self) -> None:
         """Resume selected torrent(s).
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "resume_torrent",
@@ -4985,8 +4601,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _force_start_torrent(self) -> None:
         """Force-start selected torrent(s).
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "force_start_torrent",
@@ -4999,8 +4613,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _recheck_torrent(self) -> None:
         """Recheck selected torrent(s).
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "recheck_torrent",
@@ -5013,8 +4625,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _increase_torrent_priority(self) -> None:
         """Increase queue priority for selected torrent(s).
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "increase_torrent_priority",
@@ -5027,8 +4637,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _decrease_torrent_priority(self) -> None:
         """Decrease queue priority for selected torrent(s).
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "decrease_torrent_priority",
@@ -5041,8 +4649,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _top_torrent_priority(self) -> None:
         """Set top queue priority for selected torrent(s).
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "top_torrent_priority",
@@ -5055,8 +4661,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _minimum_torrent_priority(self) -> None:
         """Set minimum queue priority for selected torrent(s).
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._queue_bulk_torrent_action(
             "minimum_torrent_priority",
@@ -5070,8 +4674,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _kib_to_bytes(limit_kib: int) -> int:
         """Convert KiB/s to bytes/s for API calls.
 
-        Side effects: None.
-        Failure modes: None.
         """
         return max(0, int(limit_kib)) * 1024
 
@@ -5079,8 +4681,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _bytes_to_kib(limit_bytes: object) -> int:
         """Convert bytes/s to KiB/s for UI controls.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             return max(0, int(limit_bytes)) // 1024
@@ -5090,8 +4690,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _prompt_limit_kib(self, title: str, label: str) -> Optional[int]:
         """Prompt for a speed limit in KiB/s (0 means unlimited).
 
-        Side effects: None.
-        Failure modes: None.
         """
         value, ok = QInputDialog.getInt(
             self,
@@ -5109,8 +4707,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _set_torrent_download_limit(self) -> None:
         """Prompt and set download limit for selected torrents.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -5140,8 +4736,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _set_torrent_upload_limit(self) -> None:
         """Prompt and set upload limit for selected torrents.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -5171,8 +4765,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_global_bandwidth_action_done(self, action_name: str, result: Dict) -> None:
         """Handle global bandwidth action completion.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
@@ -5187,8 +4779,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _show_app_preferences_editor(self) -> None:
         """Open application preferences editor dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._app_preferences_dialog is not None and self._app_preferences_dialog.isVisible():
             self._app_preferences_dialog.raise_()
@@ -5206,16 +4796,12 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_app_preferences_dialog_closed(self, _result: int) -> None:
         """Clear cached app-preferences dialog reference.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._app_preferences_dialog = None
 
     def _set_app_preferences_dialog_busy(self, busy: bool, message: str = "") -> None:
         """Set app-preferences dialog busy state when open.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._app_preferences_dialog
         if dialog is None:
@@ -5227,8 +4813,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _request_app_preferences_refresh(self) -> None:
         """Load raw app preferences into editor dialog.
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._show_progress("Loading app preferences...")
         self._set_app_preferences_dialog_busy(True, "Loading application preferences...")
@@ -5241,8 +4825,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_app_preferences_loaded(self, result: Dict) -> None:
         """Populate app-preferences dialog from API response.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._app_preferences_dialog
         if result.get("success"):
@@ -5261,8 +4843,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_app_preferences_apply_requested(self, changed_preferences: Dict[str, object]) -> None:
         """Queue changed app preferences from editor dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         updates = dict(changed_preferences or {})
         if not updates:
@@ -5281,8 +4861,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_app_preferences_applied(self, result: Dict) -> None:
         """Handle completion of app preferences apply.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._set_status("App preferences applied")
@@ -5297,8 +4875,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _show_friendly_add_preferences_editor(self) -> None:
         """Open friendly editor for commonly used app preferences.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if (
             self._friendly_add_preferences_dialog is not None
@@ -5319,16 +4895,12 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_friendly_add_preferences_dialog_closed(self, _result: int) -> None:
         """Clear cached friendly add-preferences dialog reference.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._friendly_add_preferences_dialog = None
 
     def _set_friendly_add_preferences_dialog_busy(self, busy: bool, message: str = "") -> None:
         """Set busy state for friendly add-preferences dialog when open.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._friendly_add_preferences_dialog
         if dialog is None:
@@ -5340,8 +4912,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _request_friendly_add_preferences_refresh(self) -> None:
         """Load app preferences into friendly add-preferences editor.
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._show_progress("Loading add preferences...")
         self._set_friendly_add_preferences_dialog_busy(True, "Loading add preferences...")
@@ -5354,8 +4924,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_friendly_add_preferences_loaded(self, result: Dict) -> None:
         """Populate friendly add-preferences dialog from API response.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._friendly_add_preferences_dialog
         if result.get("success"):
@@ -5374,8 +4942,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_friendly_add_preferences_apply_requested(self, changed_preferences: Dict[str, object]) -> None:
         """Queue changed friendly add-preferences values for API apply.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         updates = dict(changed_preferences or {})
         if not updates:
@@ -5394,8 +4960,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_friendly_add_preferences_applied(self, result: Dict) -> None:
         """Handle completion of friendly add-preferences apply.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._set_status("Add preferences applied")
@@ -5410,8 +4974,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _show_speed_limits_manager(self) -> None:
         """Open speed limits manager dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._speed_limits_dialog is not None and self._speed_limits_dialog.isVisible():
             self._speed_limits_dialog.raise_()
@@ -5430,16 +4992,12 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_speed_limits_dialog_closed(self, _result: int) -> None:
         """Clear cached speed limits dialog reference.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._speed_limits_dialog = None
 
     def _set_speed_limits_dialog_busy(self, busy: bool, message: str = "") -> None:
         """Set speed dialog controls busy state when dialog is open.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._speed_limits_dialog
         if dialog is None:
@@ -5451,8 +5009,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _request_speed_limits_profile(self) -> None:
         """Load current speed limits into manager dialog.
 
-        Side effects: None.
-        Failure modes: None.
         """
         self._show_progress("Loading speed limits...")
         self._set_speed_limits_dialog_busy(True, "Loading speed limits...")
@@ -5465,8 +5021,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_speed_limits_profile_loaded(self, result: Dict) -> None:
         """Populate speed limits dialog from API response.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             data = result.get("data", {}) or {}
@@ -5514,8 +5068,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     ) -> None:
         """Queue apply operation from speed limits dialog values.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._show_progress("Applying speed limits...")
         self._set_speed_limits_dialog_busy(True, "Applying speed limits...")
@@ -5533,8 +5085,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_speed_limits_profile_applied(self, result: Dict) -> None:
         """Handle completion of speed limits apply.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._set_status("Speed limits applied")
@@ -5549,8 +5099,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _set_global_download_limit(self) -> None:
         """Prompt and set global download limit.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         limit_kib = self._prompt_limit_kib(
             "Set Global Download Limit",
@@ -5570,8 +5118,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _set_global_upload_limit(self) -> None:
         """Prompt and set global upload limit.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         limit_kib = self._prompt_limit_kib(
             "Set Global Upload Limit",
@@ -5591,8 +5137,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _toggle_alt_speed_mode(self) -> None:
         """Toggle alternative speed mode.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._show_progress("Toggling alternative speed mode...")
         self.api_queue.add_task(
@@ -5604,8 +5148,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _get_selected_content_item_info(self) -> Optional[Dict[str, object]]:
         """Return selected content tree item metadata.
 
-        Side effects: None.
-        Failure modes: None.
         """
         item = self.tree_files.currentItem()
         if item is None:
@@ -5635,8 +5177,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _selected_torrent_hash_for_content_action(self) -> Optional[str]:
         """Return currently selected torrent hash for content actions.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrent = getattr(self, "_selected_torrent", None)
         torrent_hash = str(getattr(torrent, "hash", "") or "").strip() if torrent else ""
@@ -5648,8 +5188,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_content_action_done(self, action_name: str, result: Dict) -> None:
         """Callback for content actions (priority/rename).
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
@@ -5663,8 +5201,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _set_selected_content_priority(self, priority: int) -> None:
         """Set priority for selected content item (file/folder).
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hash = self._selected_torrent_hash_for_content_action()
         if not torrent_hash:
@@ -5688,8 +5224,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _rename_selected_content_item(self) -> None:
         """Rename selected file/folder in content tree via API.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrent_hash = self._selected_torrent_hash_for_content_action()
         if not torrent_hash:
@@ -5732,8 +5266,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _prompt_content_rename_name(self, label: str, old_name: str) -> Tuple[str, bool]:
         """Prompt for a new content file/folder name with persistent dialog size.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Rename {str(label or '').title()}")
@@ -5782,8 +5314,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_taxonomy_action_done(self, action_name: str, result: Dict) -> None:
         """Callback for create/edit/delete category/tag actions.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
@@ -5799,8 +5329,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _set_taxonomy_dialog_busy(self, busy: bool, message: str = "") -> None:
         """Set taxonomy dialog busy state when open.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._taxonomy_dialog
         if dialog is None:
@@ -5812,8 +5340,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _reload_taxonomy_data(self, action_name: str) -> None:
         """Reload categories+tags after taxonomy mutation.
 
-        Side effects: None.
-        Failure modes: None.
         """
         self.api_queue.add_task(
             "reload_categories_for_taxonomy",
@@ -5824,8 +5350,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_taxonomy_categories_reloaded(self, action_name: str, result: Dict) -> None:
         """Handle category reload in taxonomy post-action chain.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self._set_categories_from_payload(result.get("data", {}))
@@ -5842,8 +5366,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_taxonomy_tags_reloaded(self, action_name: str, result: Dict) -> None:
         """Finalize taxonomy reload and update UI/dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if result.get("success"):
             self.tags = result.get("data", [])
@@ -5866,8 +5388,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     ) -> None:
         """Queue taxonomy mutation from manager dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._show_progress(f"{action_name}...")
         self._set_taxonomy_dialog_busy(True, f"{action_name}...")
@@ -5881,8 +5401,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _show_taxonomy_manager(self) -> None:
         """Open taxonomy manager dialog (categories + tags).
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._taxonomy_dialog is not None and self._taxonomy_dialog.isVisible():
             self._sync_taxonomy_dialog_data()
@@ -5904,8 +5422,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_taxonomy_dialog_closed(self, _result: int) -> None:
         """Clear dialog reference when closed.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._taxonomy_dialog = None
 
@@ -5918,8 +5434,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     ) -> None:
         """Handle create-category request from manager dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         normalized_name = str(name or "").strip()
         normalized_save = str(save_path or "").strip()
@@ -5950,8 +5464,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     ) -> None:
         """Handle edit-category request from manager dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         normalized_name = str(name or "").strip()
         normalized_save = str(save_path or "").strip()
@@ -5976,8 +5488,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_taxonomy_delete_category_requested(self, name: str) -> None:
         """Handle delete-category request from manager dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         normalized_name = str(name or "").strip()
         if not normalized_name:
@@ -6004,8 +5514,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_taxonomy_create_tags_requested(self, tags: List[str]) -> None:
         """Handle create-tags request from manager dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         normalized = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
         if not normalized:
@@ -6021,8 +5529,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _on_taxonomy_delete_tags_requested(self, tags: List[str]) -> None:
         """Handle delete-tags request from manager dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         normalized = [str(tag).strip() for tag in list(tags or []) if str(tag).strip()]
         if not normalized:
@@ -6050,8 +5556,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _pause_session(self) -> None:
         """Pause all torrents in current session.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._log("INFO", "Pausing session")
         self._show_progress("Pausing session...")
@@ -6064,8 +5568,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _resume_session(self) -> None:
         """Resume all torrents in current session.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._log("INFO", "Resuming session")
         self._show_progress("Resuming session...")
@@ -6079,8 +5581,6 @@ class ActionsTaxonomyController(WindowControllerBase):
                                action_name: str, progress_text: str) -> None:
         """Queue deletion for selected torrent(s) with explicit delete-files mode.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._log(
             "INFO",
@@ -6098,8 +5598,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _remove_torrent(self) -> None:
         """Remove selected torrent(s) and keep data on disk.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -6123,8 +5621,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _remove_torrent_and_delete_data(self) -> None:
         """Remove selected torrent(s) and delete data from disk.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -6152,8 +5648,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _remove_torrent_no_confirmation(self) -> None:
         """Remove selected torrent(s) and keep data on disk, without confirmation.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -6168,8 +5662,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _remove_torrent_and_delete_data_no_confirmation(self) -> None:
         """Remove selected torrent(s) and delete data, without confirmation.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -6188,8 +5680,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _delete_torrent(self) -> None:
         """Delete selected torrent(s) with confirmation.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
@@ -6213,8 +5703,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _clear_cache_and_refresh(self) -> None:
         """Clear local content cache and refresh torrents.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self._suppress_next_cache_save = True
@@ -6231,7 +5719,7 @@ class ActionsTaxonomyController(WindowControllerBase):
 
             self._log("INFO", "Content cache cleared")
             self._set_status("Content cache cleared")
-        except Exception as e:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Failed to clear cache: {e}")
             self._set_status(f"Failed to clear cache: {e}")
 
@@ -6240,8 +5728,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _reset_view_defaults(self) -> None:
         """Reset view/layout/filter/refresh options back to startup defaults.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         reply = QMessageBox.question(
             self,
@@ -6328,8 +5814,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _open_log_file(self) -> None:
         """Open the log file in the OS default application.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         log_path = os.path.abspath(self.log_file_path)
         try:
@@ -6342,8 +5826,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _set_auto_refresh_interval(self) -> None:
         """Prompt user to set auto-refresh frequency in seconds.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             current = self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)
@@ -6376,8 +5858,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _toggle_auto_refresh(self, checked: bool) -> None:
         """Toggle auto-refresh.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.auto_refresh_enabled = checked
         if checked:
@@ -6394,8 +5874,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _toggle_debug_logging(self, checked: bool) -> None:
         """Enable/disable comprehensive debug logging including API calls/responses.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.debug_logging_enabled = bool(checked)
         if self.debug_logging_enabled:
@@ -6409,8 +5887,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _toggle_human_readable(self, checked: bool) -> None:
         """Toggle display of size/speed values between human-readable and bytes.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         mode = "human_readable" if checked else "bytes"
         self.display_size_mode = mode
@@ -6436,8 +5912,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _about_dialog_text(self) -> str:
         """Build full about dialog text including runtime file paths.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         instance_text = str(getattr(self, "instance_id", "") or "").strip()
         if not instance_text:
@@ -6484,8 +5958,6 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _show_about(self) -> None:
         """Show about dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = QDialog(self)
         dialog.setWindowTitle("About qBiremo Enhanced")
@@ -6512,8 +5984,6 @@ class SessionUiController(WindowControllerBase):
     def _sync_auto_refresh_timer_state(self) -> None:
         """Start/stop refresh timer based on settings and current details context.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not hasattr(self, "refresh_timer"):
             return
@@ -6531,8 +6001,6 @@ class SessionUiController(WindowControllerBase):
     def _set_refresh_torrents_in_progress(self, in_progress: bool) -> None:
         """Set refresh-in-progress state and re-evaluate auto-refresh timer.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         active = bool(in_progress)
         if self._refresh_torrents_in_progress == active:
@@ -6543,8 +6011,6 @@ class SessionUiController(WindowControllerBase):
     def _update_auto_refresh_action_text(self) -> None:
         """Refresh auto-refresh menu label to include current interval.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if not hasattr(self, "action_auto_refresh"):
             return
@@ -6554,8 +6020,6 @@ class SessionUiController(WindowControllerBase):
     def _record_session_timeline_sample(self, alt_enabled: Optional[bool] = None) -> None:
         """Record one session timeline sample from current torrent list.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         total_down = 0
         total_up = 0
@@ -6585,8 +6049,6 @@ class SessionUiController(WindowControllerBase):
     def _show_session_timeline(self) -> None:
         """Open session timeline dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._session_timeline_dialog is not None and self._session_timeline_dialog.isVisible():
             self._session_timeline_dialog.raise_()
@@ -6605,16 +6067,12 @@ class SessionUiController(WindowControllerBase):
     def _on_session_timeline_dialog_closed(self, _result: int) -> None:
         """Clear timeline dialog reference on close.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._session_timeline_dialog = None
 
     def _clear_session_timeline_history(self) -> None:
         """Clear stored session timeline samples.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.session_timeline_history.clear()
         dialog = self._session_timeline_dialog
@@ -6624,8 +6082,6 @@ class SessionUiController(WindowControllerBase):
     def _show_tracker_health_dashboard(self) -> None:
         """Open tracker health dashboard dialog.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._tracker_health_dialog is not None and self._tracker_health_dialog.isVisible():
             self._tracker_health_dialog.raise_()
@@ -6643,16 +6099,12 @@ class SessionUiController(WindowControllerBase):
     def _on_tracker_health_dialog_closed(self, _result: int) -> None:
         """Clear tracker-health dialog reference on close.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._tracker_health_dialog = None
 
     def _set_tracker_health_dialog_busy(self, busy: bool, message: str = "") -> None:
         """Set tracker-health dialog busy state.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._tracker_health_dialog
         if dialog is None:
@@ -6664,8 +6116,6 @@ class SessionUiController(WindowControllerBase):
     def _request_tracker_health_refresh(self) -> None:
         """Queue tracker health aggregation for all currently known torrents.
 
-        Side effects: None.
-        Failure modes: None.
         """
         torrent_hashes = [
             str(getattr(torrent, "hash", "") or "").strip()
@@ -6684,8 +6134,6 @@ class SessionUiController(WindowControllerBase):
     def _on_tracker_health_loaded(self, result: Dict[str, object]) -> None:
         """Render tracker health dashboard data.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dialog = self._tracker_health_dialog
         if result.get("success"):
@@ -6704,8 +6152,6 @@ class SessionUiController(WindowControllerBase):
     def _show_progress(self, message: str) -> None:
         """Show progress indicator.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.progress_bar.setRange(0, 0)  # Indeterminate
         self._set_status(message)
@@ -6713,8 +6159,6 @@ class SessionUiController(WindowControllerBase):
     def _hide_progress(self) -> None:
         """Hide progress indicator.
 
-        Side effects: None.
-        Failure modes: None.
         """
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
@@ -6723,16 +6167,12 @@ class SessionUiController(WindowControllerBase):
     def _set_status(self, message: str) -> None:
         """Set status bar message.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.lbl_status.setText(message)
 
     def _update_statusbar_transfer_summary(self) -> None:
         """Render aggregate transfer summary in the status bar.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         dht_label = getattr(self, "lbl_dht_nodes", None)
         down_label = getattr(self, "lbl_download_summary", None)
@@ -6785,8 +6225,6 @@ class SessionUiController(WindowControllerBase):
     def _bring_to_front_startup(self) -> None:
         """Bring the main window to front shortly after startup.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self.raise_()
@@ -6797,8 +6235,6 @@ class SessionUiController(WindowControllerBase):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Handle Enter in content tree consistently across Qt styles/platforms.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if (
             watched is getattr(self, "tree_files", None)
@@ -6812,8 +6248,6 @@ class SessionUiController(WindowControllerBase):
     def _update_window_title_speeds(self) -> None:
         """Show aggregate up/down speeds in the window title.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             total_down = 0
@@ -6843,12 +6277,10 @@ class SessionUiController(WindowControllerBase):
     def _safe_debug_repr(value: object, max_len: Optional[int] = 2000) -> str:
         """Build bounded repr for debug log messages.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             text = repr(value)
-        except Exception:
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS:
             text = f"<unrepr {type(value).__name__}>"
         if isinstance(max_len, int) and max_len > 0 and len(text) > max_len:
             return text[:max_len] + "...<truncated>"
@@ -6857,8 +6289,6 @@ class SessionUiController(WindowControllerBase):
     def _debug_log_api_call(self, method_name: str, args: Tuple[object, ...], kwargs: Dict[str, object]) -> None:
         """Log one qBittorrent API call invocation when debug logging is enabled.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not self.debug_logging_enabled:
             return
@@ -6872,8 +6302,6 @@ class SessionUiController(WindowControllerBase):
     def _debug_log_api_response(self, method_name: str, result: object, elapsed: float) -> None:
         """Log one qBittorrent API call response when debug logging is enabled.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not self.debug_logging_enabled:
             return
@@ -6887,8 +6315,6 @@ class SessionUiController(WindowControllerBase):
     def _debug_log_api_error(self, method_name: str, error: Exception, elapsed: float) -> None:
         """Log one qBittorrent API call failure when debug logging is enabled.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not self.debug_logging_enabled:
             return
@@ -6902,8 +6328,6 @@ class SessionUiController(WindowControllerBase):
     def _log(self, level: str, message: str, elapsed: Optional[float] = None) -> None:
         """Write to Python file logger.
 
-        Side effects: None.
-        Failure modes: None.
         """
         elapsed_str = f" [{elapsed:.3f}s]" if elapsed is not None else ""
         log_msg = f"{message}{elapsed_str}"
@@ -6913,14 +6337,11 @@ class SessionUiController(WindowControllerBase):
     def closeEvent(self, event: QCloseEvent) -> None:
         """Handle window close event.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         if self._add_torrent_dialog is not None and self._add_torrent_dialog.isVisible():
             self._add_torrent_dialog.close()
         self._save_settings()
         self._save_content_cache()
         event.accept()
-
 
 

@@ -60,8 +60,6 @@ __all__ = [
 def format_float(value: float, decimals: int = 2) -> str:
     """Format float with specified decimals, empty if zero.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if value != 0:
         return f"{value:.{decimals}f}"
@@ -70,8 +68,6 @@ def format_float(value: float, decimals: int = 2) -> str:
 def format_int(value: int) -> str:
     """Format integer with thousands separator, empty if zero.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if value != 0:
         return f"{value:,}"
@@ -80,8 +76,6 @@ def format_int(value: int) -> str:
 def format_datetime(timestamp: int) -> str:
     """Format Unix timestamp, empty if zero.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if timestamp > 0:
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
@@ -90,24 +84,18 @@ def format_datetime(timestamp: int) -> str:
 def format_size(bytes_size: int) -> str:
     """Format bytes as human-readable size.
 
-    Side effects: None.
-    Failure modes: None.
     """
     return format_size_mode(bytes_size, mode='human_readable')
 
 def format_speed(bytes_per_sec: int) -> str:
     """Format speed in bytes/sec.
 
-    Side effects: None.
-    Failure modes: None.
     """
     return format_speed_mode(bytes_per_sec, mode='human_readable')
 
 def _normalize_display_mode(value: object, default: str) -> str:
     """Normalize mode to 'bytes' or 'human_readable'.
 
-    Side effects: None.
-    Failure modes: None.
     """
     mode = str(value or default).strip().lower()
     if mode in {'bytes', 'human_readable'}:
@@ -117,8 +105,6 @@ def _normalize_display_mode(value: object, default: str) -> str:
 def format_size_mode(bytes_size: int, mode: str = 'human_readable') -> str:
     """Format size according to display mode.
 
-    Side effects: None.
-    Failure modes: None.
     """
     mode = _normalize_display_mode(mode, DEFAULT_DISPLAY_SIZE_MODE)
     size_val = int(bytes_size or 0)
@@ -141,8 +127,6 @@ def format_size_mode(bytes_size: int, mode: str = 'human_readable') -> str:
 def format_speed_mode(bytes_per_sec: int, mode: str = 'human_readable') -> str:
     """Format speed according to display mode.
 
-    Side effects: None.
-    Failure modes: None.
     """
     speed_val = int(bytes_per_sec or 0)
     if speed_val == 0:
@@ -155,8 +139,6 @@ def format_speed_mode(bytes_per_sec: int, mode: str = 'human_readable') -> str:
 def format_eta(seconds: int) -> str:
     """Format ETA seconds to compact human-readable duration.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     try:
         eta = int(seconds)
@@ -181,8 +163,6 @@ def format_eta(seconds: int) -> str:
 def _normalize_instance_host(raw_host: object) -> str:
     """Normalize host input used for per-instance file ID generation.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if raw_host is None:
         return "localhost"
@@ -192,8 +172,6 @@ def _normalize_instance_host(raw_host: object) -> str:
 def _normalize_instance_port(raw_port: object) -> int:
     """Normalize port input used for per-instance file ID generation.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     try:
         port = int(raw_port)
@@ -206,8 +184,6 @@ def _normalize_instance_port(raw_port: object) -> int:
 def _normalize_instance_counter(raw_counter: object) -> int:
     """Normalize per-server instance counter used as instance ID suffix.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     try:
         counter = int(raw_counter)
@@ -218,8 +194,6 @@ def _normalize_instance_counter(raw_counter: object) -> int:
 def _normalize_http_protocol_scheme(raw_scheme: object) -> str:
     """Normalize WebUI/API protocol scheme to http or https.
 
-    Side effects: None.
-    Failure modes: None.
     """
     scheme = str(raw_scheme or "").strip().lower()
     if scheme in ("http", "https"):
@@ -234,8 +208,6 @@ def compute_instance_id(
 ) -> str:
     """Compute a short deterministic ID from qb_host + qb_port.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     host = _normalize_instance_host(qb_host)
     port = _normalize_instance_port(qb_port)
@@ -251,8 +223,6 @@ def compute_instance_id(
 def compute_instance_id_from_config(config: NormalizedConfig) -> str:
     """Compute instance ID from a config dict using normalized host/port values.
 
-    Side effects: None.
-    Failure modes: None.
     """
     cfg = config if isinstance(config, dict) else {}
     host = cfg.get("qb_host", cfg.get("host", "localhost"))
@@ -263,8 +233,6 @@ def compute_instance_id_from_config(config: NormalizedConfig) -> str:
 def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
     """Append _<instance_id> before file extension, preserving directory.
 
-    Side effects: None.
-    Failure modes: None.
     """
     raw = str(path_value or "").strip()
     if not raw:
@@ -286,8 +254,6 @@ def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
 def settings_app_name_for_instance(instance_id: str) -> str:
     """Build QSettings app name for a given instance ID.
 
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: None.
     """
     ident = str(instance_id or "").strip().lower()
     if not ident:
@@ -300,8 +266,6 @@ def resolve_cache_file_path(
 ) -> Path:
     """Resolve cache file path under OS temp dir unless absolute override is used.
 
-    Side effects: None.
-    Failure modes: None.
     """
     raw_path = Path(str(cache_file_name))
     if instance_id:
@@ -313,8 +277,6 @@ def resolve_cache_file_path(
 def resolve_instance_lock_file_path(instance_id: str, instance_counter: object) -> Path:
     """Resolve one .lck file path for a computed instance id + counter.
 
-    Side effects: None.
-    Failure modes: None.
     """
     ident = str(instance_id or "").strip().lower()
     counter = _normalize_instance_counter(instance_counter)
@@ -325,8 +287,6 @@ def resolve_instance_lock_file_path(instance_id: str, instance_counter: object) 
 def load_app_icon() -> QIcon:
     """Load the application icon from the script directory when available.
 
-    Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-    Failure modes: None.
     """
     module_dir = Path(__file__).resolve().parent
     candidates = (
@@ -341,8 +301,6 @@ def load_app_icon() -> QIcon:
 def _instance_lock_key(lock_path: Path) -> str:
     """Build a stable dictionary key for one lock file path.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     try:
         return str(Path(lock_path).resolve())
@@ -352,8 +310,6 @@ def _instance_lock_key(lock_path: Path) -> str:
 def _try_acquire_os_file_lock(handle: object) -> bool:
     """Try to acquire a non-blocking exclusive lock on one open file handle.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     try:
         if os.name == "nt":
@@ -373,8 +329,6 @@ def _try_acquire_os_file_lock(handle: object) -> bool:
 def _release_os_file_lock(handle: object) -> None:
     """Best-effort release of an OS-level file lock.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     try:
         if os.name == "nt":
@@ -396,8 +350,6 @@ def acquire_instance_lock(
 ) -> Tuple[int, str, Path]:
     """Acquire an exclusive .lck file lock; auto-increment counter when in use.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     cfg = config if isinstance(config, dict) else {}
     counter = _normalize_instance_counter(start_counter)
@@ -449,8 +401,6 @@ def acquire_instance_lock(
 def release_instance_lock(lock_path: Path) -> None:
     """Best-effort release/removal of an instance .lck file on shutdown.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
     """
     key = _instance_lock_key(Path(lock_path))
     handle = _INSTANCE_LOCK_HANDLES.pop(key, None)
@@ -472,8 +422,6 @@ def release_instance_lock(lock_path: Path) -> None:
 def parse_tags(tags: object) -> List[str]:
     """Parse tags from qBittorrentAPI into a list of strings.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if not tags:
         return []
@@ -486,8 +434,6 @@ def parse_tags(tags: object) -> List[str]:
 def matches_wildcard(text: str, pattern: str) -> bool:
     """Check if text matches DOS-style wildcard pattern.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if not pattern:
         return True
@@ -496,8 +442,6 @@ def matches_wildcard(text: str, pattern: str) -> bool:
 def normalize_filter_pattern(raw_pattern: str) -> str:
     """Normalize filter input: plain text becomes a contains wildcard pattern.
 
-    Side effects: None.
-    Failure modes: None.
     """
     pattern = (raw_pattern or "").strip()
     if not pattern:
@@ -509,8 +453,6 @@ def normalize_filter_pattern(raw_pattern: str) -> str:
 def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> List[tuple]:
     """Calculate size bucket ranges.
 
-    Side effects: None.
-    Failure modes: None.
     """
     if min_size >= max_size or count < 1:
         return []
@@ -524,3 +466,4 @@ def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> List
         buckets.append((start, end))
 
     return buckets
+

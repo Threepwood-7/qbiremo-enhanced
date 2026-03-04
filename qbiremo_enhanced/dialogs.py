@@ -259,8 +259,6 @@ class AddTorrentDialog(QDialog):
     def accept(self) -> None:
         """Validate and cache torrent payload before closing the dialog.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         payload = self.get_torrent_data()
         if not payload:
@@ -271,8 +269,6 @@ class AddTorrentDialog(QDialog):
     def _browse_files(self) -> None:
         """Browse and append one or more torrent files.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         file_paths, _ = QFileDialog.getOpenFileNames(
             self, "Select Torrent Files", "", "Torrent Files (*.torrent);;All Files (*)"
@@ -283,8 +279,6 @@ class AddTorrentDialog(QDialog):
     def _browse_save_path(self) -> None:
         """Browse for save directory.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if dir_path:
@@ -293,8 +287,6 @@ class AddTorrentDialog(QDialog):
     def _browse_download_path(self) -> None:
         """Browse for download directory.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         dir_path = QFileDialog.getExistingDirectory(self, "Select Download Directory")
         if dir_path:
@@ -304,8 +296,6 @@ class AddTorrentDialog(QDialog):
     def _split_csv(text: str) -> List[str]:
         """Split comma-separated text into trimmed non-empty entries.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         return [p.strip() for p in (text or "").split(",") if p.strip()]
 
@@ -313,16 +303,12 @@ class AddTorrentDialog(QDialog):
     def _split_multiline(text: str) -> List[str]:
         """Split multiline text into trimmed non-empty lines.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         return [line.strip() for line in str(text or "").splitlines() if line.strip()]
 
     def _append_multiline_entries(self, editor: QTextEdit, entries: List[str]) -> None:
         """Append unique lines to one multiline editor while preserving order.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         existing = self._split_multiline(editor.toPlainText())
         combined = existing + [str(entry).strip() for entry in (entries or []) if str(entry).strip()]
@@ -333,8 +319,6 @@ class AddTorrentDialog(QDialog):
     def _get_selected_tags(self) -> str:
         """Return comma-separated string of checked tags.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         selected = []
         for i in range(self.lst_tags.count()):
@@ -350,8 +334,6 @@ class AddTorrentDialog(QDialog):
     def _is_url_source(source: str) -> bool:
         """Return True when one source entry is a supported URL/magnet.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         lower = source.lower()
         return lower.startswith("magnet:") or lower.startswith("http://") or lower.startswith("https://") or lower.startswith("bc://")
@@ -360,8 +342,6 @@ class AddTorrentDialog(QDialog):
     def _parse_url_sources(lines: List[str]) -> Union[str, List[str]]:
         """Convert URL list to qBittorrent payload format (single item or list).
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         # Accept one URL per line for convenience.
         if not lines:
@@ -373,8 +353,6 @@ class AddTorrentDialog(QDialog):
     def get_torrent_data(self) -> Optional[Dict[str, object]]:
         """Get the torrent data from the dialog.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         source_files = self._split_multiline(self.txt_torrent_files.toPlainText())
         source_urls = self._split_multiline(self.txt_source_urls.toPlainText())
@@ -504,8 +482,6 @@ class TaxonomyManagerDialog(QDialog):
     def _build_ui(self) -> None:
         """Create categories/tags tabs and wire user actions.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         layout = QVBoxLayout(self)
 
@@ -604,8 +580,6 @@ class TaxonomyManagerDialog(QDialog):
     def _browse_category_save_path(self) -> None:
         """Browse for category default save path.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         initial = self.txt_category_save_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
@@ -617,8 +591,6 @@ class TaxonomyManagerDialog(QDialog):
     def _browse_category_incomplete_path(self) -> None:
         """Browse for category incomplete save path.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         initial = self.txt_category_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
@@ -630,8 +602,6 @@ class TaxonomyManagerDialog(QDialog):
     def _update_incomplete_path_enabled_state(self, *_args: object) -> None:
         """Enable/disable incomplete path controls based on checkbox.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         enabled = bool(self.chk_category_use_incomplete.isChecked())
         self.txt_category_incomplete_path.setEnabled(enabled)
@@ -640,8 +610,6 @@ class TaxonomyManagerDialog(QDialog):
     def set_busy(self, busy: bool, message: str = "") -> None:
         """Enable/disable editor controls while an API operation runs.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         enabled = not bool(busy)
         self.tabs.setEnabled(enabled)
@@ -658,8 +626,6 @@ class TaxonomyManagerDialog(QDialog):
     def set_taxonomy_data(self, category_data: Dict[str, Dict[str, object]], tags: List[str]) -> None:
         """Refresh dialog contents from latest category/tag lists.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         current_category = self.selected_category_name()
         selected_tags = {
@@ -689,8 +655,6 @@ class TaxonomyManagerDialog(QDialog):
     def selected_category_name(self) -> str:
         """Return selected category name, or empty string.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         item = self.lst_categories.currentItem()
         return item.text().strip() if item else ""
@@ -702,8 +666,6 @@ class TaxonomyManagerDialog(QDialog):
     ) -> None:
         """Load selected category into the editor.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         if current is None:
             self._set_category_create_mode()
@@ -724,8 +686,6 @@ class TaxonomyManagerDialog(QDialog):
     def _set_category_create_mode(self) -> None:
         """Prepare editor for creating a new category.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         if self.lst_categories.currentItem() is not None:
             prev = self.lst_categories.blockSignals(True)
@@ -744,8 +704,6 @@ class TaxonomyManagerDialog(QDialog):
     def _apply_category_changes(self) -> None:
         """Emit create/update category request.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         name = self.txt_category_name.text().strip()
         save_path = self.txt_category_save_path.text().strip()
@@ -768,8 +726,6 @@ class TaxonomyManagerDialog(QDialog):
     def _delete_selected_category(self) -> None:
         """Emit delete request for selected category.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         name = self.selected_category_name()
         if not name:
@@ -781,8 +737,6 @@ class TaxonomyManagerDialog(QDialog):
     def _parse_csv_entries(raw_text: str) -> List[str]:
         """Parse comma-separated text into unique ordered tag values.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         values: List[str] = []
         seen = set()
@@ -796,8 +750,6 @@ class TaxonomyManagerDialog(QDialog):
     def _add_tags(self) -> None:
         """Emit create-tags request from entry field.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         tags = self._parse_csv_entries(self.txt_new_tags.text())
         if not tags:
@@ -809,8 +761,6 @@ class TaxonomyManagerDialog(QDialog):
     def _delete_selected_tags(self) -> None:
         """Emit delete-tags request for selected tags.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         tags = [item.text().strip() for item in self.lst_tags_manage.selectedItems() if item.text().strip()]
         if not tags:
@@ -834,8 +784,6 @@ class SpeedLimitsDialog(QDialog):
     def _build_ui(self) -> None:
         """Build normal/alternative speed controls and command buttons.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         layout = QVBoxLayout(self)
 
@@ -883,8 +831,6 @@ class SpeedLimitsDialog(QDialog):
     def _emit_apply(self) -> None:
         """Emit apply signal with current dialog values.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self.apply_requested.emit(
             int(self.spn_normal_dl.value()),
@@ -898,8 +844,6 @@ class SpeedLimitsDialog(QDialog):
                    alt_dl_bytes: int, alt_ul_bytes: int, alt_enabled: bool) -> None:
         """Update dialog controls from bytes/sec values.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self.spn_normal_dl.setValue(max(0, int(normal_dl_bytes)) // 1024)
         self.spn_normal_ul.setValue(max(0, int(normal_ul_bytes)) // 1024)
@@ -910,8 +854,6 @@ class SpeedLimitsDialog(QDialog):
     def set_busy(self, busy: bool, message: str = "") -> None:
         """Enable/disable controls while async operation runs.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         enabled = not bool(busy)
         for widget in (
@@ -951,8 +893,6 @@ class AppPreferencesDialog(QDialog):
     def _build_ui(self) -> None:
         """Build preferences tree view and apply/cancel actions.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         layout = QVBoxLayout(self)
 
@@ -987,8 +927,6 @@ class AppPreferencesDialog(QDialog):
     def set_busy(self, busy: bool, message: str = "") -> None:
         """Enable/disable dialog controls while API operation runs.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         enabled = not bool(busy)
         self.tree_preferences.setEnabled(enabled)
@@ -998,8 +936,6 @@ class AppPreferencesDialog(QDialog):
     def set_preferences(self, preferences: Dict[str, object]) -> None:
         """Load preferences into editable tree and reset change tracking.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         self._updating_tree = True
         try:
@@ -1029,8 +965,6 @@ class AppPreferencesDialog(QDialog):
     def _is_container(value: object) -> bool:
         """Return True when value is a nested dict/list container.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         return isinstance(value, (dict, list))
 
@@ -1038,8 +972,6 @@ class AppPreferencesDialog(QDialog):
     def _value_type_name(value: object) -> str:
         """Return a human-readable type name for one preference value.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         if value is None:
             return "null"
@@ -1061,8 +993,6 @@ class AppPreferencesDialog(QDialog):
     def _value_to_text(value: object) -> str:
         """Render one preference value to editable text representation.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if value is None:
             return "null"
@@ -1071,7 +1001,7 @@ class AppPreferencesDialog(QDialog):
         if isinstance(value, (dict, list)):
             try:
                 return json.dumps(value, ensure_ascii=False, sort_keys=True)
-            except Exception:
+            except (TypeError, ValueError):
                 return str(value)
         return str(value)
 
@@ -1079,8 +1009,6 @@ class AppPreferencesDialog(QDialog):
     def _container_summary(value: object) -> str:
         """Return compact summary label for dict/list containers.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         if isinstance(value, dict):
             count = len(value)
@@ -1101,8 +1029,6 @@ class AppPreferencesDialog(QDialog):
     ) -> None:
         """Add one preference tree node and recurse for nested values.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         item = QTreeWidgetItem([str(label), "", self._value_type_name(value)])
         item.setData(0, self.ROLE_PATH, path)
@@ -1138,8 +1064,6 @@ class AppPreferencesDialog(QDialog):
     def _normalize_item_path(path_data: object) -> Tuple[object, ...]:
         """Normalize serialized path metadata to tuple form.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         if isinstance(path_data, tuple):
             return path_data
@@ -1151,8 +1075,6 @@ class AppPreferencesDialog(QDialog):
     def _path_label(path: Tuple[object, ...]) -> str:
         """Format one tree path tuple as dotted/bracketed label.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         if not path:
             return ""
@@ -1170,8 +1092,6 @@ class AppPreferencesDialog(QDialog):
     def _set_path_value(container: object, path: Tuple[object, ...], value: object) -> None:
         """Assign one nested container value addressed by path tuple.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         target = container
         for key in path[:-1]:
@@ -1182,8 +1102,6 @@ class AppPreferencesDialog(QDialog):
     def _get_path_value(container: object, path: Tuple[object, ...]) -> object:
         """Resolve one nested container value addressed by path tuple.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         target = container
         for key in path:
@@ -1194,8 +1112,6 @@ class AppPreferencesDialog(QDialog):
     def _parse_bool(text: str) -> bool:
         """Parse flexible bool text tokens and raise on invalid input.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: Raises validation/runtime exceptions for invalid inputs or unsupported states.
         """
         token = str(text or "").strip().lower()
         if token in {"1", "true", "yes", "on"}:
@@ -1208,8 +1124,6 @@ class AppPreferencesDialog(QDialog):
     def _parse_value_by_example(text: str, example: object) -> object:
         """Parse editor text using original value type as parsing guide.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         raw = str(text or "")
         stripped = raw.strip()
@@ -1243,20 +1157,18 @@ class AppPreferencesDialog(QDialog):
                 return None
             try:
                 return json.loads(stripped)
-            except Exception:
+            except (TypeError, ValueError, json.JSONDecodeError):
                 return raw
         if isinstance(example, str):
             return raw
         try:
             return json.loads(stripped)
-        except Exception:
+        except (TypeError, ValueError, json.JSONDecodeError):
             return raw
 
     def _refresh_changed_highlights(self) -> None:
         """Highlight changed leaf values in coral for quick scanning.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         coral_brush = QBrush(QColor("coral"))
         clear_brush = QBrush()
@@ -1269,8 +1181,6 @@ class AppPreferencesDialog(QDialog):
     def changed_preferences(self) -> Dict[str, object]:
         """Return only top-level preferences changed by the user.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         changes: Dict[str, object] = {}
         for key, edited_value in self._edited_preferences.items():
@@ -1282,8 +1192,6 @@ class AppPreferencesDialog(QDialog):
     def _on_tree_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         """Validate one edited cell and propagate value/type updates upward.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if self._updating_tree:
             return
@@ -1300,7 +1208,7 @@ class AppPreferencesDialog(QDialog):
         original_value = self._leaf_original_values.get(path)
         try:
             parsed = self._parse_value_by_example(item.text(1), original_value)
-        except Exception as e:
+        except (TypeError, ValueError, json.JSONDecodeError) as e:
             self._updating_tree = True
             try:
                 item.setText(1, self._value_to_text(current_value))
@@ -1336,8 +1244,6 @@ class AppPreferencesDialog(QDialog):
     def _emit_apply(self) -> None:
         """Emit only changed preferences for API apply.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         changes = self.changed_preferences()
         if not changes:
@@ -1390,8 +1296,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _build_ui(self) -> None:
         """Build tabbed friendly controls for common preference subsets.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         layout = QVBoxLayout(self)
 
@@ -1504,8 +1408,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _make_unlimited_spinbox() -> QSpinBox:
         """Create integer spinbox using `-1` sentinel for unlimited values.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         spin = QSpinBox()
         spin.setRange(-1, 10_000_000)
@@ -1517,8 +1419,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _to_bool(value: object, default: bool = False) -> bool:
         """Best-effort conversion of unknown value to bool with default.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         if isinstance(value, bool):
             return value
@@ -1536,36 +1436,30 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _to_int(value: object, default: int = -1) -> int:
         """Best-effort conversion of unknown value to int with default.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if isinstance(value, bool):
             return int(default)
         try:
             return int(value)
-        except Exception:
+        except (TypeError, ValueError, OverflowError):
             return int(default)
 
     @staticmethod
     def _to_float(value: object, default: float = 0.0) -> float:
         """Best-effort conversion of unknown value to float with default.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if isinstance(value, bool):
             return float(default)
         try:
             return float(value)
-        except Exception:
+        except (TypeError, ValueError, OverflowError):
             return float(default)
 
     @staticmethod
     def _set_combo_data(combo: QComboBox, value: object, fallback: int = 0) -> None:
         """Select combo item by `data` value with robust fallback behavior.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         desired = FriendlyAddPreferencesDialog._to_int(value, fallback)
         idx = combo.findData(desired)
@@ -1578,8 +1472,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _update_temp_path_enabled_state(self) -> None:
         """Sync temporary-path edit enablement with its toggle checkbox.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         enabled = bool(self.chk_temp_path_enabled.isChecked())
         self.txt_temp_path.setEnabled(enabled)
@@ -1587,24 +1479,18 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _update_ratio_enabled_state(self) -> None:
         """Enable ratio spinbox only when default ratio limit is enabled.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self.spn_max_ratio.setEnabled(bool(self.chk_max_ratio_enabled.isChecked()))
 
     def _update_seeding_time_enabled_state(self) -> None:
         """Enable seeding-time spinbox only when limit toggle is enabled.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self.spn_max_seeding_time.setEnabled(bool(self.chk_max_seeding_time_enabled.isChecked()))
 
     def set_busy(self, busy: bool, message: str = "") -> None:
         """Enable/disable controls while loading/applying preferences.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         enabled = not bool(busy)
         self.tabs.setEnabled(enabled)
@@ -1618,8 +1504,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _collect_values(self) -> Dict[str, object]:
         """Collect current friendly form state into preference payload dict.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         values = {
             "save_path": str(self.txt_save_path.text() or "").strip(),
@@ -1654,8 +1538,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def set_preferences(self, preferences: Dict[str, object]) -> None:
         """Load selected friendly fields from raw app preferences payload.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         prefs = dict(preferences or {}) if isinstance(preferences, dict) else {}
 
@@ -1697,8 +1579,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def changed_preferences(self) -> Dict[str, object]:
         """Return only friendly fields changed by the user.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         current = self._collect_values()
         changes: Dict[str, object] = {}
@@ -1710,8 +1590,6 @@ class FriendlyAddPreferencesDialog(QDialog):
     def _emit_apply(self) -> None:
         """Emit only changed friendly preferences for API apply.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         changes = self.changed_preferences()
         if not changes:
@@ -1734,8 +1612,6 @@ class TrackerHealthDialog(QDialog):
     def _build_ui(self) -> None:
         """Build tracker-health table and control buttons.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         layout = QVBoxLayout(self)
 
@@ -1778,8 +1654,6 @@ class TrackerHealthDialog(QDialog):
     def set_busy(self, busy: bool, message: str = "") -> None:
         """Set dialog busy state.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self.btn_refresh.setEnabled(not bool(busy))
         if message:
@@ -1788,8 +1662,6 @@ class TrackerHealthDialog(QDialog):
     def set_rows(self, rows: List[TrackerHealthRow]) -> None:
         """Render aggregated tracker-health rows.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self.tbl_health.setSortingEnabled(False)
         self.tbl_health.setRowCount(len(rows))
@@ -1832,8 +1704,6 @@ class TimelineGraphWidget(QWidget):
     def set_samples(self, samples: List[SessionTimelineSample]) -> None:
         """Set timeline samples and trigger repaint.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self._samples = list(samples or [])
         self.update()
@@ -1841,8 +1711,6 @@ class TimelineGraphWidget(QWidget):
     def paintEvent(self, event: QPaintEvent) -> None:
         """Render timeline graph for speed, active-count, and alt-mode bands.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         super().paintEvent(event)
         painter = QPainter(self)
@@ -1885,24 +1753,18 @@ class TimelineGraphWidget(QWidget):
         def x_for(i: int) -> int:
             """Map sample index to chart x coordinate.
 
-            Side effects: Updates dialog/widget state and connected UI controls.
-            Failure modes: None.
             """
             return left + int(i * chart_w / max(1, len(samples) - 1))
 
         def y_for_speed(value: int) -> int:
             """Map speed value to chart y coordinate.
 
-            Side effects: Updates dialog/widget state and connected UI controls.
-            Failure modes: None.
             """
             return top + chart_h - int(max(0, int(value)) * chart_h / max_speed)
 
         def y_for_active(value: int) -> int:
             """Map active torrent count to chart y coordinate.
 
-            Side effects: Updates dialog/widget state and connected UI controls.
-            Failure modes: None.
             """
             return top + chart_h - int(max(0, int(value)) * chart_h / max_active)
 
@@ -1964,8 +1826,6 @@ class SessionTimelineDialog(QDialog):
     def _build_ui(self) -> None:
         """Build timeline graph panel, summary label, and control row.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         layout = QVBoxLayout(self)
         self.graph = TimelineGraphWidget()
@@ -1990,8 +1850,6 @@ class SessionTimelineDialog(QDialog):
     def set_samples(self, samples: List[SessionTimelineSample]) -> None:
         """Update timeline graph and summary.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         self.graph.set_samples(samples)
         if not samples:
@@ -2010,11 +1868,10 @@ class SessionTimelineDialog(QDialog):
     def set_busy(self, busy: bool, message: str = "") -> None:
         """Set dialog busy state.
 
-        Side effects: Updates dialog/widget state and connected UI controls.
-        Failure modes: None.
         """
         enabled = not bool(busy)
         self.btn_refresh.setEnabled(enabled)
         self.btn_clear.setEnabled(enabled)
         if message:
             self.lbl_summary.setText(message)
+

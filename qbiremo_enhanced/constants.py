@@ -136,3 +136,4 @@ MEDIUM_TORRENT_VIEW_KEYS = (
 _medium_default_keys = set(MEDIUM_TORRENT_VIEW_KEYS)
 for _column in TORRENT_COLUMNS:
     _column["default_visible"] = _column["key"] in _medium_default_keys
+

@@ -145,7 +145,6 @@ __all__ = [
     "QFontDatabase",
 ]
 
-
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -199,8 +198,6 @@ class MainWindow(QMainWindow):
     def __init__(self, config: NormalizedConfig) -> None:
         """Initialize UI, runtime state, queues, settings, and startup refresh.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         super().__init__()
         self._initialize_controllers()
@@ -342,8 +339,6 @@ class MainWindow(QMainWindow):
     def _create_ui(self) -> None:
         """Create the main UI layout.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         central = QWidget()
         self.setCentralWidget(central)
@@ -383,8 +378,6 @@ class MainWindow(QMainWindow):
     def _create_details_tabs(self) -> None:
         """Create details tabs (General/Trackers/Peers/Content/Edit).
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setTabPosition(QTabWidget.TabPosition.South)
@@ -602,8 +595,6 @@ class MainWindow(QMainWindow):
     def _create_filter_bar(self) -> QWidget:
         """Create the filter bar above the torrents table.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         widget = QFrame()
         widget.setFrameShape(QFrame.Shape.StyledPanel)
@@ -643,8 +634,6 @@ class MainWindow(QMainWindow):
     def _create_left_panel(self) -> QWidget:
         """Create the left filter panel as a single tree with collapsible sections.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.tree_filters = QTreeWidget()
         self.tree_filters.setHeaderLabel("Filters")
@@ -714,8 +703,6 @@ class MainWindow(QMainWindow):
     def _create_torrents_table(self) -> QTableWidget:
         """Create the torrents table widget.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         table = QTableWidget()
         table.setAlternatingRowColors(True)
@@ -754,8 +741,6 @@ class MainWindow(QMainWindow):
     def _create_menus(self) -> None:
         """Create menu bar.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         menubar = self.menuBar()
         self._build_file_menu(menubar)
@@ -767,8 +752,6 @@ class MainWindow(QMainWindow):
     def _build_file_menu(self, menubar: QMenuBar) -> None:
         """Create File menu.
 
-        Side effects: None.
-        Failure modes: None.
         """
         file_menu = menubar.addMenu("&File")
 
@@ -800,8 +783,6 @@ class MainWindow(QMainWindow):
     def _build_edit_menu(self, menubar: QMenuBar) -> None:
         """Create Edit menu.
 
-        Side effects: None.
-        Failure modes: None.
         """
         edit_menu = menubar.addMenu("&Edit")
 
@@ -886,8 +867,6 @@ class MainWindow(QMainWindow):
     def _build_view_menu(self, menubar: QMenuBar) -> None:
         """Create View menu.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         view_menu = menubar.addMenu("&View")
 
@@ -954,8 +933,6 @@ class MainWindow(QMainWindow):
     def _build_tools_menu(self, menubar: QMenuBar) -> None:
         """Create Tools menu.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         tools_menu = menubar.addMenu("&Tools")
 
@@ -1010,8 +987,6 @@ class MainWindow(QMainWindow):
     def _build_help_menu(self, menubar: QMenuBar) -> None:
         """Create Help menu.
 
-        Side effects: None.
-        Failure modes: None.
         """
         help_menu = menubar.addMenu("&Help")
 
@@ -1022,8 +997,6 @@ class MainWindow(QMainWindow):
     def _create_statusbar(self) -> None:
         """Create status bar.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
@@ -1061,8 +1034,6 @@ class MainWindow(QMainWindow):
     def _statusbar_instance_identity_text(self) -> str:
         """Build left-most status bar identity text for current connection/instance.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         user = str(
             self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
@@ -1094,8 +1065,6 @@ class MainWindow(QMainWindow):
     def _capture_default_view_state(self) -> None:
         """Capture baseline splitter/header states for Reset View.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._default_main_splitter_state = self.main_splitter.saveState()
         self._default_right_splitter_state = self.right_splitter.saveState()
@@ -1104,8 +1073,6 @@ class MainWindow(QMainWindow):
     def _apply_default_main_splitter_width(self) -> None:
         """Apply default left-panel width in pixels on current splitter geometry.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         total_width = self.main_splitter.width()
         if total_width <= 0:
@@ -1120,8 +1087,6 @@ class MainWindow(QMainWindow):
     def _apply_default_torrent_header_layout(self) -> None:
         """Apply default torrent-table column order/widths/sort indicator.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         header = self.tbl_torrents.horizontalHeader()
 
@@ -1142,8 +1107,6 @@ class MainWindow(QMainWindow):
     def _restore_default_view_state(self) -> None:
         """Restore baseline splitter/header states for Reset View.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self._apply_default_main_splitter_width()
@@ -1172,8 +1135,6 @@ class MainWindow(QMainWindow):
     def _to_bool(value: object, default: bool = False) -> bool:
         """Convert QSettings-like values to bool.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if value is None:
             return default
@@ -1191,16 +1152,12 @@ class MainWindow(QMainWindow):
     def _settings_app_name(self) -> str:
         """Return per-instance QSettings app name.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         return settings_app_name_for_instance(self.instance_id)
 
     def _new_settings(self) -> QSettings:
         """Create QSettings configured to use INI backend.
 
-        Side effects: None.
-        Failure modes: None.
         """
         return QSettings(
             QSettings.Format.IniFormat,
@@ -1212,8 +1169,6 @@ class MainWindow(QMainWindow):
     def _settings_ini_path(self) -> Path:
         """Return the current INI file path used by QSettings.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         settings = self._new_settings()
         settings.sync()
@@ -1224,8 +1179,6 @@ class MainWindow(QMainWindow):
     def _save_refresh_settings(self) -> None:
         """Persist only auto-refresh runtime settings.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         settings = self._new_settings()
         settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
@@ -1234,8 +1187,6 @@ class MainWindow(QMainWindow):
     def _setup_clipboard_monitor(self) -> None:
         """Attach clipboard change listener for optional auto-add behavior.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self._clipboard = QApplication.clipboard()
@@ -1248,8 +1199,6 @@ class MainWindow(QMainWindow):
     def _extract_magnet_link(text: str) -> str:
         """Extract first magnet link from arbitrary clipboard text.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not text:
             return ""
@@ -1260,8 +1209,6 @@ class MainWindow(QMainWindow):
     def _extract_torrent_hash(text: str) -> str:
         """Extract first torrent hash (hex/base32 BTIH forms) from text.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not text:
             return ""
@@ -1275,8 +1222,6 @@ class MainWindow(QMainWindow):
     def _magnet_from_hash(torrent_hash: str) -> str:
         """Build magnet URI from torrent infohash.
 
-        Side effects: None.
-        Failure modes: None.
         """
         normalized = str(torrent_hash or "").strip().lower()
         return f"magnet:?xt=urn:btih:{normalized}"
@@ -1284,8 +1229,6 @@ class MainWindow(QMainWindow):
     def _remember_clipboard_key(self, key: str) -> None:
         """Remember processed clipboard key and evict oldest entries.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not key or key in self._clipboard_seen_keys:
             return
@@ -1298,8 +1241,6 @@ class MainWindow(QMainWindow):
     def _queue_add_torrent_from_clipboard(self, magnet_url: str, source: str) -> None:
         """Queue add-torrent task for clipboard-derived magnet url.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self._log("INFO", f"Clipboard monitor detected {source}; adding torrent")
         self._set_status("Clipboard monitor: adding torrent...")
@@ -1313,8 +1254,6 @@ class MainWindow(QMainWindow):
     def _process_clipboard_text(self, text: str) -> bool:
         """Process clipboard text and auto-add torrent when magnet/hash appears.
 
-        Side effects: None.
-        Failure modes: None.
         """
         if not text:
             return False
@@ -1346,8 +1285,6 @@ class MainWindow(QMainWindow):
     def _on_clipboard_changed(self) -> None:
         """Clipboard signal handler used by monitor toggle.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         if not self.clipboard_monitor_enabled or not self._clipboard:
             return
@@ -1363,8 +1300,6 @@ class MainWindow(QMainWindow):
     def _toggle_clipboard_monitor(self, enabled: bool) -> None:
         """Enable or disable clipboard monitor.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         self.clipboard_monitor_enabled = bool(enabled)
         self._save_settings()
@@ -1377,8 +1312,6 @@ class MainWindow(QMainWindow):
     def _edit_settings_ini_file(self) -> None:
         """Open QSettings INI file in system default editor.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             ini_path = self._settings_ini_path()
@@ -1395,8 +1328,6 @@ class MainWindow(QMainWindow):
     def _web_ui_browser_url(self) -> str:
         """Build Web UI URL for the current qBittorrent connection.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         user = str(
             self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
@@ -1450,8 +1381,6 @@ class MainWindow(QMainWindow):
     def _open_web_ui_in_browser(self) -> None:
         """Open qBittorrent Web UI URL in default browser.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             url = self._web_ui_browser_url()
@@ -1465,8 +1394,6 @@ class MainWindow(QMainWindow):
     def _load_settings(self) -> None:
         """Load window geometry, splitter sizes, column widths, sort order,.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         settings = self._new_settings()
 
@@ -1586,8 +1513,6 @@ class MainWindow(QMainWindow):
     def _save_settings(self) -> None:
         """Save window geometry, splitter sizes, column widths, sort order,.
 
-        Side effects: Updates application state and may trigger UI, queue, file, or timer side effects.
-        Failure modes: None.
         """
         settings = self._new_settings()
 
@@ -1628,8 +1553,6 @@ class MainWindow(QMainWindow):
     def _initial_load(self) -> None:
         """Initial data load on startup.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             self._log("INFO", "Starting initial data load...")
@@ -1647,18 +1570,13 @@ class MainWindow(QMainWindow):
             self._hide_progress()
             self._set_status(f"Error: {e}")
 
-
 def main() -> None:
     """Main application entry point.
 
-    Side effects: None.
-    Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
     def _positive_instance_counter(value: str) -> int:
         """Validate CLI instance counter argument as positive integer.
 
-        Side effects: None.
-        Failure modes: Handles recoverable exceptions internally and applies fallback behavior where defined.
         """
         try:
             parsed = int(value)
@@ -1756,3 +1674,4 @@ def main() -> None:
         file_handler.flush()
         _open_file_in_default_app(config.get('_log_file_path', 'qbiremo_enhanced.log'))
         raise
+
