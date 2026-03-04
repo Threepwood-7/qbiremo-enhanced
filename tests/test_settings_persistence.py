@@ -1,9 +1,8 @@
 import os
 import time
 
-from PySide6.QtCore import QSettings
-
 import qbiremo_enhanced.main_window as appmod
+from PySide6.QtCore import QSettings
 
 
 def _default_instance_id() -> str:

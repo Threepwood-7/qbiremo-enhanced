@@ -2,63 +2,50 @@
 """Dialog and small widget classes."""
 
 import copy
-import html
+import json
 import os
 from typing import Dict, List, Optional, Tuple, Union
 
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QPainter,
+    QPaintEvent,
+    QPen,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
-    QFrame,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMainWindow,
-    QMenu,
     QMessageBox,
     QPushButton,
-    QProgressBar,
-    QSizePolicy,
     QSpinBox,
-    QDoubleSpinBox,
-    QSplitter,
-    QStatusBar,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
-    QFormLayout,
-)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import (
-    QAction,
-    QBrush,
-    QColor,
-    QFontDatabase,
-    QIcon,
-    QKeySequence,
-    QPaintEvent,
-    QPainter,
-    QPen,
-    QShortcut,
 )
 
 from .models.torrent import SessionTimelineSample, TrackerHealthRow
-from .utils import format_size_mode, format_speed_mode
+from .utils import format_speed_mode
+
 
 class AddTorrentDialog(QDialog):
     """Dialog for adding a new torrent"""

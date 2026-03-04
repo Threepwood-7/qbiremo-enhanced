@@ -1,7 +1,6 @@
 import logging
 
 import pytest
-
 import qbiremo_enhanced.main_window as appmod
 import qbiremo_enhanced.utils as apputils
 

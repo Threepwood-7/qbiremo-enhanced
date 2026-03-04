@@ -1,9 +1,7 @@
 
 """Feature controllers for MainWindow composition."""
 
-import argparse
 import base64
-import copy
 import html
 import json
 import logging
@@ -12,29 +10,27 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
-from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List, Optional, Tuple, Callable, TYPE_CHECKING
-from urllib.parse import quote, urlparse
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import qbittorrentapi
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QBrush,
+    QCloseEvent,
+    QColor,
+    QFontDatabase,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QDoubleSpinBox,
-    QFormLayout,
-    QFrame,
-    QGroupBox,
-    QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -43,33 +39,11 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPushButton,
-    QProgressBar,
-    QSizePolicy,
-    QSpinBox,
-    QSplitter,
-    QStatusBar,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
-    QWidget,
-)
-from PySide6.QtCore import QEvent, QObject, QPoint, QSettings, Qt, QTimer
-from PySide6.QtGui import (
-    QAction,
-    QBrush,
-    QCloseEvent,
-    QColor,
-    QFontDatabase,
-    QIcon,
-    QKeySequence,
-    QPainter,
-    QPen,
-    QShortcut,
 )
 
 from .constants import (

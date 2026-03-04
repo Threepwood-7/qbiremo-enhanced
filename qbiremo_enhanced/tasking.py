@@ -5,9 +5,9 @@ import logging
 import sys
 import time
 import traceback
-from typing import Dict, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
-from PySide6.QtCore import QObject, QRunnable, Slot, Signal, QThreadPool
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from .constants import G_APP_NAME
 from .types import TaskCallable, TaskCallback

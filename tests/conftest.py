@@ -1,16 +1,9 @@
 import os
-import sys
 from types import SimpleNamespace
-from pathlib import Path
 
 import pytest
 
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
 import qbiremo_enhanced.main_window as appmod
 
 

@@ -1,8 +1,7 @@
 
 """Shared typing models and call signatures."""
 
-from typing import Callable, Dict, Generic, NotRequired, Optional, TypeVar, TypedDict, cast
-
+from typing import Callable, Dict, Generic, NotRequired, Optional, TypedDict, TypeVar, cast
 
 T = TypeVar("T")
 

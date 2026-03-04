@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qbiremo-enhanced"
+version = "2.0.0"
+description = "Advanced qBittorrent GUI client built with PySide6."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.6.0",
+    "qbittorrent-api>=2024.1.54",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-qt>=4.4.0",
+    "ruff>=0.11.0",
+    "mypy>=1.11.0",
+    "pyright>=1.1.390",
+]
+
+[project.scripts]
+qbiremo-enhanced = "qbiremo_enhanced:main"
+
+[tool.setuptools.packages.find]
+include = ["qbiremo_enhanced*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+qt_api = "pyside6"
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["qbiremo_enhanced", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "C90"]
+ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 80
+
+[tool.mypy]
+python_version = "3.11"
+files = ["qbiremo_enhanced/models", "qbiremo_enhanced/types.py"]
+ignore_missing_imports = true
+follow_imports = "skip"
+check_untyped_defs = false
+warn_return_any = false
+warn_unused_ignores = true
+no_implicit_optional = true
+
+[tool.pyright]
+include = ["qbiremo_enhanced"]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"

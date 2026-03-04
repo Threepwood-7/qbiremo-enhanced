@@ -5,12 +5,10 @@ import fnmatch
 import hashlib
 import logging
 import os
-import re
 import tempfile
-import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from PySide6.QtGui import QIcon
 
@@ -21,11 +19,9 @@ from .constants import (
     DEFAULT_DISPLAY_SIZE_MODE,
     DEFAULT_DISPLAY_SPEED_MODE,
     G_APP_NAME,
-    G_ORG_NAME,
     INSTANCE_ID_LENGTH,
 )
 from .models.config import NormalizedConfig
-
 
 logger = logging.getLogger(G_APP_NAME)
 _INSTANCE_LOCK_HANDLES: Dict[str, object] = {}

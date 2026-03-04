@@ -434,6 +434,15 @@ Run the test suite:
 python -m pytest -q
 ```
 
+## Quality Gates
+
+Run the same static checks used in CI:
+```bash
+python -m ruff check qbiremo_enhanced tests
+python -m mypy qbiremo_enhanced/models qbiremo_enhanced/types.py
+python -m pytest -q
+```
+
 Current tests cover:
 - filters and cache behavior,
 - menu wiring and shortcuts,

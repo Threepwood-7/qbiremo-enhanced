@@ -3,77 +3,64 @@
 
 import argparse
 import atexit
-import fnmatch
-import html
-import json
 import logging
-import os
 import re
 import subprocess
 import sys
 import tempfile
-import traceback
 from collections import deque
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional
 from urllib.parse import quote, urlparse
 
 import qbittorrentapi
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QKeySequence,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
-    QDoubleSpinBox,
     QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
-    QMenuBar,
     QMenu,
+    QMenuBar,
     QMessageBox,
-    QPushButton,
     QProgressBar,
-    QSpinBox,
+    QPushButton,
     QSizePolicy,
+    QSpinBox,
     QSplitter,
     QStatusBar,
-    QTabWidget,
     QTableWidget,
-    QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer
-from PySide6.QtGui import (
-    QAction,
-    QBrush,
-    QCloseEvent,
-    QColor,
-    QFontDatabase,
-    QIcon,
-    QKeySequence,
-    QPainter,
-    QPen,
-    QShortcut,
-)
-from .models.config import NormalizedConfig
-from .models.torrent import SessionTimelineSample, TorrentCacheEntry, TorrentFileEntry
 
+from .config_runtime import (
+    _install_exception_hooks,
+    _open_file_in_default_app,
+    _setup_logging,
+    load_config_with_issues,
+    validate_and_normalize_config,
+)
 from .constants import (
     BASIC_TORRENT_VIEW_KEYS,
     CACHE_FILE_NAME,
@@ -110,7 +97,9 @@ from .dialogs import (
     TaxonomyManagerDialog,
     TrackerHealthDialog,
 )
-from .tasking import APITaskQueue, Worker, WorkerSignals, _DebugAPIClientProxy
+from .models.config import NormalizedConfig
+from .models.torrent import SessionTimelineSample, TorrentCacheEntry, TorrentFileEntry
+from .tasking import APITaskQueue, Worker
 from .utils import (
     _append_instance_id_to_filename,
     _normalize_display_mode,
@@ -125,18 +114,32 @@ from .utils import (
     resolve_cache_file_path,
     settings_app_name_for_instance,
 )
-from .widgets import NumericTableWidgetItem
-from .config_runtime import (
-    _install_exception_hooks,
-    _open_file_in_default_app,
-    _setup_logging,
-    load_config,
-    load_config_with_issues,
-    validate_and_normalize_config,
-)
-
 
 logger = logging.getLogger(G_APP_NAME)
+
+__all__ = [
+    "MainWindow",
+    "main",
+    "AddTorrentDialog",
+    "APITaskQueue",
+    "AppPreferencesDialog",
+    "BASIC_TORRENT_VIEW_KEYS",
+    "DEFAULT_HTTP_TIMEOUT_SECONDS",
+    "FriendlyAddPreferencesDialog",
+    "QDialog",
+    "QFileDialog",
+    "QInputDialog",
+    "QMessageBox",
+    "SessionTimelineDialog",
+    "SpeedLimitsDialog",
+    "TaxonomyManagerDialog",
+    "TrackerHealthDialog",
+    "Worker",
+    "compute_instance_id",
+    "qbittorrentapi",
+    "subprocess",
+    "tempfile",
+]
 
 
 class MainWindow(QMainWindow):
@@ -1738,7 +1741,7 @@ def main() -> None:
                 app.setWindowIcon(app_icon)
 
         # Create and show main window
-        window = MainWindow(config)
+        app.main_window = MainWindow(config)
 
         # Run application
         sys.exit(app.exec())

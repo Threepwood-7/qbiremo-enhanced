@@ -14,8 +14,11 @@ from .constants import (
     G_APP_NAME,
 )
 from .models.config import NormalizedConfig
-from .utils import _append_instance_id_to_filename, _normalize_http_protocol_scheme, compute_instance_id_from_config
-
+from .utils import (
+    _append_instance_id_to_filename,
+    _normalize_http_protocol_scheme,
+    compute_instance_id_from_config,
+)
 
 logger = logging.getLogger(G_APP_NAME)
 

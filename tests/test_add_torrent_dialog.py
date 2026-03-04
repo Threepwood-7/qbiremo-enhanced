@@ -1,8 +1,7 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-
 import qbiremo_enhanced.main_window as appmod
+from PySide6.QtCore import Qt
 
 
 def test_add_torrent_dialog_builds_complete_file_payload(qtbot, tmp_path):

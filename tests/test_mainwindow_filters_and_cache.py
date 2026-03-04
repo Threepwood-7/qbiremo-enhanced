@@ -1,10 +1,9 @@
 import logging
 from types import SimpleNamespace
 
+import qbiremo_enhanced.main_window as appmod
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QTreeWidgetItem
-
-import qbiremo_enhanced.main_window as appmod
 
 
 def _top_level_names(tree_widget):
