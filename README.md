@@ -385,16 +385,7 @@ Validated key contract (`validate_and_normalize_config`):
 | `title_bar_speed_format` | `str` | `"[D: {down_text}, U: {up_text}]"` | Must be non-empty and format successfully with `{down_text}` and `{up_text}` placeholders. |
 
 Behavior notes:
-- Legacy keys (`host`, `port`, `username`, `password`, `http_user`, `http_password`) are mapped and warned as deprecated.
 - Unknown TOML keys are ignored with warnings.
-- Runtime UI settings are QSettings-managed and ignored in TOML (with warnings):
-  - `auto_refresh`
-  - `refresh_interval`
-  - `default_window_width`
-  - `default_window_height`
-  - `default_status_filter`
-  - `display_size_mode`
-  - `display_speed_mode`
 - If `qb_host` includes a full URL with embedded userinfo, HTTP basic auth is extracted and sent via `Authorization` header.
 - Environment fallback for HTTP basic auth:
   - `X_HTTP_USER`
