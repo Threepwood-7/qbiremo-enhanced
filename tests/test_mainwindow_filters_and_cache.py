@@ -3333,3 +3333,122 @@ def test_taxonomy_dialog_requests_queue_expected_api_actions(window, monkeypatch
         "Delete Tag",
         (["tag1"],),
     )
+
+
+def test_window_controller_proxy_reads_and_writes_window_attributes(window):
+    controller = appmod.NetworkApiController(window)
+
+    window._delegation_marker = "before"
+    assert controller._delegation_marker == "before"
+
+    controller._delegation_marker = "after"
+    assert window._delegation_marker == "after"
+
+
+def test_delegated_controller_method_is_bound_on_mainwindow(window):
+    assert "_build_connection_info" not in appmod.MainWindow.__dict__
+
+    delegated = window._build_connection_info
+    assert callable(delegated)
+    assert getattr(delegated, "__self__", None) is window
+
+
+def test_install_controller_methods_skips_eventfilter_and_closeevent(window):
+    class DummyController:
+        def eventFilter(self, _watched, _event):
+            return True
+
+        def closeEvent(self, _event):
+            raise AssertionError("closeEvent should not be overwritten")
+
+        def delegated_dummy(self):
+            return "ok"
+
+    event_filter_before = window.eventFilter
+    close_event_before = window.closeEvent
+
+    window._install_controller_methods(DummyController)
+
+    assert window.delegated_dummy() == "ok"
+    assert window.eventFilter.__func__ is event_filter_before.__func__
+    assert window.closeEvent.__func__ is close_event_before.__func__
+
+
+def test_mainwindow_open_file_helper_delegates_to_runtime_helper(window, monkeypatch):
+    captured = {"path": None}
+
+    monkeypatch.setattr(
+        appmod,
+        "_open_file_in_default_app",
+        lambda p: captured.__setitem__("path", p) or True,
+    )
+
+    assert window._open_file_in_default_app("C:/tmp/sample.txt") is True
+    assert captured["path"] == "C:/tmp/sample.txt"
+
+
+def test_open_log_file_uses_open_helper_with_absolute_path(window, monkeypatch, tmp_path):
+    log_path = tmp_path / "runtime.log"
+    window.log_file_path = str(log_path)
+
+    captured = {"path": None}
+    monkeypatch.setattr(
+        window,
+        "_open_file_in_default_app",
+        lambda p: captured.__setitem__("path", p) or True,
+    )
+
+    window._open_log_file()
+
+    assert captured["path"] == str(log_path.resolve())
+
+
+def test_open_log_file_reports_failure_when_helper_returns_false(window, monkeypatch, tmp_path):
+    log_path = tmp_path / "cannot-open.log"
+    window.log_file_path = str(log_path)
+
+    logged = {"message": ""}
+    monkeypatch.setattr(window, "_open_file_in_default_app", lambda _p: False)
+    monkeypatch.setattr(
+        window,
+        "_log",
+        lambda _level, message: logged.__setitem__("message", str(message)),
+    )
+
+    window._open_log_file()
+
+    assert "Failed to open log file" in logged["message"]
+    assert "Failed to open log file" in window.lbl_status.text()
+
+
+def test_mainwindow_eventfilter_forwards_false_result_from_session_controller(window, monkeypatch):
+    called = {}
+
+    def _fake_event_filter(_self, watched, event):
+        called["watched"] = watched
+        called["event"] = event
+        return False
+
+    monkeypatch.setattr(appmod.SessionUiController, "eventFilter", _fake_event_filter)
+
+    watched = window.tree_filters
+    event = appmod.QEvent(appmod.QEvent.Type.None_)
+    handled = window.eventFilter(watched, event)
+
+    assert handled is False
+    assert called["watched"] is watched
+    assert called["event"] is event
+
+
+def test_mainwindow_closeevent_forwards_to_session_controller(window, monkeypatch):
+    called = {}
+
+    def _fake_close_event(_self, event):
+        called["event"] = event
+
+    monkeypatch.setattr(appmod.SessionUiController, "closeEvent", _fake_close_event)
+    event = appmod.QCloseEvent()
+
+    window.closeEvent(event)
+
+    assert called["event"] is event

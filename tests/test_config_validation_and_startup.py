@@ -329,3 +329,103 @@ def test_main_uses_incremented_instance_counter_when_lock_exists(monkeypatch):
     assert captured["config"] is not None
     assert captured["config"]["_instance_counter"] == 6
     assert captured["config"]["_instance_id"] == "deadbeef_6"
+
+
+def test_setup_logging_falls_back_to_default_file_when_primary_path_fails(monkeypatch):
+    config = {
+        "_instance_id": "deadbeef_1",
+        "log_file": "custom.log",
+    }
+    created_paths = []
+
+    class FakeFileHandler(logging.Handler):
+        def __init__(self, filename, encoding="utf-8"):
+            super().__init__()
+            _ = encoding
+            created_paths.append(str(filename))
+            if len(created_paths) == 1:
+                raise OSError("primary log path denied")
+
+        def emit(self, _record):
+            return None
+
+    original_handlers = list(appmod.logger.handlers)
+    original_level = appmod.logger.level
+    appmod.logger.handlers.clear()
+    monkeypatch.setattr(appmod.logging, "FileHandler", FakeFileHandler)
+
+    try:
+        handler = appmod._setup_logging(config)
+    finally:
+        appmod.logger.handlers.clear()
+        for old_handler in original_handlers:
+            appmod.logger.addHandler(old_handler)
+        appmod.logger.setLevel(original_level)
+
+    assert isinstance(handler, FakeFileHandler)
+    assert len(created_paths) == 2
+    assert created_paths[0].endswith("custom_deadbeef_1.log")
+    assert created_paths[1].endswith("qbiremo_enhanced_deadbeef_1.log")
+    assert str(config["_log_file_path"]).endswith("qbiremo_enhanced_deadbeef_1.log")
+
+
+def test_main_logs_load_issues_and_starts_with_defaults(monkeypatch, caplog):
+    captured = {"config": None}
+
+    class DummyHandler:
+        def flush(self):
+            return None
+
+    monkeypatch.setattr(
+        appmod,
+        "load_config_with_issues",
+        lambda _path: ({}, ["Failed to parse config file broken.toml: boom. Using defaults."]),
+    )
+    monkeypatch.setattr(
+        appmod,
+        "acquire_instance_lock",
+        lambda cfg, start_counter: (
+            int(start_counter),
+            appmod.compute_instance_id_from_config(
+                {**cfg, "_instance_counter": int(start_counter)}
+            ),
+            appmod.Path("dummy_instance_1.lck"),
+        ),
+    )
+    monkeypatch.setattr(appmod.atexit, "register", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(appmod, "_setup_logging", lambda _config: DummyHandler())
+    monkeypatch.setattr(appmod, "_install_exception_hooks", lambda _handler: None)
+
+    class FakeApplication:
+        def __init__(self, _argv):
+            pass
+
+        def setOrganizationName(self, *_args):
+            pass
+
+        def setApplicationName(self, *_args):
+            pass
+
+        def setApplicationDisplayName(self, *_args):
+            pass
+
+        def exec(self):
+            return 0
+
+    class FakeWindow:
+        def __init__(self, config):
+            captured["config"] = dict(config)
+
+    monkeypatch.setattr(appmod, "QApplication", FakeApplication)
+    monkeypatch.setattr(appmod, "MainWindow", FakeWindow)
+    monkeypatch.setattr(appmod.sys, "argv", ["qbiremo_enhanced.py"])
+    caplog.set_level(logging.WARNING, logger=appmod.G_APP_NAME)
+
+    with pytest.raises(SystemExit) as exc:
+        appmod.main()
+
+    assert int(exc.value.code) == 0
+    assert captured["config"] is not None
+    assert captured["config"]["qb_host"] == "localhost"
+    assert captured["config"]["qb_port"] == 8080
+    assert "Failed to parse config file broken.toml" in caplog.text

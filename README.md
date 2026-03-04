@@ -305,7 +305,14 @@ qbiremo-enhanced/
 |   |-- __init__.py
 |   |-- __main__.py
 |   |-- main_window.py
-|   |-- controllers.py
+|   |-- controllers/
+|   |   |-- __init__.py
+|   |   |-- base.py
+|   |   |-- network_api.py
+|   |   |-- filter_table.py
+|   |   |-- details_content.py
+|   |   |-- actions_taxonomy.py
+|   |   `-- session_ui.py
 |   |-- dialogs.py
 |   |-- tasking.py
 |   |-- config_runtime.py
