@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import qbiremo_enhanced.main_window as appmod
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 
 
 def _top_level_names(tree_widget):
@@ -45,6 +46,20 @@ def _find_submenu_action(window, menu_text, submenu_text, action_text):
             for submenu_action in submenu.actions():
                 if submenu_action.text() == action_text:
                     return submenu_action
+    return None
+
+
+def _find_submenu(window, menu_text, submenu_text):
+    for menu_action in window.menuBar().actions():
+        if menu_action.text() != menu_text:
+            continue
+        menu = menu_action.menu()
+        if menu is None:
+            continue
+        for action in menu.actions():
+            submenu = action.menu()
+            if submenu is not None and action.text() == submenu_text:
+                return submenu
     return None
 
 
@@ -262,6 +277,30 @@ def test_view_menu_column_toggles_hide_and_show_columns(window):
 
     tracker_action.setChecked(True)
     assert not window.tbl_torrents.isColumnHidden(tracker_index)
+
+
+def test_torrent_columns_menu_stays_open_when_toggling_column(window, qtbot):
+    columns_menu = _find_submenu(window, "&View", "Torrent &Columns")
+    tracker_action = _find_submenu_action(window, "&View", "Torrent &Columns", "Tracker")
+
+    assert columns_menu is not None
+    assert tracker_action is not None
+
+    columns_menu.popup(window.mapToGlobal(window.rect().center()))
+    qtbot.waitUntil(columns_menu.isVisible)
+
+    prev_checked = tracker_action.isChecked()
+    action_rect = columns_menu.actionGeometry(tracker_action)
+    QTest.mouseClick(
+        columns_menu,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        action_rect.center(),
+    )
+
+    assert tracker_action.isChecked() is (not prev_checked)
+    assert columns_menu.isVisible()
+    columns_menu.hide()
 
 
 def test_torrent_columns_menu_contains_view_management_actions(window):

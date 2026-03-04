@@ -9,6 +9,8 @@ from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
+    QKeyEvent,
+    QMouseEvent,
 )
 from PySide6.QtWidgets import (
     QInputDialog,
@@ -35,6 +37,27 @@ from ..utils import (
     parse_tags,
 )
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
+
+
+class _StayOpenOnToggleMenu(QMenu):
+    """QMenu variant that does not close after toggling checkable actions."""
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        action = self.actionAt(event.position().toPoint())
+        if action is not None and action.isCheckable() and action.isEnabled():
+            action.setChecked(not action.isChecked())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            action = self.activeAction()
+            if action is not None and action.isCheckable() and action.isEnabled():
+                action.setChecked(not action.isChecked())
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
 
 class FilterTableController(WindowControllerBase):
@@ -89,7 +112,8 @@ class FilterTableController(WindowControllerBase):
 
     def _create_torrent_columns_menu(self, parent_menu: QMenu) -> None:
         """Create View -> Torrent Columns submenu with per-column visibility toggles."""
-        columns_menu = parent_menu.addMenu("Torrent &Columns")
+        columns_menu = _StayOpenOnToggleMenu("Torrent &Columns", self)
+        parent_menu.addMenu(columns_menu)
         action_basic_view = QAction("Basic View", self)
         action_basic_view.triggered.connect(self._apply_basic_torrent_view)
         columns_menu.addAction(action_basic_view)
