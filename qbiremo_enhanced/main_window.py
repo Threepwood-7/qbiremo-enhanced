@@ -3,6 +3,7 @@
 
 import argparse
 import atexit
+import json
 import logging
 import re
 import subprocess
@@ -18,6 +19,7 @@ from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
+    QFontDatabase,
     QKeySequence,
     QShortcut,
 )
@@ -136,9 +138,11 @@ __all__ = [
     "TrackerHealthDialog",
     "Worker",
     "compute_instance_id",
+    "json",
     "qbittorrentapi",
     "subprocess",
     "tempfile",
+    "QFontDatabase",
 ]
 
 
