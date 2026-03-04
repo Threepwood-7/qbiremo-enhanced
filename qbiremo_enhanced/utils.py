@@ -1,4 +1,3 @@
-
 """Formatting helpers, path/instance helpers, and platform primitives."""
 
 import fnmatch
@@ -8,7 +7,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import BinaryIO, cast
 
 from PySide6.QtGui import QIcon
 
@@ -24,7 +23,7 @@ from .constants import (
 from .models.config import NormalizedConfig
 
 logger = logging.getLogger(G_APP_NAME)
-_INSTANCE_LOCK_HANDLES: Dict[str, object] = {}
+_INSTANCE_LOCK_HANDLES: dict[str, BinaryIO] = {}
 __all__ = [
     "format_float",
     "format_int",
@@ -57,64 +56,57 @@ __all__ = [
     "calculate_size_buckets",
 ]
 
-def format_float(value: float, decimals: int = 2) -> str:
-    """Format float with specified decimals, empty if zero.
 
-    """
+def format_float(value: float, decimals: int = 2) -> str:
+    """Format float with specified decimals, empty if zero."""
     if value != 0:
         return f"{value:.{decimals}f}"
     return ""
 
-def format_int(value: int) -> str:
-    """Format integer with thousands separator, empty if zero.
 
-    """
+def format_int(value: int) -> str:
+    """Format integer with thousands separator, empty if zero."""
     if value != 0:
         return f"{value:,}"
     return ""
 
-def format_datetime(timestamp: int) -> str:
-    """Format Unix timestamp, empty if zero.
 
-    """
+def format_datetime(timestamp: int) -> str:
+    """Format Unix timestamp, empty if zero."""
     if timestamp > 0:
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
     return ""
 
-def format_size(bytes_size: int) -> str:
-    """Format bytes as human-readable size.
 
-    """
-    return format_size_mode(bytes_size, mode='human_readable')
+def format_size(bytes_size: int) -> str:
+    """Format bytes as human-readable size."""
+    return format_size_mode(bytes_size, mode="human_readable")
+
 
 def format_speed(bytes_per_sec: int) -> str:
-    """Format speed in bytes/sec.
+    """Format speed in bytes/sec."""
+    return format_speed_mode(bytes_per_sec, mode="human_readable")
 
-    """
-    return format_speed_mode(bytes_per_sec, mode='human_readable')
 
 def _normalize_display_mode(value: object, default: str) -> str:
-    """Normalize mode to 'bytes' or 'human_readable'.
-
-    """
+    """Normalize mode to 'bytes' or 'human_readable'."""
     mode = str(value or default).strip().lower()
-    if mode in {'bytes', 'human_readable'}:
+    if mode in {"bytes", "human_readable"}:
         return mode
     return default
 
-def format_size_mode(bytes_size: int, mode: str = 'human_readable') -> str:
-    """Format size according to display mode.
 
-    """
+def format_size_mode(bytes_size: int, mode: str = "human_readable") -> str:
+    """Format size according to display mode."""
     mode = _normalize_display_mode(mode, DEFAULT_DISPLAY_SIZE_MODE)
     size_val = int(bytes_size or 0)
-    if mode == 'bytes':
+    if mode == "bytes":
         return f"{size_val:,}"
 
     if size_val == 0:
         return "0 B"
 
-    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
     unit_idx = 0
     size = float(size_val)
 
@@ -124,22 +116,20 @@ def format_size_mode(bytes_size: int, mode: str = 'human_readable') -> str:
 
     return f"{size:.2f} {units[unit_idx]}"
 
-def format_speed_mode(bytes_per_sec: int, mode: str = 'human_readable') -> str:
-    """Format speed according to display mode.
 
-    """
+def format_speed_mode(bytes_per_sec: int, mode: str = "human_readable") -> str:
+    """Format speed according to display mode."""
     speed_val = int(bytes_per_sec or 0)
     if speed_val == 0:
         return ""
     mode = _normalize_display_mode(mode, DEFAULT_DISPLAY_SPEED_MODE)
-    if mode == 'bytes':
+    if mode == "bytes":
         return f"{speed_val:,}"
     return f"{format_size_mode(speed_val, mode='human_readable')}/s"
 
-def format_eta(seconds: int) -> str:
-    """Format ETA seconds to compact human-readable duration.
 
-    """
+def format_eta(seconds: int) -> str:
+    """Format ETA seconds to compact human-readable duration."""
     try:
         eta = int(seconds)
     except (TypeError, ValueError, OverflowError):
@@ -160,45 +150,48 @@ def format_eta(seconds: int) -> str:
         return f"{minutes}m {secs:02d}s"
     return f"{secs}s"
 
-def _normalize_instance_host(raw_host: object) -> str:
-    """Normalize host input used for per-instance file ID generation.
 
-    """
+def _normalize_instance_host(raw_host: object) -> str:
+    """Normalize host input used for per-instance file ID generation."""
     if raw_host is None:
         return "localhost"
     host = str(raw_host).strip()
     return host if host else "localhost"
 
-def _normalize_instance_port(raw_port: object) -> int:
-    """Normalize port input used for per-instance file ID generation.
 
-    """
-    try:
-        port = int(raw_port)
-    except (TypeError, ValueError, OverflowError):
+def _normalize_instance_port(raw_port: object) -> int:
+    """Normalize port input used for per-instance file ID generation."""
+    if isinstance(raw_port, (int, float, str, bytes, bytearray)):
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError, OverflowError):
+            port = 8080
+    else:
         port = 8080
     if port < 1 or port > 65535:
         return 8080
     return port
 
-def _normalize_instance_counter(raw_counter: object) -> int:
-    """Normalize per-server instance counter used as instance ID suffix.
 
-    """
-    try:
-        counter = int(raw_counter)
-    except (TypeError, ValueError, OverflowError):
+def _normalize_instance_counter(raw_counter: object) -> int:
+    """Normalize per-server instance counter used as instance ID suffix."""
+    if isinstance(raw_counter, (int, float, str, bytes, bytearray)):
+        try:
+            counter = int(raw_counter)
+        except (TypeError, ValueError, OverflowError):
+            counter = 1
+    else:
         counter = 1
     return counter if counter > 0 else 1
 
-def _normalize_http_protocol_scheme(raw_scheme: object) -> str:
-    """Normalize WebUI/API protocol scheme to http or https.
 
-    """
+def _normalize_http_protocol_scheme(raw_scheme: object) -> str:
+    """Normalize WebUI/API protocol scheme to http or https."""
     scheme = str(raw_scheme or "").strip().lower()
     if scheme in ("http", "https"):
         return scheme
     return "http"
+
 
 def compute_instance_id(
     qb_host: object,
@@ -206,12 +199,10 @@ def compute_instance_id(
     length: int = INSTANCE_ID_LENGTH,
     instance_counter: object = 1,
 ) -> str:
-    """Compute a short deterministic ID from qb_host + qb_port.
-
-    """
+    """Compute a short deterministic ID from qb_host + qb_port."""
     host = _normalize_instance_host(qb_host)
     port = _normalize_instance_port(qb_port)
-    digest = hashlib.sha1(f"{host}:{port}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(f"{host}:{port}".encode()).hexdigest()
     try:
         max_len = max(1, int(length))
     except (TypeError, ValueError, OverflowError):
@@ -220,20 +211,18 @@ def compute_instance_id(
     counter = _normalize_instance_counter(instance_counter)
     return f"{base_id}_{counter}"
 
-def compute_instance_id_from_config(config: NormalizedConfig) -> str:
-    """Compute instance ID from a config dict using normalized host/port values.
 
-    """
-    cfg = config if isinstance(config, dict) else {}
+def compute_instance_id_from_config(config: NormalizedConfig) -> str:
+    """Compute instance ID from a config dict using normalized host/port values."""
+    cfg: dict[str, object] = dict(config)
     host = cfg.get("qb_host", cfg.get("host", "localhost"))
     port = cfg.get("qb_port", cfg.get("port", 8080))
     counter = cfg.get("_instance_counter", 1)
     return compute_instance_id(host, port, instance_counter=counter)
 
-def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
-    """Append _<instance_id> before file extension, preserving directory.
 
-    """
+def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
+    """Append _<instance_id> before file extension, preserving directory."""
     raw = str(path_value or "").strip()
     if not raw:
         return raw
@@ -251,22 +240,20 @@ def _append_instance_id_to_filename(path_value: str, instance_id: str) -> str:
         new_name = f"{path_obj.name}{suffix_marker}"
     return str(path_obj.with_name(new_name))
 
-def settings_app_name_for_instance(instance_id: str) -> str:
-    """Build QSettings app name for a given instance ID.
 
-    """
+def settings_app_name_for_instance(instance_id: str) -> str:
+    """Build QSettings app name for a given instance ID."""
     ident = str(instance_id or "").strip().lower()
     if not ident:
         return G_APP_NAME
     return f"{G_APP_NAME}_{ident}"
 
+
 def resolve_cache_file_path(
     cache_file_name: str = CACHE_FILE_NAME,
     instance_id: str = "",
 ) -> Path:
-    """Resolve cache file path under OS temp dir unless absolute override is used.
-
-    """
+    """Resolve cache file path under OS temp dir unless absolute override is used."""
     raw_path = Path(str(cache_file_name))
     if instance_id:
         raw_path = Path(_append_instance_id_to_filename(str(raw_path), instance_id))
@@ -274,20 +261,18 @@ def resolve_cache_file_path(
         return raw_path
     return Path(tempfile.gettempdir()) / CACHE_TEMP_SUBDIR / raw_path
 
-def resolve_instance_lock_file_path(instance_id: str, instance_counter: object) -> Path:
-    """Resolve one .lck file path for a computed instance id + counter.
 
-    """
+def resolve_instance_lock_file_path(instance_id: str, instance_counter: object) -> Path:
+    """Resolve one .lck file path for a computed instance id + counter."""
     ident = str(instance_id or "").strip().lower()
     counter = _normalize_instance_counter(instance_counter)
     suffix = f"_{counter}"
     lock_key = ident if ident.endswith(suffix) else f"{ident}{suffix}"
     return resolve_cache_file_path("qbiremo_enhanced.lck", lock_key)
 
-def load_app_icon() -> QIcon:
-    """Load the application icon from the script directory when available.
 
-    """
+def load_app_icon() -> QIcon:
+    """Load the application icon from the script directory when available."""
     module_dir = Path(__file__).resolve().parent
     candidates = (
         module_dir / APP_ICON_FILE_NAME,
@@ -298,19 +283,17 @@ def load_app_icon() -> QIcon:
             return QIcon(str(icon_path))
     return QIcon()
 
-def _instance_lock_key(lock_path: Path) -> str:
-    """Build a stable dictionary key for one lock file path.
 
-    """
+def _instance_lock_key(lock_path: Path) -> str:
+    """Build a stable dictionary key for one lock file path."""
     try:
         return str(Path(lock_path).resolve())
     except (TypeError, ValueError, OSError, RuntimeError):
         return str(Path(lock_path))
 
-def _try_acquire_os_file_lock(handle: object) -> bool:
-    """Try to acquire a non-blocking exclusive lock on one open file handle.
 
-    """
+def _try_acquire_os_file_lock(handle: BinaryIO) -> bool:
+    """Try to acquire a non-blocking exclusive lock on one open file handle."""
     try:
         if os.name == "nt":
             import msvcrt
@@ -321,15 +304,19 @@ def _try_acquire_os_file_lock(handle: object) -> bool:
 
         import fcntl
 
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        flock = getattr(fcntl, "flock", None)
+        lock_ex = getattr(fcntl, "LOCK_EX", None)
+        lock_nb = getattr(fcntl, "LOCK_NB", None)
+        if not callable(flock) or not isinstance(lock_ex, int) or not isinstance(lock_nb, int):
+            return False
+        flock(handle.fileno(), lock_ex | lock_nb)
         return True
     except (AttributeError, ImportError, OSError, ValueError):
         return False
 
-def _release_os_file_lock(handle: object) -> None:
-    """Best-effort release of an OS-level file lock.
 
-    """
+def _release_os_file_lock(handle: BinaryIO) -> None:
+    """Best-effort release of an OS-level file lock."""
     try:
         if os.name == "nt":
             import msvcrt
@@ -340,18 +327,20 @@ def _release_os_file_lock(handle: object) -> None:
 
         import fcntl
 
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        flock = getattr(fcntl, "flock", None)
+        lock_un = getattr(fcntl, "LOCK_UN", None)
+        if callable(flock) and isinstance(lock_un, int):
+            flock(handle.fileno(), lock_un)
     except (AttributeError, ImportError, OSError, ValueError):
         logger.debug("Failed to release OS file lock", exc_info=True)
+
 
 def acquire_instance_lock(
     config: NormalizedConfig,
     start_counter: object,
-) -> Tuple[int, str, Path]:
-    """Acquire an exclusive .lck file lock; auto-increment counter when in use.
-
-    """
-    cfg = config if isinstance(config, dict) else {}
+) -> tuple[int, str, Path]:
+    """Acquire an exclusive .lck file lock; auto-increment counter when in use."""
+    cfg = cast(NormalizedConfig, dict(config))
     counter = _normalize_instance_counter(start_counter)
 
     while True:
@@ -376,10 +365,7 @@ def acquire_instance_lock(
                 counter += 1
                 continue
 
-            payload = (
-                f"instance_id={instance_id}\n"
-                f"instance_counter={counter}\n"
-            ).encode("utf-8")
+            payload = (f"instance_id={instance_id}\ninstance_counter={counter}\n").encode()
             handle.seek(0)
             handle.truncate(0)
             handle.write(payload)
@@ -398,10 +384,9 @@ def acquire_instance_lock(
                 pass
             raise
 
-def release_instance_lock(lock_path: Path) -> None:
-    """Best-effort release/removal of an instance .lck file on shutdown.
 
-    """
+def release_instance_lock(lock_path: Path) -> None:
+    """Best-effort release/removal of an instance .lck file on shutdown."""
     key = _instance_lock_key(Path(lock_path))
     handle = _INSTANCE_LOCK_HANDLES.pop(key, None)
     if handle is not None:
@@ -419,41 +404,37 @@ def release_instance_lock(lock_path: Path) -> None:
     except OSError:
         logger.debug("Failed to remove lock file: %s", lock_path, exc_info=True)
 
-def parse_tags(tags: object) -> List[str]:
-    """Parse tags from qBittorrentAPI into a list of strings.
 
-    """
+def parse_tags(tags: object) -> list[str]:
+    """Parse tags from qBittorrentAPI into a list of strings."""
     if not tags:
         return []
     if isinstance(tags, str):
-        return [t.strip() for t in tags.split(',') if t.strip()]
+        return [t.strip() for t in tags.split(",") if t.strip()]
     if isinstance(tags, (list, tuple, set)):
         return [str(t) for t in tags]
     return []
 
-def matches_wildcard(text: str, pattern: str) -> bool:
-    """Check if text matches DOS-style wildcard pattern.
 
-    """
+def matches_wildcard(text: str, pattern: str) -> bool:
+    """Check if text matches DOS-style wildcard pattern."""
     if not pattern:
         return True
     return fnmatch.fnmatch(text.lower(), pattern.lower())
 
-def normalize_filter_pattern(raw_pattern: str) -> str:
-    """Normalize filter input: plain text becomes a contains wildcard pattern.
 
-    """
+def normalize_filter_pattern(raw_pattern: str) -> str:
+    """Normalize filter input: plain text becomes a contains wildcard pattern."""
     pattern = (raw_pattern or "").strip()
     if not pattern:
         return ""
-    if '*' in pattern or '?' in pattern:
+    if "*" in pattern or "?" in pattern:
         return pattern
     return f"*{pattern}*"
 
-def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> List[tuple]:
-    """Calculate size bucket ranges.
 
-    """
+def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> list[tuple]:
+    """Calculate size bucket ranges."""
     if min_size >= max_size or count < 1:
         return []
 
@@ -466,4 +447,3 @@ def calculate_size_buckets(min_size: int, max_size: int, count: int = 5) -> List
         buckets.append((start, end))
 
     return buckets
-

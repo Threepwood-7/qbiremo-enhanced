@@ -21,5 +21,3 @@ class NormalizedConfig(TypedDict, total=False):
     _instance_id: str
     _instance_counter: int
     _instance_lock_file_path: str
-
-

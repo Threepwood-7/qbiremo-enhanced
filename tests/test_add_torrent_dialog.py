@@ -76,9 +76,7 @@ def test_add_torrent_dialog_accepts_multi_url_source(qtbot):
     dialog = appmod.AddTorrentDialog(categories=[], tags=[])
     qtbot.addWidget(dialog)
 
-    dialog.txt_source_urls.setPlainText(
-        "magnet:?xt=urn:btih:aaa\nhttps://example.org/file.torrent"
-    )
+    dialog.txt_source_urls.setPlainText("magnet:?xt=urn:btih:aaa\nhttps://example.org/file.torrent")
     data = dialog.get_torrent_data()
 
     assert data is not None
@@ -123,9 +121,7 @@ def test_add_torrent_dialog_accepts_multiple_file_sources(qtbot, tmp_path):
     assert data["torrent_files"] == [str(t1), str(t2)]
 
 
-def test_add_torrent_dialog_accept_keeps_dialog_open_when_source_is_invalid(
-    qtbot, monkeypatch
-):
+def test_add_torrent_dialog_accept_keeps_dialog_open_when_source_is_invalid(qtbot, monkeypatch):
     dialog = appmod.AddTorrentDialog(categories=[], tags=[])
     qtbot.addWidget(dialog)
     dialog.show()

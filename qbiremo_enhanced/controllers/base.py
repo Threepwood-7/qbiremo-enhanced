@@ -3,9 +3,10 @@
 import json
 import logging
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import qbittorrentapi
+from PySide6.QtWidgets import QMainWindow
 
 from ..constants import G_APP_NAME
 
@@ -31,16 +32,16 @@ RECOVERABLE_CONTROLLER_EXCEPTIONS = (
 )
 
 
-class WindowControllerBase:
+class WindowControllerBase(QMainWindow):
     """Proxy unknown attribute access/assignment to the owning MainWindow."""
 
     def __init__(self, window: "MainWindow") -> None:
         object.__setattr__(self, "window", window)
 
-    def __getattr__(self, name: str) -> object:
+    def __getattr__(self, name: str) -> Any:
         return getattr(self.window, name)
 
-    def __setattr__(self, name: str, value: object) -> None:
+    def __setattr__(self, name: str, value: Any) -> None:
         if name == "window":
             object.__setattr__(self, name, value)
             return

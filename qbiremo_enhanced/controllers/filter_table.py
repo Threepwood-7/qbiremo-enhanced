@@ -1,7 +1,7 @@
 """Feature controllers for MainWindow composition."""
 
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import cast
 from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt
@@ -41,26 +41,22 @@ class FilterTableController(WindowControllerBase):
     """Manage filter tree state and torrent table rendering."""
 
     def _is_filter_item_active(self, kind: str, value: object) -> bool:
-        """Return whether a filter tree item is currently active.
-
-        """
-        if kind == 'status':
+        """Return whether a filter tree item is currently active."""
+        if kind == "status":
             return value == self.current_status_filter
-        if kind == 'category':
+        if kind == "category":
             return value == self.current_category_filter
-        if kind == 'tag':
+        if kind == "tag":
             return value == self.current_tag_filter
-        if kind == 'size':
+        if kind == "size":
             return value == self.current_size_bucket
-        if kind == 'tracker':
+        if kind == "tracker":
             return value == self.current_tracker_filter
         return False
 
     def _refresh_filter_tree_highlights(self) -> None:
-        """Highlight all currently active filters in the unified tree.
-
-        """
-        if not hasattr(self, 'tree_filters'):
+        """Highlight all currently active filters in the unified tree."""
+        if not hasattr(self, "tree_filters"):
             return
 
         active_brush = QBrush(QColor(64, 130, 255, 80))
@@ -92,9 +88,7 @@ class FilterTableController(WindowControllerBase):
                 item.setFont(0, font)
 
     def _create_torrent_columns_menu(self, parent_menu: QMenu) -> None:
-        """Create View -> Torrent Columns submenu with per-column visibility toggles.
-
-        """
+        """Create View -> Torrent Columns submenu with per-column visibility toggles."""
         columns_menu = parent_menu.addMenu("Torrent &Columns")
         action_basic_view = QAction("Basic View", self)
         action_basic_view.triggered.connect(self._apply_basic_torrent_view)
@@ -120,7 +114,9 @@ class FilterTableController(WindowControllerBase):
             action.setCheckable(True)
             action.setChecked(not self.tbl_torrents.isColumnHidden(idx))
             action.toggled.connect(
-                lambda checked, column_key=key: self._set_torrent_column_visible(column_key, checked)
+                lambda checked, column_key=key: self._set_torrent_column_visible(
+                    column_key, checked
+                )
             )
             columns_menu.addAction(action)
             self.column_visibility_actions[key] = action
@@ -131,9 +127,7 @@ class FilterTableController(WindowControllerBase):
         columns_menu.addAction(action_show_all)
 
     def _set_torrent_column_visible(self, column_key: str, visible: bool) -> None:
-        """Show or hide one torrent-table column by stable column key.
-
-        """
+        """Show or hide one torrent-table column by stable column key."""
         idx = self.torrent_column_index.get(column_key)
         if idx is None:
             return
@@ -142,18 +136,14 @@ class FilterTableController(WindowControllerBase):
         self._save_settings()
 
     def _show_all_torrent_columns(self) -> None:
-        """Make every torrent-table column visible.
-
-        """
+        """Make every torrent-table column visible."""
         for idx in range(self.tbl_torrents.columnCount()):
             self.tbl_torrents.setColumnHidden(idx, False)
         self._sync_torrent_column_actions()
         self._save_settings()
 
     def _sync_torrent_column_actions(self) -> None:
-        """Refresh column visibility action checked states from current table state.
-
-        """
+        """Refresh column visibility action checked states from current table state."""
         if not getattr(self, "column_visibility_actions", None):
             return
         for key, action in self.column_visibility_actions.items():
@@ -165,10 +155,8 @@ class FilterTableController(WindowControllerBase):
             action.setChecked(state)
             action.blockSignals(prev)
 
-    def _apply_hidden_columns_by_keys(self, hidden_keys: List[str]) -> None:
-        """Apply hidden column state from stable key list.
-
-        """
+    def _apply_hidden_columns_by_keys(self, hidden_keys: list[str]) -> None:
+        """Apply hidden column state from stable key list."""
         hidden = {str(k) for k in hidden_keys}
         for idx, col in enumerate(self.torrent_columns):
             self.tbl_torrents.setColumnHidden(idx, col["key"] in hidden)
@@ -176,12 +164,10 @@ class FilterTableController(WindowControllerBase):
 
     def _apply_torrent_view(
         self,
-        visible_keys: List[str],
-        widths: Optional[Dict[str, object]] = None,
+        visible_keys: list[str],
+        widths: dict[str, object] | None = None,
     ) -> None:
-        """Apply a torrent-table view by visible column keys and optional widths.
-
-        """
+        """Apply a torrent-table view by visible column keys and optional widths."""
         visible_set = {str(key) for key in list(visible_keys or [])}
         known_keys = set(self.torrent_column_index.keys())
         visible_set = {key for key in visible_set if key in known_keys}
@@ -203,12 +189,10 @@ class FilterTableController(WindowControllerBase):
         self._sync_torrent_column_actions()
         self._save_settings()
 
-    def _current_torrent_view_payload(self) -> Dict[str, object]:
-        """Return visible columns + widths for the current torrent-table view.
-
-        """
-        visible_columns: List[str] = []
-        widths: Dict[str, int] = {}
+    def _current_torrent_view_payload(self) -> dict[str, object]:
+        """Return visible columns + widths for the current torrent-table view."""
+        visible_columns: list[str] = []
+        widths: dict[str, int] = {}
         for idx, column in enumerate(self.torrent_columns):
             key = column["key"]
             if self.tbl_torrents.isColumnHidden(idx):
@@ -220,10 +204,8 @@ class FilterTableController(WindowControllerBase):
             "widths": widths,
         }
 
-    def _saved_torrent_views(self) -> Dict[str, Dict[str, object]]:
-        """Load named torrent-table views from QSettings.
-
-        """
+    def _saved_torrent_views(self) -> dict[str, dict[str, object]]:
+        """Load named torrent-table views from QSettings."""
         settings = self._new_settings()
         raw_json = settings.value("torrentColumnNamedViewsJson", "")
         if isinstance(raw_json, (bytes, bytearray)):
@@ -241,14 +223,14 @@ class FilterTableController(WindowControllerBase):
             return {}
 
         known_keys = set(self.torrent_column_index.keys())
-        cleaned: Dict[str, Dict[str, object]] = {}
+        cleaned: dict[str, dict[str, object]] = {}
         for raw_name, payload in parsed.items():
             view_name = str(raw_name or "").strip()
             if not view_name or not isinstance(payload, dict):
                 continue
 
             raw_visible = payload.get("visible_columns", [])
-            visible_columns: List[str] = []
+            visible_columns: list[str] = []
             if isinstance(raw_visible, str):
                 raw_visible = [raw_visible]
             if isinstance(raw_visible, (list, tuple, set)):
@@ -258,7 +240,7 @@ class FilterTableController(WindowControllerBase):
                         visible_columns.append(key)
 
             raw_widths = payload.get("widths", {})
-            widths: Dict[str, int] = {}
+            widths: dict[str, int] = {}
             if isinstance(raw_widths, dict):
                 for raw_key, raw_width in raw_widths.items():
                     key = str(raw_key or "").strip()
@@ -275,10 +257,8 @@ class FilterTableController(WindowControllerBase):
 
         return cleaned
 
-    def _store_saved_torrent_views(self, views: Dict[str, Dict[str, object]]) -> None:
-        """Store named torrent-table views into QSettings.
-
-        """
+    def _store_saved_torrent_views(self, views: dict[str, dict[str, object]]) -> None:
+        """Store named torrent-table views into QSettings."""
         settings = self._new_settings()
         payload = views if isinstance(views, dict) else {}
         settings.setValue(
@@ -288,9 +268,7 @@ class FilterTableController(WindowControllerBase):
         settings.sync()
 
     def _refresh_saved_torrent_views_menu(self) -> None:
-        """Rebuild the Saved Views submenu from QSettings.
-
-        """
+        """Rebuild the Saved Views submenu from QSettings."""
         menu = getattr(self, "saved_torrent_views_menu", None)
         if menu is None:
             return
@@ -311,9 +289,7 @@ class FilterTableController(WindowControllerBase):
             menu.addAction(action)
 
     def _apply_saved_torrent_view(self, view_name: str) -> None:
-        """Apply one named saved torrent-table view.
-
-        """
+        """Apply one named saved torrent-table view."""
         name = str(view_name or "").strip()
         if not name:
             return
@@ -328,9 +304,7 @@ class FilterTableController(WindowControllerBase):
         self._set_status(f"Applied view: {name}")
 
     def _save_current_torrent_view(self) -> None:
-        """Prompt for a name and save current column visibility/widths as a named view.
-
-        """
+        """Prompt for a name and save current column visibility/widths as a named view."""
         name, ok = QInputDialog.getText(
             self,
             "Save Torrent View",
@@ -355,41 +329,33 @@ class FilterTableController(WindowControllerBase):
         self._set_status(f"Saved view: {view_name}")
 
     def _apply_basic_torrent_view(self) -> None:
-        """Apply built-in Basic torrent-table view preset.
-
-        """
+        """Apply built-in Basic torrent-table view preset."""
         self._apply_torrent_view(list(BASIC_TORRENT_VIEW_KEYS))
         self._set_status("Applied view: Basic")
 
     def _apply_medium_torrent_view(self) -> None:
-        """Apply built-in Medium torrent-table view preset.
-
-        """
+        """Apply built-in Medium torrent-table view preset."""
         self._apply_torrent_view(list(MEDIUM_TORRENT_VIEW_KEYS))
         self._set_status("Applied view: Medium")
 
     def _fit_torrent_columns(self) -> None:
-        """Resize visible torrent table columns to fit their contents.
-
-        """
+        """Resize visible torrent table columns to fit their contents."""
         self.tbl_torrents.resizeColumnsToContents()
 
     def _count_status_filter_matches(self, status_filter: str) -> int:
-        """Count torrents matching one status filter using current in-memory torrent list.
-
-        """
+        """Count torrents matching one status filter using current in-memory torrent list."""
         torrents = list(self.all_torrents or [])
         if not torrents:
             return 0
         status = str(status_filter or "all").strip().lower()
         if status == "all":
             return len(torrents)
-        return sum(1 for torrent in torrents if self._torrent_matches_status_filter(torrent, status))
+        return sum(
+            1 for torrent in torrents if self._torrent_matches_status_filter(torrent, status)
+        )
 
     def _count_category_filter_matches(self, category_filter: object) -> int:
-        """Count torrents matching one category filter using current in-memory torrent list.
-
-        """
+        """Count torrents matching one category filter using current in-memory torrent list."""
         torrents = list(self.all_torrents or [])
         if not torrents:
             return 0
@@ -402,29 +368,25 @@ class FilterTableController(WindowControllerBase):
         )
 
     def _count_tag_filter_matches(self, tag_filter: object) -> int:
-        """Count torrents matching one tag filter using current in-memory torrent list.
-
-        """
+        """Count torrents matching one tag filter using current in-memory torrent list."""
         torrents = list(self.all_torrents or [])
         if not torrents:
             return 0
         if tag_filter is None:
             return len(torrents)
-        return sum(1 for torrent in torrents if self._torrent_matches_tag_filter(torrent, tag_filter))
+        return sum(
+            1 for torrent in torrents if self._torrent_matches_tag_filter(torrent, tag_filter)
+        )
 
     def _status_filter_item_text(self, status_filter: str) -> str:
-        """Build display text for one status filter row with live torrent count.
-
-        """
+        """Build display text for one status filter row with live torrent count."""
         status = str(status_filter or "all").strip().lower() or "all"
         label = status.replace("_", " ").title()
         count = self._count_status_filter_matches(status)
         return f"{label} ({count})"
 
     def _category_filter_item_text(self, category_filter: object) -> str:
-        """Build display text for one category filter row with live torrent count.
-
-        """
+        """Build display text for one category filter row with live torrent count."""
         if category_filter is None:
             label = "All"
         else:
@@ -434,9 +396,7 @@ class FilterTableController(WindowControllerBase):
         return f"{label} ({count})"
 
     def _tag_filter_item_text(self, tag_filter: object) -> str:
-        """Build display text for one tag filter row with live torrent count.
-
-        """
+        """Build display text for one tag filter row with live torrent count."""
         if tag_filter is None:
             label = "All"
         else:
@@ -446,9 +406,7 @@ class FilterTableController(WindowControllerBase):
         return f"{label} ({count})"
 
     def _update_filter_tree_count_labels(self) -> None:
-        """Refresh status/category/tag tree labels using latest in-memory torrent snapshot.
-
-        """
+        """Refresh status/category/tag tree labels using latest in-memory torrent snapshot."""
         if not hasattr(self, "tree_filters"):
             return
         try:
@@ -474,25 +432,23 @@ class FilterTableController(WindowControllerBase):
             self._log("ERROR", f"Error updating filter tree counts: {e}")
 
     def _update_category_tree(self) -> None:
-        """Update category section in the unified filter tree.
-
-        """
+        """Update category section in the unified filter tree."""
         try:
             # Remove existing children
             while self._section_category.childCount():
                 self._section_category.removeChild(self._section_category.child(0))
 
             all_item = QTreeWidgetItem([self._category_filter_item_text(None)])
-            all_item.setData(0, Qt.ItemDataRole.UserRole, ('category', None))
+            all_item.setData(0, Qt.ItemDataRole.UserRole, ("category", None))
             self._section_category.addChild(all_item)
 
             uncategorized = QTreeWidgetItem([self._category_filter_item_text("")])
-            uncategorized.setData(0, Qt.ItemDataRole.UserRole, ('category', ""))
+            uncategorized.setData(0, Qt.ItemDataRole.UserRole, ("category", ""))
             self._section_category.addChild(uncategorized)
 
             for category in self.categories:
                 item = QTreeWidgetItem([self._category_filter_item_text(category)])
-                item.setData(0, Qt.ItemDataRole.UserRole, ('category', category))
+                item.setData(0, Qt.ItemDataRole.UserRole, ("category", category))
                 self._section_category.addChild(item)
 
             self._section_category.setExpanded(True)
@@ -501,24 +457,22 @@ class FilterTableController(WindowControllerBase):
             self._log("ERROR", f"Error updating category tree: {e}")
 
     def _update_tag_tree(self) -> None:
-        """Update tag section in the unified filter tree.
-
-        """
+        """Update tag section in the unified filter tree."""
         try:
             while self._section_tag.childCount():
                 self._section_tag.removeChild(self._section_tag.child(0))
 
             all_item = QTreeWidgetItem([self._tag_filter_item_text(None)])
-            all_item.setData(0, Qt.ItemDataRole.UserRole, ('tag', None))
+            all_item.setData(0, Qt.ItemDataRole.UserRole, ("tag", None))
             self._section_tag.addChild(all_item)
 
             untagged = QTreeWidgetItem([self._tag_filter_item_text("")])
-            untagged.setData(0, Qt.ItemDataRole.UserRole, ('tag', ""))
+            untagged.setData(0, Qt.ItemDataRole.UserRole, ("tag", ""))
             self._section_tag.addChild(untagged)
 
             for tag in self.tags:
                 item = QTreeWidgetItem([self._tag_filter_item_text(tag)])
-                item.setData(0, Qt.ItemDataRole.UserRole, ('tag', tag))
+                item.setData(0, Qt.ItemDataRole.UserRole, ("tag", tag))
                 self._section_tag.addChild(item)
 
             self._section_tag.setExpanded(True)
@@ -527,15 +481,13 @@ class FilterTableController(WindowControllerBase):
             self._log("ERROR", f"Error updating tag tree: {e}")
 
     def _calculate_size_buckets(self) -> None:
-        """Calculate dynamic size buckets.
-
-        """
+        """Calculate dynamic size buckets."""
         try:
             if not self.all_torrents:
                 self.size_buckets = []
                 return
 
-            sizes = [getattr(t, 'size', 0) for t in self.all_torrents if getattr(t, 'size', 0) > 0]
+            sizes = [getattr(t, "size", 0) for t in self.all_torrents if getattr(t, "size", 0) > 0]
             if not sizes:
                 self.size_buckets = []
                 return
@@ -548,15 +500,13 @@ class FilterTableController(WindowControllerBase):
             self.size_buckets = []
 
     def _update_size_tree(self) -> None:
-        """Update size section in the unified filter tree.
-
-        """
+        """Update size section in the unified filter tree."""
         try:
             while self._section_size.childCount():
                 self._section_size.removeChild(self._section_size.child(0))
 
             all_item = QTreeWidgetItem(["All"])
-            all_item.setData(0, Qt.ItemDataRole.UserRole, ('size', None))
+            all_item.setData(0, Qt.ItemDataRole.UserRole, ("size", None))
             self._section_size.addChild(all_item)
 
             for start, end in self.size_buckets:
@@ -565,7 +515,7 @@ class FilterTableController(WindowControllerBase):
                     f"{format_size_mode(end, self.display_size_mode)}"
                 )
                 item = QTreeWidgetItem([label])
-                item.setData(0, Qt.ItemDataRole.UserRole, ('size', (start, end)))
+                item.setData(0, Qt.ItemDataRole.UserRole, ("size", (start, end)))
                 self._section_size.addChild(item)
 
             self._section_size.setExpanded(True)
@@ -574,13 +524,11 @@ class FilterTableController(WindowControllerBase):
             self._log("ERROR", f"Error updating size tree: {e}")
 
     def _extract_trackers(self) -> None:
-        """Extract unique tracker hostnames from loaded torrents.
-
-        """
+        """Extract unique tracker hostnames from loaded torrents."""
         try:
             tracker_set = set()
             for t in self.all_torrents:
-                tracker_url = getattr(t, 'tracker', '') or ''
+                tracker_url = getattr(t, "tracker", "") or ""
                 if tracker_url:
                     try:
                         parsed = urlparse(tracker_url)
@@ -594,20 +542,18 @@ class FilterTableController(WindowControllerBase):
             self.trackers = []
 
     def _update_tracker_tree(self) -> None:
-        """Update tracker section in the unified filter tree.
-
-        """
+        """Update tracker section in the unified filter tree."""
         try:
             while self._section_tracker.childCount():
                 self._section_tracker.removeChild(self._section_tracker.child(0))
 
             all_item = QTreeWidgetItem(["All"])
-            all_item.setData(0, Qt.ItemDataRole.UserRole, ('tracker', None))
+            all_item.setData(0, Qt.ItemDataRole.UserRole, ("tracker", None))
             self._section_tracker.addChild(all_item)
 
             for tracker in self.trackers:
                 item = QTreeWidgetItem([str(tracker)])
-                item.setData(0, Qt.ItemDataRole.UserRole, ('tracker', tracker))
+                item.setData(0, Qt.ItemDataRole.UserRole, ("tracker", tracker))
                 self._section_tracker.addChild(item)
 
             self._section_tracker.setExpanded(True)
@@ -616,104 +562,122 @@ class FilterTableController(WindowControllerBase):
             self._log("ERROR", f"Error updating tracker tree: {e}")
 
     def _on_quick_filter_changed(self, *_args: object) -> None:
-        """Apply filter-bar changes immediately.
-
-        """
+        """Apply filter-bar changes immediately."""
         self._apply_filters()
 
     def _on_filter_changed(self) -> None:
-        """Handle filter change from filter bar.
-
-        """
+        """Handle filter change from filter bar."""
         # Store current filter values
         private_text = self.cmb_private.currentText()
         if private_text == "Yes":
-            self.current_private_filter = True
+            self.current_private_filter = cast(bool | None, True)
         elif private_text == "No":
-            self.current_private_filter = False
+            self.current_private_filter = cast(bool | None, False)
         else:
-            self.current_private_filter = None
+            self.current_private_filter = cast(bool | None, None)
 
         self.current_text_filter = normalize_filter_pattern(self.txt_name_filter.text())
         self.current_file_filter = normalize_filter_pattern(self.txt_file_filter.text())
 
-    def _apply_filters(self) -> None:
-        """Apply all current filters to torrents.
+    def _apply_sync_local_filters(self, torrents: list[object]) -> list[object]:
+        """Apply local status/category/tag filters when sync data is unfiltered remotely."""
+        filtered = torrents
+        if self.current_status_filter and self.current_status_filter != "all":
+            filtered = [
+                torrent
+                for torrent in filtered
+                if self._torrent_matches_status_filter(torrent, self.current_status_filter)
+            ]
+        if self.current_category_filter is not None:
+            filtered = [
+                torrent
+                for torrent in filtered
+                if self._torrent_matches_category_filter(torrent, self.current_category_filter)
+            ]
+        if self.current_tag_filter is not None:
+            filtered = [
+                torrent
+                for torrent in filtered
+                if self._torrent_matches_tag_filter(torrent, self.current_tag_filter)
+            ]
+        return filtered
 
-        """
+    def _apply_text_filter_to_torrents(self, torrents: list[object]) -> list[object]:
+        """Apply name wildcard filter to torrent list."""
+        if not self.current_text_filter:
+            return torrents
+        try:
+            return [
+                torrent
+                for torrent in torrents
+                if matches_wildcard(getattr(torrent, "name", ""), self.current_text_filter)
+            ]
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
+            self._log("ERROR", f"Error applying text filter: {e}")
+            return torrents
+
+    def _apply_private_filter_to_torrents(self, torrents: list[object]) -> list[object]:
+        """Apply private/public filter to torrent list."""
+        if self.current_private_filter is None:
+            return torrents
+        try:
+            return [
+                torrent
+                for torrent in torrents
+                if bool(getattr(torrent, "private", False)) == self.current_private_filter
+            ]
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
+            self._log("ERROR", f"Error applying private filter: {e}")
+            return torrents
+
+    def _apply_tracker_filter_to_torrents(self, torrents: list[object]) -> list[object]:
+        """Apply tracker filter to torrent list."""
+        if self.current_tracker_filter is None:
+            return torrents
+        try:
+            return [
+                torrent
+                for torrent in torrents
+                if self._torrent_matches_tracker(torrent, self.current_tracker_filter)
+            ]
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
+            self._log("ERROR", f"Error applying tracker filter: {e}")
+            return torrents
+
+    def _apply_size_filter_to_torrents(self, torrents: list[object]) -> list[object]:
+        """Apply selected size bucket filter to torrent list."""
+        if not self.current_size_bucket:
+            return torrents
+        try:
+            start, end = self.current_size_bucket
+            return [torrent for torrent in torrents if start <= getattr(torrent, "size", 0) <= end]
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
+            self._log("ERROR", f"Error applying size filter: {e}")
+            return torrents
+
+    def _apply_file_filter_to_torrents(self, torrents: list[object]) -> list[object]:
+        """Apply cached file-name wildcard filter to torrent list."""
+        if not self.current_file_filter:
+            return torrents
+        return [
+            torrent
+            for torrent in torrents
+            if self._matches_file_filter(getattr(torrent, "hash", ""), self.current_file_filter)
+        ]
+
+    def _apply_filters(self) -> None:
+        """Apply all current filters to torrents."""
         try:
             self._on_filter_changed()
+            filtered = self.all_torrents[:]
 
-            filtered = self.all_torrents[:]  # Make a copy
-
-            # Apply API-equivalent filters locally when using sync/maindata.
-            if (
-                self._sync_torrent_map
-                and not bool(self._latest_torrent_fetch_remote_filtered)
-            ):
-                if self.current_status_filter and self.current_status_filter != "all":
-                    filtered = [
-                        t for t in filtered
-                        if self._torrent_matches_status_filter(t, self.current_status_filter)
-                    ]
-                if self.current_category_filter is not None:
-                    filtered = [
-                        t for t in filtered
-                        if self._torrent_matches_category_filter(t, self.current_category_filter)
-                    ]
-                if self.current_tag_filter is not None:
-                    filtered = [
-                        t for t in filtered
-                        if self._torrent_matches_tag_filter(t, self.current_tag_filter)
-                    ]
-
-            # Apply text filter
-            if self.current_text_filter:
-                try:
-                    filtered = [
-                        t for t in filtered
-                        if matches_wildcard(getattr(t, 'name', ''), self.current_text_filter)
-                    ]
-                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
-                    self._log("ERROR", f"Error applying text filter: {e}")
-
-            # Apply private filter
-            if self.current_private_filter is not None:
-                try:
-                    filtered = [
-                        t for t in filtered
-                        if bool(getattr(t, "private", False)) == self.current_private_filter
-                    ]
-                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
-                    self._log("ERROR", f"Error applying private filter: {e}")
-
-            # Apply tracker filter
-            if self.current_tracker_filter is not None:
-                try:
-                    filtered = [
-                        t for t in filtered
-                        if self._torrent_matches_tracker(t, self.current_tracker_filter)
-                    ]
-                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
-                    self._log("ERROR", f"Error applying tracker filter: {e}")
-
-            # Apply size bucket filter
-            if self.current_size_bucket:
-                try:
-                    start, end = self.current_size_bucket
-                    filtered = [
-                        t for t in filtered
-                        if start <= getattr(t, 'size', 0) <= end
-                    ]
-                except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
-                    self._log("ERROR", f"Error applying size filter: {e}")
-
-            # Apply file-name filter (local cache only)
-            if self.current_file_filter:
-                filtered = [
-                    t for t in filtered
-                    if self._matches_file_filter(getattr(t, 'hash', ''), self.current_file_filter)
-                ]
+            if self._sync_torrent_map and not bool(self._latest_torrent_fetch_remote_filtered):
+                filtered = self._apply_sync_local_filters(filtered)
+            filtered = self._apply_text_filter_to_torrents(filtered)
+            filtered = self._apply_private_filter_to_torrents(filtered)
+            filtered = self._apply_tracker_filter_to_torrents(filtered)
+            filtered = self._apply_size_filter_to_torrents(filtered)
+            filtered = self._apply_file_filter_to_torrents(filtered)
 
             self.filtered_torrents = filtered
             self._update_torrents_table()
@@ -724,9 +688,7 @@ class FilterTableController(WindowControllerBase):
             self._update_torrents_table()
 
     def _torrent_matches_status_filter(self, torrent: object, status_filter: str) -> bool:
-        """Approximate qBittorrent status filters from torrent state/speeds.
-
-        """
+        """Approximate qBittorrent status filters from torrent state/speeds."""
         state = str(getattr(torrent, "state", "") or "").strip().lower()
         status = str(status_filter or "").strip().lower()
 
@@ -741,13 +703,17 @@ class FilterTableController(WindowControllerBase):
             return True
         if status == "downloading":
             return state in {
-                "downloading", "metadl", "forcedmetadl", "queueddl", "stalleddl",
-                "checkingdl", "forceddl", "allocating"
+                "downloading",
+                "metadl",
+                "forcedmetadl",
+                "queueddl",
+                "stalleddl",
+                "checkingdl",
+                "forceddl",
+                "allocating",
             }
         if status == "seeding":
-            return state in {
-                "uploading", "stalledup", "queuedup", "checkingup", "forcedup"
-            }
+            return state in {"uploading", "stalledup", "queuedup", "checkingup", "forcedup"}
         if status == "completed":
             return is_complete
         if status in {"paused", "stopped"}:
@@ -774,16 +740,12 @@ class FilterTableController(WindowControllerBase):
 
     @staticmethod
     def _torrent_matches_category_filter(torrent: object, category_filter: object) -> bool:
-        """Match one torrent against selected category filter.
-
-        """
+        """Match one torrent against selected category filter."""
         torrent_category = str(getattr(torrent, "category", "") or "")
         return torrent_category == str(category_filter or "")
 
     def _torrent_matches_tag_filter(self, torrent: object, tag_filter: object) -> bool:
-        """Match one torrent against selected tag filter.
-
-        """
+        """Match one torrent against selected tag filter."""
         tag = str(tag_filter or "")
         tags = parse_tags(getattr(torrent, "tags", None))
         if tag == "":
@@ -791,10 +753,8 @@ class FilterTableController(WindowControllerBase):
         return tag in tags
 
     def _clear_filters(self) -> None:
-        """Clear all filters.
-
-        """
-        self.current_status_filter = 'all'
+        """Clear all filters."""
+        self.current_status_filter = "all"
         self._clear_non_status_filters()
 
         # Clear tree selection
@@ -804,13 +764,11 @@ class FilterTableController(WindowControllerBase):
         self._refresh_torrents()
 
     def _clear_non_status_filters(self) -> None:
-        """Clear non-status torrent filters from quick bar and tree sections.
-
-        """
+        """Clear non-status torrent filters from quick bar and tree sections."""
         private_signals = self.cmb_private.blockSignals(True)
         self.cmb_private.setCurrentIndex(0)
         self.cmb_private.blockSignals(private_signals)
-        self.current_private_filter = None
+        self.current_private_filter = cast(bool | None, None)
 
         name_signals = self.txt_name_filter.blockSignals(True)
         self.txt_name_filter.clear()
@@ -826,9 +784,7 @@ class FilterTableController(WindowControllerBase):
         self.current_tracker_filter = None
 
     def _show_status_filter_only(self, status_filter: str) -> None:
-        """Show one status bucket and clear all other torrent filters.
-
-        """
+        """Show one status bucket and clear all other torrent filters."""
         status = str(status_filter or "all").strip().lower()
         if status not in STATUS_FILTERS:
             status = "all"
@@ -842,27 +798,19 @@ class FilterTableController(WindowControllerBase):
         self._refresh_torrents()
 
     def _show_active_torrents_only(self) -> None:
-        """Show only active torrents and clear all non-status filters.
-
-        """
+        """Show only active torrents and clear all non-status filters."""
         self._show_status_filter_only("active")
 
     def _show_completed_torrents_only(self) -> None:
-        """Show only completed torrents and clear all non-status filters.
-
-        """
+        """Show only completed torrents and clear all non-status filters."""
         self._show_status_filter_only("completed")
 
     def _show_all_torrents_only(self) -> None:
-        """Show all torrents and clear all non-status filters.
-
-        """
+        """Show all torrents and clear all non-status filters."""
         self._show_status_filter_only("all")
 
     def _on_filter_tree_clicked(self, item: QTreeWidgetItem, column: int) -> None:
-        """Handle click on the unified filter tree.
-
-        """
+        """Handle click on the unified filter tree."""
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if data is None and item.childCount() > 0:
             # Section header clicked: just toggle expand/collapse.
@@ -871,27 +819,27 @@ class FilterTableController(WindowControllerBase):
             if not isinstance(data, tuple):
                 return
             kind, value = data
-            if kind == 'status':
+            if kind == "status":
                 self.current_status_filter = value
                 self._log("INFO", f"Status filter changed to: {value}")
                 self._refresh_filter_tree_highlights()
                 self._refresh_torrents()
-            elif kind == 'category':
+            elif kind == "category":
                 self.current_category_filter = value
                 self._log("INFO", f"Category filter changed to: {value}")
                 self._refresh_filter_tree_highlights()
                 self._refresh_torrents()
-            elif kind == 'tag':
+            elif kind == "tag":
                 self.current_tag_filter = value
                 self._log("INFO", f"Tag filter changed to: {value}")
                 self._refresh_filter_tree_highlights()
                 self._refresh_torrents()
-            elif kind == 'size':
+            elif kind == "size":
                 self.current_size_bucket = value
                 self._log("INFO", "Size filter changed")
                 self._refresh_filter_tree_highlights()
                 self._apply_filters()
-            elif kind == 'tracker':
+            elif kind == "tracker":
                 self.current_tracker_filter = value
                 self._log("INFO", f"Tracker filter selected: {value}")
                 self._refresh_filter_tree_highlights()
@@ -901,10 +849,8 @@ class FilterTableController(WindowControllerBase):
 
     @staticmethod
     def _torrent_matches_tracker(torrent: object, tracker_hostname: str) -> bool:
-        """Check if a torrent's tracker matches the given hostname.
-
-        """
-        tracker_url = getattr(torrent, 'tracker', '') or ''
+        """Check if a torrent's tracker matches the given hostname."""
+        tracker_url = getattr(torrent, "tracker", "") or ""
         if not tracker_url:
             return False
         try:
@@ -914,9 +860,7 @@ class FilterTableController(WindowControllerBase):
             return tracker_url == tracker_hostname
 
     def _tracker_display_text(self, tracker_url: str) -> str:
-        """Render tracker URL as hostname where possible.
-
-        """
+        """Render tracker URL as hostname where possible."""
         text = str(tracker_url or "")
         if not text:
             return ""
@@ -926,28 +870,22 @@ class FilterTableController(WindowControllerBase):
         except ValueError:
             return text
 
-    def _format_torrent_table_cell(
+    def _format_torrent_table_cell(  # noqa: C901 - tracked for targeted split/refactor
         self,
         torrent: object,
         column_key: str,
-    ) -> Tuple[str, Qt.AlignmentFlag, Optional[float]]:
-        """Return display text, alignment, and optional numeric sort value.
-
-        """
+    ) -> tuple[str, Qt.AlignmentFlag, float | None]:
+        """Return display text, alignment, and optional numeric sort value."""
         align_left = Qt.AlignmentFlag.AlignLeft
         align_right = Qt.AlignmentFlag.AlignRight
         align_center = Qt.AlignmentFlag.AlignCenter
 
         def _raw_value(key: str, default: object = None) -> object:
-            """Read one attribute from torrent object with fallback.
-
-            """
+            """Read one attribute from torrent object with fallback."""
             return getattr(torrent, key, default)
 
-        def _as_bool(value: object) -> Optional[bool]:
-            """Normalize bool-like values, returning None when undecidable.
-
-            """
+        def _as_bool(value: object) -> bool | None:
+            """Normalize bool-like values, returning None when undecidable."""
             if value is None:
                 return None
             if isinstance(value, bool):
@@ -961,7 +899,15 @@ class FilterTableController(WindowControllerBase):
                 return False
             return None
 
-        if column_key in {"hash", "name", "state", "category", "save_path", "content_path", "magnet_uri"}:
+        if column_key in {
+            "hash",
+            "name",
+            "state",
+            "category",
+            "save_path",
+            "content_path",
+            "magnet_uri",
+        }:
             return str(_raw_value(column_key, "") or ""), align_left, None
         if column_key in {
             "size",
@@ -1009,9 +955,16 @@ class FilterTableController(WindowControllerBase):
             tags_text = ", ".join(parse_tags(_raw_value("tags", None)))
             return tags_text, align_left, None
         if column_key == "tracker":
-            tracker_text = self._tracker_display_text(_raw_value("tracker", ""))
+            tracker_text = self._tracker_display_text(str(_raw_value("tracker", "") or ""))
             return tracker_text, align_left, None
-        if column_key in {"auto_tmm", "force_start", "seq_dl", "f_l_piece_prio", "super_seeding", "private"}:
+        if column_key in {
+            "auto_tmm",
+            "force_start",
+            "seq_dl",
+            "f_l_piece_prio",
+            "super_seeding",
+            "private",
+        }:
             bool_value = _as_bool(_raw_value(column_key, None))
             if bool_value is True:
                 return "Yes", align_center, 1.0
@@ -1022,9 +975,7 @@ class FilterTableController(WindowControllerBase):
         return str(_raw_value(column_key, "") or ""), align_left, None
 
     def _update_torrents_table(self) -> None:
-        """Update the torrents table with filtered data.
-
-        """
+        """Update the torrents table with filtered data."""
         try:
             self.tbl_torrents.setSortingEnabled(False)
             self.tbl_torrents.setRowCount(len(self.filtered_torrents))
@@ -1035,9 +986,7 @@ class FilterTableController(WindowControllerBase):
                         text, align, sort_value = self._format_torrent_table_cell(
                             torrent, column["key"]
                         )
-                        self._set_table_item(
-                            row, col_idx, text, align=align, sort_value=sort_value
-                        )
+                        self._set_table_item(row, col_idx, text, align=align, sort_value=sort_value)
                 except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
                     self._log("ERROR", f"Error updating row {row}: {e}")
                     continue
@@ -1047,5 +996,3 @@ class FilterTableController(WindowControllerBase):
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating torrents table: {e}")
             self.lbl_count.setText("0 torrents")
-
-

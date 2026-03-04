@@ -55,7 +55,12 @@ TORRENT_COLUMNS = [
     {"key": "uploaded", "label": "Uploaded", "width": 110, "default_visible": True},
     {"key": "amount_left", "label": "Amount Left", "width": 120, "default_visible": True},
     {"key": "completed", "label": "Completed", "width": 110, "default_visible": True},
-    {"key": "downloaded_session", "label": "Downloaded Session", "width": 160, "default_visible": True},
+    {
+        "key": "downloaded_session",
+        "label": "Downloaded Session",
+        "width": 160,
+        "default_visible": True,
+    },
     {"key": "uploaded_session", "label": "Uploaded Session", "width": 160, "default_visible": True},
     {"key": "ratio", "label": "Ratio", "width": 70, "default_visible": True},
     {"key": "ratio_limit", "label": "Ratio Limit", "width": 100, "default_visible": True},
@@ -69,7 +74,12 @@ TORRENT_COLUMNS = [
     {"key": "eta", "label": "ETA", "width": 90, "default_visible": True},
     {"key": "reannounce", "label": "Reannounce", "width": 110, "default_visible": True},
     {"key": "seeding_time", "label": "Seeding Time", "width": 120, "default_visible": True},
-    {"key": "seeding_time_limit", "label": "Seeding Time Limit", "width": 140, "default_visible": True},
+    {
+        "key": "seeding_time_limit",
+        "label": "Seeding Time Limit",
+        "width": 140,
+        "default_visible": True,
+    },
     {"key": "max_seeding_time", "label": "Max Seeding Time", "width": 130, "default_visible": True},
     {"key": "time_active", "label": "Time Active", "width": 120, "default_visible": True},
     {"key": "added_on", "label": "Added On", "width": 150, "default_visible": True},
@@ -79,7 +89,12 @@ TORRENT_COLUMNS = [
     {"key": "auto_tmm", "label": "Auto TMM", "width": 100, "default_visible": True},
     {"key": "force_start", "label": "Force Start", "width": 100, "default_visible": True},
     {"key": "seq_dl", "label": "Sequential Download", "width": 150, "default_visible": True},
-    {"key": "f_l_piece_prio", "label": "First/Last Piece Prio", "width": 160, "default_visible": True},
+    {
+        "key": "f_l_piece_prio",
+        "label": "First/Last Piece Prio",
+        "width": 160,
+        "default_visible": True,
+    },
     {"key": "super_seeding", "label": "Super Seeding", "width": 120, "default_visible": True},
     {"key": "private", "label": "Private", "width": 80, "default_visible": True},
     {"key": "category", "label": "Category", "width": 120, "default_visible": True},
@@ -136,4 +151,3 @@ MEDIUM_TORRENT_VIEW_KEYS = (
 _medium_default_keys = set(MEDIUM_TORRENT_VIEW_KEYS)
 for _column in TORRENT_COLUMNS:
     _column["default_visible"] = _column["key"] in _medium_default_keys
-

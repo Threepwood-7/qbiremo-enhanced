@@ -1,4 +1,3 @@
-
 """Config loading/validation and runtime bootstrap helpers."""
 
 import atexit
@@ -6,7 +5,7 @@ import logging
 import os
 import sys
 from types import TracebackType
-from typing import Dict, List, Tuple
+from typing import cast
 
 from .constants import (
     DEFAULT_HTTP_TIMEOUT_SECONDS,
@@ -23,8 +22,12 @@ from .utils import (
 logger = logging.getLogger(G_APP_NAME)
 
 CONFIG_VALIDATION_KNOWN_KEYS = {
-    "qb_host", "qb_port", "qb_username", "qb_password",
-    "http_basic_auth_username", "http_basic_auth_password",
+    "qb_host",
+    "qb_port",
+    "qb_username",
+    "qb_password",
+    "http_basic_auth_username",
+    "http_basic_auth_password",
     "http_protocol_scheme",
     "http_timeout",
     "log_file",
@@ -55,83 +58,83 @@ CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS = (
     "display_speed_mode",
 )
 
+
+def _empty_config() -> NormalizedConfig:
+    """Build one empty normalized config value for typed fallbacks."""
+    return cast(NormalizedConfig, {})
+
+
 def load_config(config_file: str) -> NormalizedConfig:
     """Load one TOML configuration file."""
     if os.path.exists(config_file):
         try:
             import tomllib
-            with open(config_file, 'rb') as f:
-                return tomllib.load(f)
+
+            with open(config_file, "rb") as f:
+                return cast(NormalizedConfig, tomllib.load(f))
         except (ModuleNotFoundError, OSError, TypeError, ValueError) as e:
             logger.error("Failed to load config file %s: %s", config_file, e)
-            return {}
-    return {}
+            return _empty_config()
+    return _empty_config()
 
-def load_config_with_issues(config_file: str) -> Tuple[NormalizedConfig, List[str]]:
+
+def load_config_with_issues(config_file: str) -> tuple[NormalizedConfig, list[str]]:
     """Load TOML config and collect non-fatal load issues."""
-    issues: List[str] = []
+    issues: list[str] = []
     if not os.path.exists(config_file):
         issues.append(
             f"Config file not found: {config_file}. Using built-in defaults and environment fallbacks."
         )
-        return {}, issues
+        return _empty_config(), issues
 
+    data: object
     try:
         import tomllib
-        with open(config_file, 'rb') as f:
+
+        with open(config_file, "rb") as f:
             data = tomllib.load(f)
     except (ModuleNotFoundError, OSError, TypeError, ValueError) as e:
         issues.append(f"Failed to parse config file {config_file}: {e}. Using defaults.")
-        return {}, issues
+        return _empty_config(), issues
 
-    if not isinstance(data, dict):
-        issues.append(
-            f"Config file {config_file} did not parse to a TOML table/object. Using defaults."
-        )
-        return {}, issues
+    return cast(NormalizedConfig, data), issues
 
-    return data, issues
 
 def _config_validation_warn(message: str) -> None:
-    """Log one configuration validation warning message.
-
-    """
+    """Log one configuration validation warning message."""
     logger.warning("Config validation: %s", message)
 
+
 def _config_validation_coerce_int(value: object, default: int) -> int:
-    """Coerce one value to int with fallback default.
+    """Coerce one value to int with fallback default."""
+    if isinstance(value, (int, float, str, bytes, bytearray)):
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+    return default
 
-    """
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
 
-def _apply_legacy_config_mappings(normalized: Dict[str, object]) -> None:
-    """Map legacy config keys to current keys with warnings.
-
-    """
+def _apply_legacy_config_mappings(normalized: dict[str, object]) -> None:
+    """Map legacy config keys to current keys with warnings."""
     for old_key, new_key in CONFIG_VALIDATION_LEGACY_MAP.items():
         if new_key not in normalized and old_key in normalized:
             normalized[new_key] = normalized.get(old_key)
             _config_validation_warn(
-                f"'{old_key}' is deprecated; use '{new_key}'. "
-                f"Using '{old_key}' value for now."
+                f"'{old_key}' is deprecated; use '{new_key}'. Using '{old_key}' value for now."
             )
 
-def _remove_settings_managed_config_keys(normalized: Dict[str, object]) -> None:
-    """Drop config keys that are intentionally managed by QSettings.
 
-    """
+def _remove_settings_managed_config_keys(normalized: dict[str, object]) -> None:
+    """Drop config keys that are intentionally managed by QSettings."""
     for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
         if key in normalized:
             _config_validation_warn(f"'{key}' is ignored in TOML; managed via QSettings.")
             normalized.pop(key, None)
 
-def _normalize_qb_host_value(normalized: Dict[str, object]) -> None:
-    """Normalize qb_host value.
 
-    """
+def _normalize_qb_host_value(normalized: dict[str, object]) -> None:
+    """Normalize qb_host value."""
     host_val = normalized.get("qb_host", "localhost")
     if not isinstance(host_val, str) or not host_val.strip():
         _config_validation_warn(f"'qb_host' invalid ({host_val!r}); using 'localhost'.")
@@ -139,10 +142,9 @@ def _normalize_qb_host_value(normalized: Dict[str, object]) -> None:
     else:
         normalized["qb_host"] = host_val.strip()
 
-def _normalize_qb_port_value(normalized: Dict[str, object]) -> None:
-    """Normalize qb_port value.
 
-    """
+def _normalize_qb_port_value(normalized: dict[str, object]) -> None:
+    """Normalize qb_port value."""
     raw_port = normalized.get("qb_port", 8080)
     port = _config_validation_coerce_int(raw_port, 8080)
     if port < 1 or port > 65535:
@@ -150,33 +152,31 @@ def _normalize_qb_port_value(normalized: Dict[str, object]) -> None:
         port = 8080
     normalized["qb_port"] = port
 
-def _normalize_http_protocol_scheme_value(normalized: Dict[str, object]) -> None:
-    """Normalize optional http_protocol_scheme value.
 
-    """
+def _normalize_http_protocol_scheme_value(normalized: dict[str, object]) -> None:
+    """Normalize optional http_protocol_scheme value."""
     if "http_protocol_scheme" not in normalized:
         return
     raw_scheme = normalized.get("http_protocol_scheme")
     normalized_scheme = _normalize_http_protocol_scheme(raw_scheme)
-    raw_scheme_text = (
-        str(raw_scheme).strip().lower()
-        if isinstance(raw_scheme, str)
-        else ""
-    )
+    raw_scheme_text = str(raw_scheme).strip().lower() if isinstance(raw_scheme, str) else ""
     if raw_scheme_text not in ("http", "https"):
-        _config_validation_warn(
-            f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'."
-        )
+        _config_validation_warn(f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'.")
     normalized["http_protocol_scheme"] = normalized_scheme
 
-def _normalize_http_timeout_value(normalized: Dict[str, object]) -> None:
-    """Normalize optional http_timeout value (seconds).
 
-    """
+def _normalize_http_timeout_value(normalized: dict[str, object]) -> None:
+    """Normalize optional http_timeout value (seconds)."""
     raw_timeout = normalized.get("http_timeout", DEFAULT_HTTP_TIMEOUT_SECONDS)
-    try:
-        timeout_seconds = int(raw_timeout)
-    except (TypeError, ValueError, OverflowError):
+    if isinstance(raw_timeout, (int, float, str, bytes, bytearray)):
+        try:
+            timeout_seconds = int(raw_timeout)
+        except (TypeError, ValueError, OverflowError):
+            _config_validation_warn(
+                f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
+            )
+            timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
+    else:
         _config_validation_warn(
             f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
         )
@@ -188,10 +188,9 @@ def _normalize_http_timeout_value(normalized: Dict[str, object]) -> None:
         timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
     normalized["http_timeout"] = int(timeout_seconds)
 
-def _normalize_credential_values(normalized: Dict[str, object]) -> None:
-    """Normalize credential-related string values.
 
-    """
+def _normalize_credential_values(normalized: dict[str, object]) -> None:
+    """Normalize credential-related string values."""
     for key, default_value in [
         ("qb_username", "admin"),
         ("qb_password", ""),
@@ -206,10 +205,9 @@ def _normalize_credential_values(normalized: Dict[str, object]) -> None:
             value = str(default_value)
         normalized[key] = value
 
-def _normalize_log_file_value(normalized: Dict[str, object]) -> None:
-    """Normalize optional log_file path value.
 
-    """
+def _normalize_log_file_value(normalized: dict[str, object]) -> None:
+    """Normalize optional log_file path value."""
     raw_log_file = normalized.get("log_file", "qbiremo_enhanced.log")
     if not isinstance(raw_log_file, str) or not raw_log_file.strip():
         _config_validation_warn(
@@ -219,18 +217,16 @@ def _normalize_log_file_value(normalized: Dict[str, object]) -> None:
     else:
         normalized["log_file"] = raw_log_file.strip()
 
-def _normalize_title_bar_speed_format_value(normalized: Dict[str, object]) -> None:
-    """Normalize title_bar_speed_format template string.
 
-    """
+def _normalize_title_bar_speed_format_value(normalized: dict[str, object]) -> None:
+    """Normalize title_bar_speed_format template string."""
     raw_title_fmt = normalized.get(
         "title_bar_speed_format",
         DEFAULT_TITLE_BAR_SPEED_FORMAT,
     )
     if not isinstance(raw_title_fmt, str) or not raw_title_fmt.strip():
         _config_validation_warn(
-            "'title_bar_speed_format' invalid; using default "
-            f"{DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
+            f"'title_bar_speed_format' invalid; using default {DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
         )
         title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
     else:
@@ -245,28 +241,28 @@ def _normalize_title_bar_speed_format_value(normalized: Dict[str, object]) -> No
         title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
     normalized["title_bar_speed_format"] = title_fmt
 
-def _warn_unknown_config_keys(normalized: Dict[str, object]) -> None:
-    """Warn for unknown config keys.
 
-    """
+def _warn_unknown_config_keys(normalized: dict[str, object]) -> None:
+    """Warn for unknown config keys."""
     unknown_keys = sorted(
-        key for key in normalized.keys()
-        if key not in CONFIG_VALIDATION_KNOWN_KEYS
-        and key not in CONFIG_VALIDATION_LEGACY_MAP
+        key
+        for key in normalized.keys()
+        if key not in CONFIG_VALIDATION_KNOWN_KEYS and key not in CONFIG_VALIDATION_LEGACY_MAP
     )
     for key in unknown_keys:
         _config_validation_warn(f"Unknown config key '{key}' will be ignored.")
 
-def validate_and_normalize_config(config: Dict[str, object], config_file: str) -> NormalizedConfig:
+
+def validate_and_normalize_config(config: object, config_file: str) -> NormalizedConfig:
     """Validate config values and return one sanitized config mapping."""
     if not isinstance(config, dict):
         logger.warning(
             "Config validation: root config from %s is not a TOML table/object. Using defaults.",
-            config_file
+            config_file,
         )
         config = {}
 
-    normalized = dict(config)
+    normalized: dict[str, object] = dict(config)
     _apply_legacy_config_mappings(normalized)
     _remove_settings_managed_config_keys(normalized)
     _normalize_qb_host_value(normalized)
@@ -279,7 +275,8 @@ def validate_and_normalize_config(config: Dict[str, object], config_file: str) -
     _warn_unknown_config_keys(normalized)
 
     logger.info("Configuration validated from %s", config_file)
-    return normalized
+    return cast(NormalizedConfig, normalized)
+
 
 def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
     """Configure file logging and return the active file handler."""
@@ -288,12 +285,12 @@ def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
         instance_id = compute_instance_id_from_config(config)
     config["_instance_id"] = instance_id
 
-    log_file = config.get('log_file', 'qbiremo_enhanced.log')
+    log_file = config.get("log_file", "qbiremo_enhanced.log")
     if not isinstance(log_file, str) or not log_file.strip():
-        log_file = 'qbiremo_enhanced.log'
+        log_file = "qbiremo_enhanced.log"
     log_file = log_file.strip()
     log_file = _append_instance_id_to_filename(log_file, instance_id)
-    config['_log_file_path'] = log_file
+    config["_log_file_path"] = log_file
 
     try:
         log_dir = os.path.dirname(os.path.abspath(log_file))
@@ -304,23 +301,24 @@ def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
         pass
 
     try:
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
     except OSError:
         # Fallback to local path if configured log path is not writable.
         fallback_log_file = _append_instance_id_to_filename(
-            'qbiremo_enhanced.log',
+            "qbiremo_enhanced.log",
             instance_id,
         )
-        config['_log_file_path'] = fallback_log_file
-        file_handler = logging.FileHandler(fallback_log_file, encoding='utf-8')
+        config["_log_file_path"] = fallback_log_file
+        file_handler = logging.FileHandler(fallback_log_file, encoding="utf-8")
 
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)-7s %(message)s', datefmt='%Y-%m-%d %H:%M:%S'
-    ))
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
     logger.handlers.clear()
     logger.addHandler(file_handler)
     logger.setLevel(logging.DEBUG)
     return file_handler
+
 
 def _open_file_in_default_app(path: str) -> bool:
     """Open one path in the platform default application."""
@@ -330,19 +328,21 @@ def _open_file_in_default_app(path: str) -> bool:
     import subprocess
 
     try:
-        if sys.platform == 'win32':
+        if sys.platform == "win32":
             os.startfile(path)
-        elif sys.platform == 'darwin':
-            subprocess.Popen(['open', path])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
         else:
-            subprocess.Popen(['xdg-open', path])
+            subprocess.Popen(["xdg-open", path])
         return True
     except (AttributeError, OSError, subprocess.SubprocessError):
         logger.exception("Failed to open file in default app: %s", path)
         return False
 
+
 def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
     """Install global exception hooks that flush and persist fatal errors."""
+
     def _excepthook(
         exc_type: type[BaseException],
         exc_value: BaseException,
@@ -352,13 +352,10 @@ def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
         if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
-        logger.critical(
-            "Unhandled exception", exc_info=(exc_type, exc_value, exc_tb)
-        )
+        logger.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_tb))
         file_handler.flush()
 
     sys.excepthook = _excepthook
 
     # Also flush the log file on normal exit so nothing is lost
     atexit.register(file_handler.flush)
-

@@ -1,10 +1,9 @@
-
 """Dialog and small widget classes."""
 
 import copy
 import json
 import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, cast
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (
@@ -52,9 +51,9 @@ class AddTorrentDialog(QDialog):
 
     def __init__(
         self,
-        categories: List[str],
-        tags: List[str],
-        parent: Optional[QWidget] = None,
+        categories: list[str],
+        tags: list[str],
+        parent: QWidget | None = None,
     ) -> None:
         """Initialize add-torrent dialog with source and behavior editors."""
         super().__init__(parent)
@@ -62,43 +61,43 @@ class AddTorrentDialog(QDialog):
         self.resize(780, 720)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self._build_source_group())
+        tabs = QTabWidget()
+        tabs.addTab(self._build_basic_tab(categories, tags), "Basic")
+        tabs.addTab(self._build_behavior_tab(), "Behavior")
+        tabs.addTab(self._build_limits_tab(), "Limits")
+        layout.addWidget(tabs)
+        layout.addWidget(self._build_dialog_button_box())
+        self.torrent_data: dict[str, object] | None = None
 
-        # Source group
-        grp_source = QGroupBox("Torrent Sources")
-        src_layout = QVBoxLayout(grp_source)
+    def _build_source_group(self) -> QGroupBox:
+        """Create source editors for file and URL torrent inputs."""
+        group = QGroupBox("Torrent Sources")
+        layout = QVBoxLayout(group)
 
-        file_layout = QHBoxLayout()
+        file_row = QHBoxLayout()
         self.txt_torrent_files = QTextEdit()
-        self.txt_torrent_files.setPlaceholderText(
-            "Torrent files (one path per line)."
-        )
+        self.txt_torrent_files.setPlaceholderText("Torrent files (one path per line).")
         self.txt_torrent_files.setFixedHeight(86)
         btn_browse_files = QPushButton("Browse Files...")
         btn_browse_files.clicked.connect(self._browse_files)
-        file_layout.addWidget(self.txt_torrent_files, 1)
-        file_layout.addWidget(btn_browse_files)
-        src_layout.addLayout(file_layout)
+        file_row.addWidget(self.txt_torrent_files, 1)
+        file_row.addWidget(btn_browse_files)
+        layout.addLayout(file_row)
 
-        url_layout = QHBoxLayout()
+        url_row = QHBoxLayout()
         self.txt_source_urls = QTextEdit()
-        self.txt_source_urls.setPlaceholderText(
-            "Magnet links / URLs (one per line)."
-        )
+        self.txt_source_urls.setPlaceholderText("Magnet links / URLs (one per line).")
         self.txt_source_urls.setFixedHeight(86)
-        url_layout.addWidget(self.txt_source_urls, 1)
-        src_layout.addLayout(url_layout)
+        url_row.addWidget(self.txt_source_urls, 1)
+        layout.addLayout(url_row)
+        return group
 
-        layout.addWidget(grp_source)
+    def _build_basic_tab(self, categories: list[str], tags: list[str]) -> QWidget:
+        """Create basic add-torrent options tab."""
+        tab = QWidget()
+        form = QFormLayout(tab)
 
-        tabs = QTabWidget()
-
-        # --------------------------------------------------------------------
-        # Basic Tab
-        # --------------------------------------------------------------------
-        tab_basic = QWidget()
-        basic_form = QFormLayout(tab_basic)
-
-        # Save path (main path)
         save_layout = QHBoxLayout()
         self.txt_save_path = QLineEdit()
         self.txt_save_path.setPlaceholderText("Main save path (optional)")
@@ -106,28 +105,25 @@ class AddTorrentDialog(QDialog):
         btn_save_browse.clicked.connect(self._browse_save_path)
         save_layout.addWidget(self.txt_save_path)
         save_layout.addWidget(btn_save_browse)
-        basic_form.addRow("Save Path:", save_layout)
+        form.addRow("Save Path:", save_layout)
 
-        # Download path (optional secondary path in supported qB versions)
-        dl_path_layout = QHBoxLayout()
+        download_layout = QHBoxLayout()
         self.txt_download_path = QLineEdit()
         self.txt_download_path.setPlaceholderText("Download path (optional)")
         btn_download_browse = QPushButton("Browse...")
         btn_download_browse.clicked.connect(self._browse_download_path)
-        dl_path_layout.addWidget(self.txt_download_path)
-        dl_path_layout.addWidget(btn_download_browse)
-        basic_form.addRow("Download Path:", dl_path_layout)
+        download_layout.addWidget(self.txt_download_path)
+        download_layout.addWidget(btn_download_browse)
+        form.addRow("Download Path:", download_layout)
 
         self.chk_use_download_path = QCheckBox("Use Download Path")
-        basic_form.addRow("", self.chk_use_download_path)
+        form.addRow("", self.chk_use_download_path)
 
-        # Category
         self.cmb_category = QComboBox()
         self.cmb_category.setEditable(True)
         self.cmb_category.addItems([""] + categories)
-        basic_form.addRow("Category:", self.cmb_category)
+        form.addRow("Category:", self.cmb_category)
 
-        # Tags (multi-select checkable list)
         self.lst_tags = QListWidget()
         self.lst_tags.setMaximumHeight(100)
         for tag in tags:
@@ -135,131 +131,116 @@ class AddTorrentDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             self.lst_tags.addItem(item)
-        basic_form.addRow("Tags:", self.lst_tags)
+        form.addRow("Tags:", self.lst_tags)
 
         self.txt_tags_extra = QLineEdit()
         self.txt_tags_extra.setPlaceholderText("Additional tags (comma-separated)")
-        basic_form.addRow("Extra Tags:", self.txt_tags_extra)
+        form.addRow("Extra Tags:", self.txt_tags_extra)
 
         self.txt_rename = QLineEdit()
         self.txt_rename.setPlaceholderText("Rename torrent (optional)")
-        basic_form.addRow("Rename:", self.txt_rename)
+        form.addRow("Rename:", self.txt_rename)
 
         self.txt_cookie = QLineEdit()
         self.txt_cookie.setPlaceholderText("HTTP cookie(s) for URL-based torrents (optional)")
-        basic_form.addRow("Cookie:", self.txt_cookie)
+        form.addRow("Cookie:", self.txt_cookie)
+        return tab
 
-        tabs.addTab(tab_basic, "Basic")
+    def _build_behavior_tab(self) -> QWidget:
+        """Create behavior options tab."""
+        tab = QWidget()
+        form = QFormLayout(tab)
 
-        # --------------------------------------------------------------------
-        # Behavior Tab
-        # --------------------------------------------------------------------
-        tab_behavior = QWidget()
-        behavior_form = QFormLayout(tab_behavior)
-
-        # Auto TMM
         self.chk_auto_tmm = QCheckBox("Automatic Torrent Management")
-        behavior_form.addRow("", self.chk_auto_tmm)
+        form.addRow("", self.chk_auto_tmm)
 
-        # Start torrent
         self.chk_paused = QCheckBox("Start torrent paused")
-        behavior_form.addRow("", self.chk_paused)
+        form.addRow("", self.chk_paused)
 
         self.chk_stopped = QCheckBox("Add torrent stopped")
-        behavior_form.addRow("", self.chk_stopped)
+        form.addRow("", self.chk_stopped)
 
         self.chk_forced = QCheckBox("Force start")
-        behavior_form.addRow("", self.chk_forced)
+        form.addRow("", self.chk_forced)
 
         self.chk_add_to_top = QCheckBox("Add to top of queue")
-        behavior_form.addRow("", self.chk_add_to_top)
+        form.addRow("", self.chk_add_to_top)
 
-        # Skip hash check
         self.chk_skip_check = QCheckBox("Skip hash check")
-        behavior_form.addRow("", self.chk_skip_check)
+        form.addRow("", self.chk_skip_check)
 
-        # Sequential download
         self.chk_sequential = QCheckBox("Sequential download")
-        behavior_form.addRow("", self.chk_sequential)
+        form.addRow("", self.chk_sequential)
 
-        # First/last piece priority
         self.chk_first_last = QCheckBox("First and last piece priority")
-        behavior_form.addRow("", self.chk_first_last)
+        form.addRow("", self.chk_first_last)
 
         self.chk_root_folder = QCheckBox("Create root folder")
-        behavior_form.addRow("", self.chk_root_folder)
+        form.addRow("", self.chk_root_folder)
 
         self.cmb_content_layout = QComboBox()
         self.cmb_content_layout.addItems(["Default", "Original", "Subfolder", "NoSubfolder"])
-        behavior_form.addRow("Content Layout:", self.cmb_content_layout)
+        form.addRow("Content Layout:", self.cmb_content_layout)
 
         self.cmb_stop_condition = QComboBox()
         self.cmb_stop_condition.addItems(["Default", "MetadataReceived", "FilesChecked"])
-        behavior_form.addRow("Stop Condition:", self.cmb_stop_condition)
+        form.addRow("Stop Condition:", self.cmb_stop_condition)
+        return tab
 
-        tabs.addTab(tab_behavior, "Behavior")
-
-        # --------------------------------------------------------------------
-        # Limits Tab
-        # --------------------------------------------------------------------
-        tab_limits = QWidget()
-        limits_form = QFormLayout(tab_limits)
+    def _build_limits_tab(self) -> QWidget:
+        """Create transfer/share limits tab."""
+        tab = QWidget()
+        form = QFormLayout(tab)
 
         self.spn_upload_limit = QSpinBox()
         self.spn_upload_limit.setRange(0, 10_000_000)
         self.spn_upload_limit.setSpecialValueText("Unlimited")
         self.spn_upload_limit.setSuffix(" KiB/s")
-        limits_form.addRow("Upload Limit:", self.spn_upload_limit)
+        form.addRow("Upload Limit:", self.spn_upload_limit)
 
         self.spn_download_limit = QSpinBox()
         self.spn_download_limit.setRange(0, 10_000_000)
         self.spn_download_limit.setSpecialValueText("Unlimited")
         self.spn_download_limit.setSuffix(" KiB/s")
-        limits_form.addRow("Download Limit:", self.spn_download_limit)
+        form.addRow("Download Limit:", self.spn_download_limit)
 
         self.spn_ratio_limit = QDoubleSpinBox()
         self.spn_ratio_limit.setRange(-1.0, 10_000.0)
         self.spn_ratio_limit.setDecimals(2)
         self.spn_ratio_limit.setSingleStep(0.1)
         self.spn_ratio_limit.setValue(-1.0)
-        limits_form.addRow("Ratio Limit:", self.spn_ratio_limit)
+        form.addRow("Ratio Limit:", self.spn_ratio_limit)
 
         self.spn_seeding_time_limit = QSpinBox()
         self.spn_seeding_time_limit.setRange(-1, 10_000_000)
         self.spn_seeding_time_limit.setValue(-1)
         self.spn_seeding_time_limit.setSuffix(" min")
-        limits_form.addRow("Seeding Time Limit:", self.spn_seeding_time_limit)
+        form.addRow("Seeding Time Limit:", self.spn_seeding_time_limit)
 
         self.spn_inactive_seeding_time_limit = QSpinBox()
         self.spn_inactive_seeding_time_limit.setRange(-1, 10_000_000)
         self.spn_inactive_seeding_time_limit.setValue(-1)
         self.spn_inactive_seeding_time_limit.setSuffix(" min")
-        limits_form.addRow("Inactive Seeding Limit:", self.spn_inactive_seeding_time_limit)
+        form.addRow("Inactive Seeding Limit:", self.spn_inactive_seeding_time_limit)
 
         self.cmb_share_limit_action = QComboBox()
         self.cmb_share_limit_action.addItems(
             ["Default", "Stop", "Remove", "RemoveWithContent", "EnableSuperSeeding"]
         )
-        limits_form.addRow("Share Limit Action:", self.cmb_share_limit_action)
+        form.addRow("Share Limit Action:", self.cmb_share_limit_action)
+        return tab
 
-        tabs.addTab(tab_limits, "Limits")
-
-        layout.addWidget(tabs)
-
-        # Dialog buttons
+    def _build_dialog_button_box(self) -> QDialogButtonBox:
+        """Create standard accept/cancel dialog controls."""
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-        self.torrent_data = None
+        return button_box
 
     def accept(self) -> None:
-        """Validate and cache torrent payload before closing the dialog.
-
-        """
+        """Validate and cache torrent payload before closing the dialog."""
         payload = self.get_torrent_data()
         if not payload:
             return
@@ -267,9 +248,7 @@ class AddTorrentDialog(QDialog):
         super().accept()
 
     def _browse_files(self) -> None:
-        """Browse and append one or more torrent files.
-
-        """
+        """Browse and append one or more torrent files."""
         file_paths, _ = QFileDialog.getOpenFileNames(
             self, "Select Torrent Files", "", "Torrent Files (*.torrent);;All Files (*)"
         )
@@ -277,49 +256,39 @@ class AddTorrentDialog(QDialog):
             self._append_multiline_entries(self.txt_torrent_files, file_paths)
 
     def _browse_save_path(self) -> None:
-        """Browse for save directory.
-
-        """
+        """Browse for save directory."""
         dir_path = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if dir_path:
             self.txt_save_path.setText(dir_path)
 
     def _browse_download_path(self) -> None:
-        """Browse for download directory.
-
-        """
+        """Browse for download directory."""
         dir_path = QFileDialog.getExistingDirectory(self, "Select Download Directory")
         if dir_path:
             self.txt_download_path.setText(dir_path)
 
     @staticmethod
-    def _split_csv(text: str) -> List[str]:
-        """Split comma-separated text into trimmed non-empty entries.
-
-        """
+    def _split_csv(text: str) -> list[str]:
+        """Split comma-separated text into trimmed non-empty entries."""
         return [p.strip() for p in (text or "").split(",") if p.strip()]
 
     @staticmethod
-    def _split_multiline(text: str) -> List[str]:
-        """Split multiline text into trimmed non-empty lines.
-
-        """
+    def _split_multiline(text: str) -> list[str]:
+        """Split multiline text into trimmed non-empty lines."""
         return [line.strip() for line in str(text or "").splitlines() if line.strip()]
 
-    def _append_multiline_entries(self, editor: QTextEdit, entries: List[str]) -> None:
-        """Append unique lines to one multiline editor while preserving order.
-
-        """
+    def _append_multiline_entries(self, editor: QTextEdit, entries: list[str]) -> None:
+        """Append unique lines to one multiline editor while preserving order."""
         existing = self._split_multiline(editor.toPlainText())
-        combined = existing + [str(entry).strip() for entry in (entries or []) if str(entry).strip()]
+        combined = existing + [
+            str(entry).strip() for entry in (entries or []) if str(entry).strip()
+        ]
         # Preserve order while removing duplicates.
         deduped = list(dict.fromkeys(combined))
         editor.setPlainText("\n".join(deduped))
 
     def _get_selected_tags(self) -> str:
-        """Return comma-separated string of checked tags.
-
-        """
+        """Return comma-separated string of checked tags."""
         selected = []
         for i in range(self.lst_tags.count()):
             item = self.lst_tags.item(i)
@@ -328,21 +297,22 @@ class AddTorrentDialog(QDialog):
         selected.extend(self._split_csv(self.txt_tags_extra.text()))
         # preserve order but remove duplicates
         deduped = list(dict.fromkeys(selected))
-        return ','.join(deduped)
+        return ",".join(deduped)
 
     @staticmethod
     def _is_url_source(source: str) -> bool:
-        """Return True when one source entry is a supported URL/magnet.
-
-        """
+        """Return True when one source entry is a supported URL/magnet."""
         lower = source.lower()
-        return lower.startswith("magnet:") or lower.startswith("http://") or lower.startswith("https://") or lower.startswith("bc://")
+        return (
+            lower.startswith("magnet:")
+            or lower.startswith("http://")
+            or lower.startswith("https://")
+            or lower.startswith("bc://")
+        )
 
     @staticmethod
-    def _parse_url_sources(lines: List[str]) -> Union[str, List[str]]:
-        """Convert URL list to qBittorrent payload format (single item or list).
-
-        """
+    def _parse_url_sources(lines: list[str]) -> str | list[str]:
+        """Convert URL list to qBittorrent payload format (single item or list)."""
         # Accept one URL per line for convenience.
         if not lines:
             return ""
@@ -350,115 +320,151 @@ class AddTorrentDialog(QDialog):
             return lines[0]
         return lines
 
-    def get_torrent_data(self) -> Optional[Dict[str, object]]:
-        """Get the torrent data from the dialog.
+    def _apply_path_fields(self, data: dict[str, object]) -> bool:
+        """Apply save/download path fields and validate required toggles."""
+        save_path = self.txt_save_path.text().strip()
+        if save_path:
+            data["save_path"] = save_path
 
-        """
+        download_path = self.txt_download_path.text().strip()
+        if download_path:
+            data["download_path"] = download_path
+        if self.chk_use_download_path.isChecked():
+            if not download_path:
+                QMessageBox.warning(
+                    self,
+                    "Missing Download Path",
+                    "Use Download Path is enabled, but Download Path is empty.",
+                )
+                return False
+            data["use_download_path"] = True
+        return True
+
+    def _apply_metadata_fields(self, data: dict[str, object]) -> None:
+        """Apply category, tags, rename, and cookie options."""
+        category = self.cmb_category.currentText().strip()
+        if category:
+            data["category"] = category
+
+        tags = self._get_selected_tags().strip()
+        if tags:
+            data["tags"] = tags
+
+        rename = self.txt_rename.text().strip()
+        if rename:
+            data["rename"] = rename
+
+        cookie = self.txt_cookie.text().strip()
+        if cookie:
+            data["cookie"] = cookie
+
+    def _apply_behavior_fields(self, data: dict[str, object]) -> None:
+        """Apply behavior flags and enum options."""
+        data["is_paused"] = self.chk_paused.isChecked()
+        data["is_stopped"] = self.chk_stopped.isChecked()
+        data["forced"] = self.chk_forced.isChecked()
+        data["add_to_top_of_queue"] = self.chk_add_to_top.isChecked()
+        data["is_skip_checking"] = self.chk_skip_check.isChecked()
+        data["is_sequential_download"] = self.chk_sequential.isChecked()
+        data["is_first_last_piece_priority"] = self.chk_first_last.isChecked()
+        data["use_auto_torrent_management"] = self.chk_auto_tmm.isChecked()
+        data["is_root_folder"] = self.chk_root_folder.isChecked()
+
+        content_layout = self.cmb_content_layout.currentText()
+        if content_layout != "Default":
+            data["content_layout"] = content_layout
+
+        stop_condition = self.cmb_stop_condition.currentText()
+        if stop_condition != "Default":
+            data["stop_condition"] = stop_condition
+
+    def _apply_limits_fields(self, data: dict[str, object]) -> None:
+        """Apply transfer and share-limit options."""
+        up_limit_kib = self.spn_upload_limit.value()
+        if up_limit_kib > 0:
+            data["upload_limit"] = up_limit_kib * 1024
+
+        down_limit_kib = self.spn_download_limit.value()
+        if down_limit_kib > 0:
+            data["download_limit"] = down_limit_kib * 1024
+
+        ratio_limit = float(self.spn_ratio_limit.value())
+        if ratio_limit >= 0:
+            data["ratio_limit"] = ratio_limit
+
+        seeding_time_limit = int(self.spn_seeding_time_limit.value())
+        if seeding_time_limit >= 0:
+            data["seeding_time_limit"] = seeding_time_limit
+
+        inactive_seeding_limit = int(self.spn_inactive_seeding_time_limit.value())
+        if inactive_seeding_limit >= 0:
+            data["inactive_seeding_time_limit"] = inactive_seeding_limit
+
+        share_limit_action = self.cmb_share_limit_action.currentText()
+        if share_limit_action != "Default":
+            data["share_limit_action"] = share_limit_action
+
+    def _validate_source_files(self, source_files: list[str]) -> bool:
+        """Validate selected torrent file paths."""
+        if not source_files:
+            return True
+        missing_files = [path for path in source_files if not os.path.exists(path)]
+        if missing_files:
+            QMessageBox.warning(
+                self,
+                "Torrent File Not Found",
+                "File does not exist:\n" + "\n".join(missing_files),
+            )
+            return False
+        return True
+
+    def _validate_source_urls(self, source_urls: list[str]) -> bool:
+        """Validate URL and magnet inputs."""
+        if not source_urls:
+            return True
+        invalid_urls = [url for url in source_urls if not self._is_url_source(url)]
+        if invalid_urls:
+            QMessageBox.warning(
+                self,
+                "Invalid Magnet/URL",
+                "These entries are not valid magnet links or URLs:\n" + "\n".join(invalid_urls),
+            )
+            return False
+        return True
+
+    def _apply_source_fields(
+        self,
+        data: dict[str, object],
+        source_files: list[str],
+        source_urls: list[str],
+    ) -> None:
+        """Apply validated source file/url inputs into payload."""
+        if source_files:
+            data["torrent_files"] = source_files[0] if len(source_files) == 1 else source_files
+        if source_urls:
+            data["urls"] = self._parse_url_sources(source_urls)
+
+    def get_torrent_data(self) -> dict[str, object] | None:
+        """Get the torrent data from the dialog."""
         source_files = self._split_multiline(self.txt_torrent_files.toPlainText())
         source_urls = self._split_multiline(self.txt_source_urls.toPlainText())
         if not source_files and not source_urls:
             return None
 
-        data: Dict[str, object] = {}
-
-        save_path = self.txt_save_path.text().strip()
-        if save_path:
-            data['save_path'] = save_path
-
-        download_path = self.txt_download_path.text().strip()
-        if download_path:
-            data['download_path'] = download_path
-        if self.chk_use_download_path.isChecked():
-            if not download_path:
-                QMessageBox.warning(self, "Missing Download Path", "Use Download Path is enabled, but Download Path is empty.")
-                return None
-            data['use_download_path'] = True
-
-        category = self.cmb_category.currentText().strip()
-        if category:
-            data['category'] = category
-
-        tags = self._get_selected_tags().strip()
-        if tags:
-            data['tags'] = tags
-
-        rename = self.txt_rename.text().strip()
-        if rename:
-            data['rename'] = rename
-
-        cookie = self.txt_cookie.text().strip()
-        if cookie:
-            data['cookie'] = cookie
-
-        # Behavior
-        data['is_paused'] = self.chk_paused.isChecked()
-        data['is_stopped'] = self.chk_stopped.isChecked()
-        data['forced'] = self.chk_forced.isChecked()
-        data['add_to_top_of_queue'] = self.chk_add_to_top.isChecked()
-        data['is_skip_checking'] = self.chk_skip_check.isChecked()
-        data['is_sequential_download'] = self.chk_sequential.isChecked()
-        data['is_first_last_piece_priority'] = self.chk_first_last.isChecked()
-        data['use_auto_torrent_management'] = self.chk_auto_tmm.isChecked()
-        data['is_root_folder'] = self.chk_root_folder.isChecked()
-
-        content_layout = self.cmb_content_layout.currentText()
-        if content_layout != "Default":
-            data['content_layout'] = content_layout
-
-        stop_condition = self.cmb_stop_condition.currentText()
-        if stop_condition != "Default":
-            data['stop_condition'] = stop_condition
-
-        # Limits
-        up_limit_kib = self.spn_upload_limit.value()
-        if up_limit_kib > 0:
-            data['upload_limit'] = up_limit_kib * 1024
-
-        down_limit_kib = self.spn_download_limit.value()
-        if down_limit_kib > 0:
-            data['download_limit'] = down_limit_kib * 1024
-
-        ratio_limit = float(self.spn_ratio_limit.value())
-        if ratio_limit >= 0:
-            data['ratio_limit'] = ratio_limit
-
-        seeding_time_limit = int(self.spn_seeding_time_limit.value())
-        if seeding_time_limit >= 0:
-            data['seeding_time_limit'] = seeding_time_limit
-
-        inactive_seeding_limit = int(self.spn_inactive_seeding_time_limit.value())
-        if inactive_seeding_limit >= 0:
-            data['inactive_seeding_time_limit'] = inactive_seeding_limit
-
-        share_limit_action = self.cmb_share_limit_action.currentText()
-        if share_limit_action != "Default":
-            data['share_limit_action'] = share_limit_action
-
-        # Sources
-        if source_files:
-            missing_files = [path for path in source_files if not os.path.exists(path)]
-            if missing_files:
-                QMessageBox.warning(
-                    self,
-                    "Torrent File Not Found",
-                    "File does not exist:\n" + "\n".join(missing_files),
-                )
-                return None
-            data['torrent_files'] = source_files[0] if len(source_files) == 1 else source_files
-
-        if source_urls:
-            invalid_urls = [url for url in source_urls if not self._is_url_source(url)]
-            if invalid_urls:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Magnet/URL",
-                    "These entries are not valid magnet links or URLs:\n"
-                    + "\n".join(invalid_urls),
-                )
-                return None
-            data['urls'] = self._parse_url_sources(source_urls)
+        data: dict[str, object] = {}
+        if not self._apply_path_fields(data):
+            return None
+        self._apply_metadata_fields(data)
+        self._apply_behavior_fields(data)
+        self._apply_limits_fields(data)
+        if not self._validate_source_files(source_files):
+            return None
+        if not self._validate_source_urls(source_urls):
+            return None
+        self._apply_source_fields(data, source_files, source_urls)
 
         return data
+
 
 class TaxonomyManagerDialog(QDialog):
     """Dialog to manage categories and tags in one place."""
@@ -469,20 +475,18 @@ class TaxonomyManagerDialog(QDialog):
     create_tags_requested = Signal(list)
     delete_tags_requested = Signal(list)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize category and tag management dialog state."""
         super().__init__(parent)
         self.setWindowTitle("Manage Tags and Categories")
         self.resize(760, 520)
 
-        self._category_data: Dict[str, Dict[str, object]] = {}
+        self._category_data: dict[str, dict[str, object]] = {}
         self._build_ui()
         self._set_category_create_mode()
 
     def _build_ui(self) -> None:
-        """Create categories/tags tabs and wire user actions.
-
-        """
+        """Create categories/tags tabs and wire user actions."""
         layout = QVBoxLayout(self)
 
         self.tabs = QTabWidget()
@@ -578,20 +582,14 @@ class TaxonomyManagerDialog(QDialog):
         layout.addWidget(buttons)
 
     def _browse_category_save_path(self) -> None:
-        """Browse for category default save path.
-
-        """
+        """Browse for category default save path."""
         initial = self.txt_category_save_path.text().strip()
-        selected = QFileDialog.getExistingDirectory(
-            self, "Select Category Save Path", initial
-        )
+        selected = QFileDialog.getExistingDirectory(self, "Select Category Save Path", initial)
         if selected:
             self.txt_category_save_path.setText(selected)
 
     def _browse_category_incomplete_path(self) -> None:
-        """Browse for category incomplete save path.
-
-        """
+        """Browse for category incomplete save path."""
         initial = self.txt_category_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
             self, "Select Category Incomplete Path", initial
@@ -600,37 +598,37 @@ class TaxonomyManagerDialog(QDialog):
             self.txt_category_incomplete_path.setText(selected)
 
     def _update_incomplete_path_enabled_state(self, *_args: object) -> None:
-        """Enable/disable incomplete path controls based on checkbox.
-
-        """
+        """Enable/disable incomplete path controls based on checkbox."""
         enabled = bool(self.chk_category_use_incomplete.isChecked())
         self.txt_category_incomplete_path.setEnabled(enabled)
         self.btn_category_browse_incomplete.setEnabled(enabled)
 
     def set_busy(self, busy: bool, message: str = "") -> None:
-        """Enable/disable editor controls while an API operation runs.
-
-        """
+        """Enable/disable editor controls while an API operation runs."""
         enabled = not bool(busy)
         self.tabs.setEnabled(enabled)
         self.btn_category_new.setEnabled(enabled)
         self.btn_category_apply.setEnabled(enabled)
-        self.btn_category_delete.setEnabled(enabled and self.lst_categories.currentItem() is not None)
+        self.btn_category_delete.setEnabled(
+            enabled and self.lst_categories.currentItem() is not None
+        )
         self.chk_category_use_incomplete.setEnabled(enabled)
-        self.txt_category_incomplete_path.setEnabled(enabled and self.chk_category_use_incomplete.isChecked())
-        self.btn_category_browse_incomplete.setEnabled(enabled and self.chk_category_use_incomplete.isChecked())
+        self.txt_category_incomplete_path.setEnabled(
+            enabled and self.chk_category_use_incomplete.isChecked()
+        )
+        self.btn_category_browse_incomplete.setEnabled(
+            enabled and self.chk_category_use_incomplete.isChecked()
+        )
         self.btn_add_tags.setEnabled(enabled)
         self.btn_delete_tags.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
-    def set_taxonomy_data(self, category_data: Dict[str, Dict[str, object]], tags: List[str]) -> None:
-        """Refresh dialog contents from latest category/tag lists.
-
-        """
+    def set_taxonomy_data(
+        self, category_data: dict[str, dict[str, object]], tags: list[str]
+    ) -> None:
+        """Refresh dialog contents from latest category/tag lists."""
         current_category = self.selected_category_name()
-        selected_tags = {
-            item.text() for item in self.lst_tags_manage.selectedItems()
-        }
+        selected_tags = {item.text() for item in self.lst_tags_manage.selectedItems()}
 
         self._category_data = dict(category_data or {})
         self.lst_categories.clear()
@@ -653,20 +651,16 @@ class TaxonomyManagerDialog(QDialog):
             self.lst_tags_manage.addItem(item)
 
     def selected_category_name(self) -> str:
-        """Return selected category name, or empty string.
-
-        """
+        """Return selected category name, or empty string."""
         item = self.lst_categories.currentItem()
         return item.text().strip() if item else ""
 
     def _on_category_selection_changed(
         self,
-        current: Optional[QListWidgetItem],
-        _previous: Optional[QListWidgetItem],
+        current: QListWidgetItem | None,
+        _previous: QListWidgetItem | None,
     ) -> None:
-        """Load selected category into the editor.
-
-        """
+        """Load selected category into the editor."""
         if current is None:
             self._set_category_create_mode()
             return
@@ -684,13 +678,11 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_category_delete.setEnabled(True)
 
     def _set_category_create_mode(self) -> None:
-        """Prepare editor for creating a new category.
-
-        """
+        """Prepare editor for creating a new category."""
         if self.lst_categories.currentItem() is not None:
             prev = self.lst_categories.blockSignals(True)
             self.lst_categories.clearSelection()
-            self.lst_categories.setCurrentItem(None)
+            self.lst_categories.setCurrentRow(-1)
             self.lst_categories.blockSignals(prev)
         self.txt_category_name.setReadOnly(False)
         self.txt_category_name.clear()
@@ -702,9 +694,7 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_category_delete.setEnabled(False)
 
     def _apply_category_changes(self) -> None:
-        """Emit create/update category request.
-
-        """
+        """Emit create/update category request."""
         name = self.txt_category_name.text().strip()
         save_path = self.txt_category_save_path.text().strip()
         incomplete_path = self.txt_category_incomplete_path.text().strip()
@@ -719,14 +709,14 @@ class TaxonomyManagerDialog(QDialog):
 
         selected_name = self.selected_category_name()
         if selected_name:
-            self.edit_category_requested.emit(selected_name, save_path, incomplete_path, use_incomplete)
+            self.edit_category_requested.emit(
+                selected_name, save_path, incomplete_path, use_incomplete
+            )
         else:
             self.create_category_requested.emit(name, save_path, incomplete_path, use_incomplete)
 
     def _delete_selected_category(self) -> None:
-        """Emit delete request for selected category.
-
-        """
+        """Emit delete request for selected category."""
         name = self.selected_category_name()
         if not name:
             self.lbl_message.setText("Select a category to delete.")
@@ -734,11 +724,9 @@ class TaxonomyManagerDialog(QDialog):
         self.delete_category_requested.emit(name)
 
     @staticmethod
-    def _parse_csv_entries(raw_text: str) -> List[str]:
-        """Parse comma-separated text into unique ordered tag values.
-
-        """
-        values: List[str] = []
+    def _parse_csv_entries(raw_text: str) -> list[str]:
+        """Parse comma-separated text into unique ordered tag values."""
+        values: list[str] = []
         seen = set()
         for part in str(raw_text or "").split(","):
             value = part.strip()
@@ -748,9 +736,7 @@ class TaxonomyManagerDialog(QDialog):
         return values
 
     def _add_tags(self) -> None:
-        """Emit create-tags request from entry field.
-
-        """
+        """Emit create-tags request from entry field."""
         tags = self._parse_csv_entries(self.txt_new_tags.text())
         if not tags:
             self.lbl_message.setText("Enter at least one tag.")
@@ -759,22 +745,27 @@ class TaxonomyManagerDialog(QDialog):
         self.txt_new_tags.clear()
 
     def _delete_selected_tags(self) -> None:
-        """Emit delete-tags request for selected tags.
-
-        """
-        tags = [item.text().strip() for item in self.lst_tags_manage.selectedItems() if item.text().strip()]
+        """Emit delete-tags request for selected tags."""
+        tags = [
+            item.text().strip()
+            for item in self.lst_tags_manage.selectedItems()
+            if item.text().strip()
+        ]
         if not tags:
             self.lbl_message.setText("Select at least one tag to delete.")
             return
         self.delete_tags_requested.emit(tags)
 
+
 class SpeedLimitsDialog(QDialog):
     """Dialog to manage global and alternative speed limits."""
 
     refresh_requested = Signal()
-    apply_requested = Signal(int, int, int, int, bool)  # normal_dl_kib, normal_ul_kib, alt_dl_kib, alt_ul_kib, alt_enabled
+    apply_requested = Signal(
+        int, int, int, int, bool
+    )  # normal_dl_kib, normal_ul_kib, alt_dl_kib, alt_ul_kib, alt_enabled
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize speed-limits dialog controls."""
         super().__init__(parent)
         self.setWindowTitle("Manage Speed Limits")
@@ -782,9 +773,7 @@ class SpeedLimitsDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        """Build normal/alternative speed controls and command buttons.
-
-        """
+        """Build normal/alternative speed controls and command buttons."""
         layout = QVBoxLayout(self)
 
         normal_group = QGroupBox("Normal Speed Limits (KiB/s)")
@@ -829,9 +818,7 @@ class SpeedLimitsDialog(QDialog):
         layout.addLayout(buttons_row)
 
     def _emit_apply(self) -> None:
-        """Emit apply signal with current dialog values.
-
-        """
+        """Emit apply signal with current dialog values."""
         self.apply_requested.emit(
             int(self.spn_normal_dl.value()),
             int(self.spn_normal_ul.value()),
@@ -840,11 +827,15 @@ class SpeedLimitsDialog(QDialog):
             bool(self.chk_alt_enabled.isChecked()),
         )
 
-    def set_values(self, normal_dl_bytes: int, normal_ul_bytes: int,
-                   alt_dl_bytes: int, alt_ul_bytes: int, alt_enabled: bool) -> None:
-        """Update dialog controls from bytes/sec values.
-
-        """
+    def set_values(
+        self,
+        normal_dl_bytes: int,
+        normal_ul_bytes: int,
+        alt_dl_bytes: int,
+        alt_ul_bytes: int,
+        alt_enabled: bool,
+    ) -> None:
+        """Update dialog controls from bytes/sec values."""
         self.spn_normal_dl.setValue(max(0, int(normal_dl_bytes)) // 1024)
         self.spn_normal_ul.setValue(max(0, int(normal_ul_bytes)) // 1024)
         self.spn_alt_dl.setValue(max(0, int(alt_dl_bytes)) // 1024)
@@ -852,9 +843,7 @@ class SpeedLimitsDialog(QDialog):
         self.chk_alt_enabled.setChecked(bool(alt_enabled))
 
     def set_busy(self, busy: bool, message: str = "") -> None:
-        """Enable/disable controls while async operation runs.
-
-        """
+        """Enable/disable controls while async operation runs."""
         enabled = not bool(busy)
         for widget in (
             self.spn_normal_dl,
@@ -868,6 +857,7 @@ class SpeedLimitsDialog(QDialog):
             widget.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
+
 class AppPreferencesDialog(QDialog):
     """Dialog to edit raw qBittorrent application preferences in a tree view."""
 
@@ -876,24 +866,22 @@ class AppPreferencesDialog(QDialog):
     ROLE_PATH = int(Qt.ItemDataRole.UserRole) + 200
     ROLE_IS_LEAF = int(Qt.ItemDataRole.UserRole) + 201
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize raw preferences editor state and tree bindings."""
         super().__init__(parent)
         self.setWindowTitle("Edit App Preferences")
         self.resize(980, 640)
         self._updating_tree = False
-        self._original_preferences: Dict[str, object] = {}
-        self._edited_preferences: Dict[str, object] = {}
-        self._path_items: Dict[Tuple[object, ...], QTreeWidgetItem] = {}
-        self._leaf_original_values: Dict[Tuple[object, ...], object] = {}
-        self._leaf_current_values: Dict[Tuple[object, ...], object] = {}
-        self._leaf_items: Dict[Tuple[object, ...], QTreeWidgetItem] = {}
+        self._original_preferences: dict[str, object] = {}
+        self._edited_preferences: dict[str, object] = {}
+        self._path_items: dict[tuple[object, ...], QTreeWidgetItem] = {}
+        self._leaf_original_values: dict[tuple[object, ...], object] = {}
+        self._leaf_current_values: dict[tuple[object, ...], object] = {}
+        self._leaf_items: dict[tuple[object, ...], QTreeWidgetItem] = {}
         self._build_ui()
 
     def _build_ui(self) -> None:
-        """Build preferences tree view and apply/cancel actions.
-
-        """
+        """Build preferences tree view and apply/cancel actions."""
         layout = QVBoxLayout(self)
 
         self.tree_preferences = QTreeWidget()
@@ -925,18 +913,14 @@ class AppPreferencesDialog(QDialog):
         layout.addLayout(controls)
 
     def set_busy(self, busy: bool, message: str = "") -> None:
-        """Enable/disable dialog controls while API operation runs.
-
-        """
+        """Enable/disable dialog controls while API operation runs."""
         enabled = not bool(busy)
         self.tree_preferences.setEnabled(enabled)
         self.btn_apply.setEnabled(enabled)
         self.lbl_message.setText(str(message or ""))
 
-    def set_preferences(self, preferences: Dict[str, object]) -> None:
-        """Load preferences into editable tree and reset change tracking.
-
-        """
+    def set_preferences(self, preferences: dict[str, object]) -> None:
+        """Load preferences into editable tree and reset change tracking."""
         self._updating_tree = True
         try:
             source = dict(preferences or {}) if isinstance(preferences, dict) else {}
@@ -963,16 +947,12 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _is_container(value: object) -> bool:
-        """Return True when value is a nested dict/list container.
-
-        """
+        """Return True when value is a nested dict/list container."""
         return isinstance(value, (dict, list))
 
     @staticmethod
     def _value_type_name(value: object) -> str:
-        """Return a human-readable type name for one preference value.
-
-        """
+        """Return a human-readable type name for one preference value."""
         if value is None:
             return "null"
         if isinstance(value, bool):
@@ -991,9 +971,7 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _value_to_text(value: object) -> str:
-        """Render one preference value to editable text representation.
-
-        """
+        """Render one preference value to editable text representation."""
         if value is None:
             return "null"
         if isinstance(value, bool):
@@ -1007,9 +985,7 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _container_summary(value: object) -> str:
-        """Return compact summary label for dict/list containers.
-
-        """
+        """Return compact summary label for dict/list containers."""
         if isinstance(value, dict):
             count = len(value)
             suffix = "key" if count == 1 else "keys"
@@ -1022,14 +998,12 @@ class AppPreferencesDialog(QDialog):
 
     def _add_pref_item(
         self,
-        parent_item: Optional[QTreeWidgetItem],
-        path: Tuple[object, ...],
+        parent_item: QTreeWidgetItem | None,
+        path: tuple[object, ...],
         label: str,
         value: object,
     ) -> None:
-        """Add one preference tree node and recurse for nested values.
-
-        """
+        """Add one preference tree node and recurse for nested values."""
         item = QTreeWidgetItem([str(label), "", self._value_type_name(value)])
         item.setData(0, self.ROLE_PATH, path)
         item.setData(0, self.ROLE_IS_LEAF, False)
@@ -1061,10 +1035,8 @@ class AppPreferencesDialog(QDialog):
         self._leaf_items[path] = item
 
     @staticmethod
-    def _normalize_item_path(path_data: object) -> Tuple[object, ...]:
-        """Normalize serialized path metadata to tuple form.
-
-        """
+    def _normalize_item_path(path_data: object) -> tuple[object, ...]:
+        """Normalize serialized path metadata to tuple form."""
         if isinstance(path_data, tuple):
             return path_data
         if isinstance(path_data, list):
@@ -1072,13 +1044,11 @@ class AppPreferencesDialog(QDialog):
         return tuple()
 
     @staticmethod
-    def _path_label(path: Tuple[object, ...]) -> str:
-        """Format one tree path tuple as dotted/bracketed label.
-
-        """
+    def _path_label(path: tuple[object, ...]) -> str:
+        """Format one tree path tuple as dotted/bracketed label."""
         if not path:
             return ""
-        parts: List[str] = []
+        parts: list[str] = []
         for part in path:
             if isinstance(part, int):
                 parts.append(f"[{part}]")
@@ -1089,30 +1059,24 @@ class AppPreferencesDialog(QDialog):
         return "".join(parts)
 
     @staticmethod
-    def _set_path_value(container: object, path: Tuple[object, ...], value: object) -> None:
-        """Assign one nested container value addressed by path tuple.
-
-        """
-        target = container
+    def _set_path_value(container: object, path: tuple[object, ...], value: object) -> None:
+        """Assign one nested container value addressed by path tuple."""
+        target: Any = container
         for key in path[:-1]:
             target = target[key]
-        target[path[-1]] = value
+        target[cast(Any, path[-1])] = value
 
     @staticmethod
-    def _get_path_value(container: object, path: Tuple[object, ...]) -> object:
-        """Resolve one nested container value addressed by path tuple.
-
-        """
-        target = container
+    def _get_path_value(container: object, path: tuple[object, ...]) -> object:
+        """Resolve one nested container value addressed by path tuple."""
+        target: Any = container
         for key in path:
             target = target[key]
         return target
 
     @staticmethod
     def _parse_bool(text: str) -> bool:
-        """Parse flexible bool text tokens and raise on invalid input.
-
-        """
+        """Parse flexible bool text tokens and raise on invalid input."""
         token = str(text or "").strip().lower()
         if token in {"1", "true", "yes", "on"}:
             return True
@@ -1122,9 +1086,7 @@ class AppPreferencesDialog(QDialog):
 
     @staticmethod
     def _parse_value_by_example(text: str, example: object) -> object:
-        """Parse editor text using original value type as parsing guide.
-
-        """
+        """Parse editor text using original value type as parsing guide."""
         raw = str(text or "")
         stripped = raw.strip()
 
@@ -1167,9 +1129,7 @@ class AppPreferencesDialog(QDialog):
             return raw
 
     def _refresh_changed_highlights(self) -> None:
-        """Highlight changed leaf values in coral for quick scanning.
-
-        """
+        """Highlight changed leaf values in coral for quick scanning."""
         coral_brush = QBrush(QColor("coral"))
         clear_brush = QBrush()
         for path, item in self._leaf_items.items():
@@ -1178,11 +1138,9 @@ class AppPreferencesDialog(QDialog):
             changed = current != original
             item.setBackground(1, coral_brush if changed else clear_brush)
 
-    def changed_preferences(self) -> Dict[str, object]:
-        """Return only top-level preferences changed by the user.
-
-        """
-        changes: Dict[str, object] = {}
+    def changed_preferences(self) -> dict[str, object]:
+        """Return only top-level preferences changed by the user."""
+        changes: dict[str, object] = {}
         for key, edited_value in self._edited_preferences.items():
             original_value = self._original_preferences.get(key, None)
             if key not in self._original_preferences or edited_value != original_value:
@@ -1190,9 +1148,7 @@ class AppPreferencesDialog(QDialog):
         return changes
 
     def _on_tree_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
-        """Validate one edited cell and propagate value/type updates upward.
-
-        """
+        """Validate one edited cell and propagate value/type updates upward."""
         if self._updating_tree:
             return
         if column != 1:
@@ -1242,14 +1198,13 @@ class AppPreferencesDialog(QDialog):
             self.lbl_message.setText(f"Changed preferences: {change_count}")
 
     def _emit_apply(self) -> None:
-        """Emit only changed preferences for API apply.
-
-        """
+        """Emit only changed preferences for API apply."""
         changes = self.changed_preferences()
         if not changes:
             self.lbl_message.setText("No changed preferences to apply.")
             return
         self.apply_requested.emit(changes)
+
 
 class FriendlyAddPreferencesDialog(QDialog):
     """Dialog to edit common qBittorrent app preferences without raw JSON editing."""
@@ -1285,18 +1240,16 @@ class FriendlyAddPreferencesDialog(QDialog):
         "max_seeding_time",
     )
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize friendly preference editor controls and state."""
         super().__init__(parent)
         self.setWindowTitle("Edit Add Preferences (friendly)")
         self.resize(640, 560)
-        self._original_values: Dict[str, object] = {}
+        self._original_values: dict[str, object] = {}
         self._build_ui()
 
     def _build_ui(self) -> None:
-        """Build tabbed friendly controls for common preference subsets.
-
-        """
+        """Build tabbed friendly controls for common preference subsets."""
         layout = QVBoxLayout(self)
 
         self.lbl_summary = QLabel(
@@ -1406,9 +1359,7 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     @staticmethod
     def _make_unlimited_spinbox() -> QSpinBox:
-        """Create integer spinbox using `-1` sentinel for unlimited values.
-
-        """
+        """Create integer spinbox using `-1` sentinel for unlimited values."""
         spin = QSpinBox()
         spin.setRange(-1, 10_000_000)
         spin.setSingleStep(1)
@@ -1417,9 +1368,7 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     @staticmethod
     def _to_bool(value: object, default: bool = False) -> bool:
-        """Best-effort conversion of unknown value to bool with default.
-
-        """
+        """Best-effort conversion of unknown value to bool with default."""
         if isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):
@@ -1434,33 +1383,27 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     @staticmethod
     def _to_int(value: object, default: int = -1) -> int:
-        """Best-effort conversion of unknown value to int with default.
-
-        """
+        """Best-effort conversion of unknown value to int with default."""
         if isinstance(value, bool):
             return int(default)
         try:
-            return int(value)
+            return int(cast(Any, value))
         except (TypeError, ValueError, OverflowError):
             return int(default)
 
     @staticmethod
     def _to_float(value: object, default: float = 0.0) -> float:
-        """Best-effort conversion of unknown value to float with default.
-
-        """
+        """Best-effort conversion of unknown value to float with default."""
         if isinstance(value, bool):
             return float(default)
         try:
-            return float(value)
+            return float(cast(Any, value))
         except (TypeError, ValueError, OverflowError):
             return float(default)
 
     @staticmethod
     def _set_combo_data(combo: QComboBox, value: object, fallback: int = 0) -> None:
-        """Select combo item by `data` value with robust fallback behavior.
-
-        """
+        """Select combo item by `data` value with robust fallback behavior."""
         desired = FriendlyAddPreferencesDialog._to_int(value, fallback)
         idx = combo.findData(desired)
         if idx < 0:
@@ -1470,28 +1413,20 @@ class FriendlyAddPreferencesDialog(QDialog):
         combo.setCurrentIndex(idx)
 
     def _update_temp_path_enabled_state(self) -> None:
-        """Sync temporary-path edit enablement with its toggle checkbox.
-
-        """
+        """Sync temporary-path edit enablement with its toggle checkbox."""
         enabled = bool(self.chk_temp_path_enabled.isChecked())
         self.txt_temp_path.setEnabled(enabled)
 
     def _update_ratio_enabled_state(self) -> None:
-        """Enable ratio spinbox only when default ratio limit is enabled.
-
-        """
+        """Enable ratio spinbox only when default ratio limit is enabled."""
         self.spn_max_ratio.setEnabled(bool(self.chk_max_ratio_enabled.isChecked()))
 
     def _update_seeding_time_enabled_state(self) -> None:
-        """Enable seeding-time spinbox only when limit toggle is enabled.
-
-        """
+        """Enable seeding-time spinbox only when limit toggle is enabled."""
         self.spn_max_seeding_time.setEnabled(bool(self.chk_max_seeding_time_enabled.isChecked()))
 
     def set_busy(self, busy: bool, message: str = "") -> None:
-        """Enable/disable controls while loading/applying preferences.
-
-        """
+        """Enable/disable controls while loading/applying preferences."""
         enabled = not bool(busy)
         self.tabs.setEnabled(enabled)
         self.btn_apply.setEnabled(enabled)
@@ -1501,10 +1436,8 @@ class FriendlyAddPreferencesDialog(QDialog):
             self._update_seeding_time_enabled_state()
         self.lbl_message.setText(str(message or ""))
 
-    def _collect_values(self) -> Dict[str, object]:
-        """Collect current friendly form state into preference payload dict.
-
-        """
+    def _collect_values(self) -> dict[str, object]:
+        """Collect current friendly form state into preference payload dict."""
         values = {
             "save_path": str(self.txt_save_path.text() or "").strip(),
             "temp_path_enabled": bool(self.chk_temp_path_enabled.isChecked()),
@@ -1535,35 +1468,53 @@ class FriendlyAddPreferencesDialog(QDialog):
         }
         return values
 
-    def set_preferences(self, preferences: Dict[str, object]) -> None:
-        """Load selected friendly fields from raw app preferences payload.
-
-        """
+    def set_preferences(self, preferences: dict[str, object]) -> None:
+        """Load selected friendly fields from raw app preferences payload."""
         prefs = dict(preferences or {}) if isinstance(preferences, dict) else {}
 
         self.txt_save_path.setText(str(prefs.get("save_path", "") or ""))
-        self.chk_temp_path_enabled.setChecked(self._to_bool(prefs.get("temp_path_enabled", False), False))
+        self.chk_temp_path_enabled.setChecked(
+            self._to_bool(prefs.get("temp_path_enabled", False), False)
+        )
         self.txt_temp_path.setText(str(prefs.get("temp_path", "") or ""))
-        self.chk_start_paused.setChecked(self._to_bool(prefs.get("start_paused_enabled", False), False))
-        self.chk_create_subfolder.setChecked(self._to_bool(prefs.get("create_subfolder_enabled", False), False))
+        self.chk_start_paused.setChecked(
+            self._to_bool(prefs.get("start_paused_enabled", False), False)
+        )
+        self.chk_create_subfolder.setChecked(
+            self._to_bool(prefs.get("create_subfolder_enabled", False), False)
+        )
         self.chk_auto_tmm.setChecked(self._to_bool(prefs.get("auto_tmm_enabled", False), False))
-        self.chk_incomplete_ext.setChecked(self._to_bool(prefs.get("incomplete_files_ext", False), False))
+        self.chk_incomplete_ext.setChecked(
+            self._to_bool(prefs.get("incomplete_files_ext", False), False)
+        )
         self.chk_preallocate.setChecked(self._to_bool(prefs.get("preallocate_all", False), False))
-        self.chk_queueing_enabled.setChecked(self._to_bool(prefs.get("queueing_enabled", False), False))
-        self.spn_max_active_downloads.setValue(self._to_int(prefs.get("max_active_downloads", -1), -1))
+        self.chk_queueing_enabled.setChecked(
+            self._to_bool(prefs.get("queueing_enabled", False), False)
+        )
+        self.spn_max_active_downloads.setValue(
+            self._to_int(prefs.get("max_active_downloads", -1), -1)
+        )
         self.spn_max_active_uploads.setValue(self._to_int(prefs.get("max_active_uploads", -1), -1))
-        self.spn_max_active_torrents.setValue(self._to_int(prefs.get("max_active_torrents", -1), -1))
+        self.spn_max_active_torrents.setValue(
+            self._to_int(prefs.get("max_active_torrents", -1), -1)
+        )
         self.spn_max_connec.setValue(self._to_int(prefs.get("max_connec", -1), -1))
-        self.spn_max_connec_per_torrent.setValue(self._to_int(prefs.get("max_connec_per_torrent", -1), -1))
+        self.spn_max_connec_per_torrent.setValue(
+            self._to_int(prefs.get("max_connec_per_torrent", -1), -1)
+        )
         self.spn_max_uploads.setValue(self._to_int(prefs.get("max_uploads", -1), -1))
-        self.spn_max_uploads_per_torrent.setValue(self._to_int(prefs.get("max_uploads_per_torrent", -1), -1))
+        self.spn_max_uploads_per_torrent.setValue(
+            self._to_int(prefs.get("max_uploads_per_torrent", -1), -1)
+        )
         self.chk_dht.setChecked(self._to_bool(prefs.get("dht", True), True))
         self.chk_pex.setChecked(self._to_bool(prefs.get("pex", True), True))
         self.chk_lsd.setChecked(self._to_bool(prefs.get("lsd", True), True))
         self.chk_upnp.setChecked(self._to_bool(prefs.get("upnp", True), True))
         self.chk_anonymous_mode.setChecked(self._to_bool(prefs.get("anonymous_mode", False), False))
         self._set_combo_data(self.cmb_encryption, prefs.get("encryption", 0), 0)
-        self.chk_max_ratio_enabled.setChecked(self._to_bool(prefs.get("max_ratio_enabled", False), False))
+        self.chk_max_ratio_enabled.setChecked(
+            self._to_bool(prefs.get("max_ratio_enabled", False), False)
+        )
         self.spn_max_ratio.setValue(self._to_float(prefs.get("max_ratio", 0.0), 0.0))
         self.chk_max_seeding_time_enabled.setChecked(
             self._to_bool(prefs.get("max_seeding_time_enabled", False), False)
@@ -1576,33 +1527,30 @@ class FriendlyAddPreferencesDialog(QDialog):
         self._original_values = self._collect_values()
         self.lbl_message.setText("Loaded friendly add preferences.")
 
-    def changed_preferences(self) -> Dict[str, object]:
-        """Return only friendly fields changed by the user.
-
-        """
+    def changed_preferences(self) -> dict[str, object]:
+        """Return only friendly fields changed by the user."""
         current = self._collect_values()
-        changes: Dict[str, object] = {}
+        changes: dict[str, object] = {}
         for key in self.FRIENDLY_PREF_KEYS:
             if current.get(key) != self._original_values.get(key):
                 changes[key] = copy.deepcopy(current.get(key))
         return changes
 
     def _emit_apply(self) -> None:
-        """Emit only changed friendly preferences for API apply.
-
-        """
+        """Emit only changed friendly preferences for API apply."""
         changes = self.changed_preferences()
         if not changes:
             self.lbl_message.setText("No changed preferences to apply.")
             return
         self.apply_requested.emit(changes)
 
+
 class TrackerHealthDialog(QDialog):
     """Dialog to display aggregated tracker health metrics."""
 
     refresh_requested = Signal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize tracker health dashboard widgets."""
         super().__init__(parent)
         self.setWindowTitle("Tracker Health Dashboard")
@@ -1610,9 +1558,7 @@ class TrackerHealthDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        """Build tracker-health table and control buttons.
-
-        """
+        """Build tracker-health table and control buttons."""
         layout = QVBoxLayout(self)
 
         self.lbl_summary = QLabel("No tracker data loaded.")
@@ -1625,17 +1571,19 @@ class TrackerHealthDialog(QDialog):
         self.tbl_health.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.tbl_health.setSortingEnabled(True)
         self.tbl_health.setColumnCount(9)
-        self.tbl_health.setHorizontalHeaderLabels([
-            "Tracker",
-            "Torrents",
-            "Rows",
-            "Working",
-            "Failing",
-            "Fail Rate %",
-            "Dead",
-            "Avg Next Announce (s)",
-            "Last Error",
-        ])
+        self.tbl_health.setHorizontalHeaderLabels(
+            [
+                "Tracker",
+                "Torrents",
+                "Rows",
+                "Working",
+                "Failing",
+                "Fail Rate %",
+                "Dead",
+                "Avg Next Announce (s)",
+                "Last Error",
+            ]
+        )
         header = self.tbl_health.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(True)
@@ -1652,17 +1600,13 @@ class TrackerHealthDialog(QDialog):
         layout.addLayout(controls)
 
     def set_busy(self, busy: bool, message: str = "") -> None:
-        """Set dialog busy state.
-
-        """
+        """Set dialog busy state."""
         self.btn_refresh.setEnabled(not bool(busy))
         if message:
             self.lbl_summary.setText(message)
 
-    def set_rows(self, rows: List[TrackerHealthRow]) -> None:
-        """Render aggregated tracker-health rows.
-
-        """
+    def set_rows(self, rows: list[TrackerHealthRow]) -> None:
+        """Render aggregated tracker-health rows."""
         self.tbl_health.setSortingEnabled(False)
         self.tbl_health.setRowCount(len(rows))
 
@@ -1681,37 +1625,34 @@ class TrackerHealthDialog(QDialog):
             for col_idx, text in enumerate(values):
                 item = QTableWidgetItem(text)
                 if col_idx in {1, 2, 3, 4, 5, 7}:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                    )
                 self.tbl_health.setItem(row_idx, col_idx, item)
 
         self.tbl_health.setSortingEnabled(True)
 
         total_trackers = len(rows)
         dead_count = sum(1 for row in rows if bool(row.get("dead", False)))
-        self.lbl_summary.setText(
-            f"Trackers: {total_trackers}   Dead: {dead_count}"
-        )
+        self.lbl_summary.setText(f"Trackers: {total_trackers}   Dead: {dead_count}")
+
 
 class TimelineGraphWidget(QWidget):
     """Simple custom graph for session timeline samples."""
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize timeline graph with an empty sample buffer."""
         super().__init__(parent)
-        self._samples: List[SessionTimelineSample] = []
+        self._samples: list[SessionTimelineSample] = []
         self.setMinimumHeight(260)
 
-    def set_samples(self, samples: List[SessionTimelineSample]) -> None:
-        """Set timeline samples and trigger repaint.
-
-        """
+    def set_samples(self, samples: list[SessionTimelineSample]) -> None:
+        """Set timeline samples and trigger repaint."""
         self._samples = list(samples or [])
         self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Render timeline graph for speed, active-count, and alt-mode bands.
-
-        """
+        """Render timeline graph for speed, active-count, and alt-mode bands."""
         super().paintEvent(event)
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(16, 18, 22))
@@ -1720,7 +1661,9 @@ class TimelineGraphWidget(QWidget):
         samples = self._samples[-240:]
         if len(samples) < 2:
             painter.setPen(QColor(180, 180, 180))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Timeline waiting for samples...")
+            painter.drawText(
+                self.rect(), Qt.AlignmentFlag.AlignCenter, "Timeline waiting for samples..."
+            )
             return
 
         left, top, right, bottom = 48, 24, 14, 32
@@ -1751,21 +1694,15 @@ class TimelineGraphWidget(QWidget):
         max_active = max(1, max(int(s.get("active_count", 0)) for s in samples))
 
         def x_for(i: int) -> int:
-            """Map sample index to chart x coordinate.
-
-            """
+            """Map sample index to chart x coordinate."""
             return left + int(i * chart_w / max(1, len(samples) - 1))
 
         def y_for_speed(value: int) -> int:
-            """Map speed value to chart y coordinate.
-
-            """
+            """Map speed value to chart y coordinate."""
             return top + chart_h - int(max(0, int(value)) * chart_h / max_speed)
 
         def y_for_active(value: int) -> int:
-            """Map active torrent count to chart y coordinate.
-
-            """
+            """Map active torrent count to chart y coordinate."""
             return top + chart_h - int(max(0, int(value)) * chart_h / max_active)
 
         # Down line
@@ -1773,8 +1710,10 @@ class TimelineGraphWidget(QWidget):
         painter.setPen(down_pen)
         for i in range(len(samples) - 1):
             painter.drawLine(
-                x_for(i), y_for_speed(samples[i].get("down_bps", 0)),
-                x_for(i + 1), y_for_speed(samples[i + 1].get("down_bps", 0)),
+                x_for(i),
+                y_for_speed(samples[i].get("down_bps", 0)),
+                x_for(i + 1),
+                y_for_speed(samples[i + 1].get("down_bps", 0)),
             )
 
         # Up line
@@ -1782,8 +1721,10 @@ class TimelineGraphWidget(QWidget):
         painter.setPen(up_pen)
         for i in range(len(samples) - 1):
             painter.drawLine(
-                x_for(i), y_for_speed(samples[i].get("up_bps", 0)),
-                x_for(i + 1), y_for_speed(samples[i + 1].get("up_bps", 0)),
+                x_for(i),
+                y_for_speed(samples[i].get("up_bps", 0)),
+                x_for(i + 1),
+                y_for_speed(samples[i + 1].get("up_bps", 0)),
             )
 
         # Active torrents line
@@ -1792,8 +1733,10 @@ class TimelineGraphWidget(QWidget):
         painter.setPen(active_pen)
         for i in range(len(samples) - 1):
             painter.drawLine(
-                x_for(i), y_for_active(samples[i].get("active_count", 0)),
-                x_for(i + 1), y_for_active(samples[i + 1].get("active_count", 0)),
+                x_for(i),
+                y_for_active(samples[i].get("active_count", 0)),
+                x_for(i + 1),
+                y_for_active(samples[i + 1].get("active_count", 0)),
             )
 
         painter.setPen(QColor(220, 220, 220))
@@ -1810,13 +1753,14 @@ class TimelineGraphWidget(QWidget):
         painter.setPen(QColor(255, 196, 0))
         painter.drawText(left + 210, legend_y, "Alt Mode")
 
+
 class SessionTimelineDialog(QDialog):
     """Dialog to display timeline of speeds/active torrents/alt mode."""
 
     refresh_requested = Signal()
     clear_requested = Signal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize session timeline dialog controls."""
         super().__init__(parent)
         self.setWindowTitle("Session Timeline")
@@ -1824,9 +1768,7 @@ class SessionTimelineDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        """Build timeline graph panel, summary label, and control row.
-
-        """
+        """Build timeline graph panel, summary label, and control row."""
         layout = QVBoxLayout(self)
         self.graph = TimelineGraphWidget()
         layout.addWidget(self.graph, 1)
@@ -1847,10 +1789,8 @@ class SessionTimelineDialog(QDialog):
         controls.addWidget(self.btn_close)
         layout.addLayout(controls)
 
-    def set_samples(self, samples: List[SessionTimelineSample]) -> None:
-        """Update timeline graph and summary.
-
-        """
+    def set_samples(self, samples: list[SessionTimelineSample]) -> None:
+        """Update timeline graph and summary."""
         self.graph.set_samples(samples)
         if not samples:
             self.lbl_summary.setText("No timeline samples yet.")
@@ -1866,12 +1806,9 @@ class SessionTimelineDialog(QDialog):
         self.lbl_summary.setText(summary)
 
     def set_busy(self, busy: bool, message: str = "") -> None:
-        """Set dialog busy state.
-
-        """
+        """Set dialog busy state."""
         enabled = not bool(busy)
         self.btn_refresh.setEnabled(enabled)
         self.btn_clear.setEnabled(enabled)
         if message:
             self.lbl_summary.setText(message)
-

@@ -1,4 +1,3 @@
-
 """Main window composition root and application entrypoint."""
 
 import argparse
@@ -11,7 +10,7 @@ import sys
 import tempfile
 from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, cast
 from urllib.parse import quote, urlparse
 
 import qbittorrentapi
@@ -145,12 +144,26 @@ __all__ = [
     "QFontDatabase",
 ]
 
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    def _install_controller_methods(self, controller_cls: object) -> None:
+    def __getattr__(self, name: str) -> Any:
+        """Keep runtime behavior while allowing statically unknown delegated members."""
+        raise AttributeError(f"{type(self).__name__!s} has no attribute {name!r}")
+
+    @staticmethod
+    def _coerce_int(value: object, default: int) -> int:
+        """Parse int-like values safely while preserving the provided fallback."""
+        try:
+            return int(cast(Any, value))
+        except (TypeError, ValueError, OverflowError):
+            return int(default)
+
+    def _install_controller_methods(self, controller_cls: type[object]) -> None:
         """Bind controller class methods onto this window when no local override exists."""
         for name, raw_attr in controller_cls.__dict__.items():
+            descriptor = cast(Any, raw_attr)
             if name.startswith("__"):
                 continue
             if name in {"eventFilter", "closeEvent"}:
@@ -160,13 +173,13 @@ class MainWindow(QMainWindow):
             if name in self.__dict__:
                 continue
             if isinstance(raw_attr, staticmethod):
-                candidate = raw_attr.__get__(None, controller_cls)
+                candidate = descriptor.__get__(None, controller_cls)
             elif isinstance(raw_attr, classmethod):
-                candidate = raw_attr.__get__(controller_cls, controller_cls)
+                candidate = descriptor.__get__(controller_cls, controller_cls)
             elif hasattr(raw_attr, "__get__"):
-                candidate = raw_attr.__get__(self, type(self))
+                candidate = descriptor.__get__(self, type(self))
             else:
-                candidate = raw_attr
+                candidate = descriptor
             if not callable(candidate):
                 continue
             setattr(self, name, candidate)
@@ -189,20 +202,18 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Delegate custom event-filter handling to session controller logic."""
-        return SessionUiController.eventFilter(self, watched, event)
+        return SessionUiController.eventFilter(cast(SessionUiController, self), watched, event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Delegate close-event cleanup to session controller logic."""
-        SessionUiController.closeEvent(self, event)
+        SessionUiController.closeEvent(cast(SessionUiController, self), event)
 
     def __init__(self, config: NormalizedConfig) -> None:
-        """Initialize UI, runtime state, queues, settings, and startup refresh.
-
-        """
+        """Initialize UI, runtime state, queues, settings, and startup refresh."""
         super().__init__()
         self._initialize_controllers()
 
-        self.config = config if isinstance(config, dict) else {}
+        self.config = cast(NormalizedConfig, config if isinstance(config, dict) else {})
         config = self.config
         self.instance_id = str(config.get("_instance_id", "") or "").strip().lower()
         if not self.instance_id:
@@ -220,7 +231,7 @@ class MainWindow(QMainWindow):
         self.all_torrents = []
         self.filtered_torrents = []
         self.categories = []
-        self.category_details: Dict[str, Dict[str, object]] = {}
+        self.category_details: dict[str, dict[str, object]] = {}
         self.tags = []
         self.trackers = []
         self.size_buckets = []
@@ -228,10 +239,10 @@ class MainWindow(QMainWindow):
         self.torrent_column_index = {
             col["key"]: idx for idx, col in enumerate(self.torrent_columns)
         }
-        self.column_visibility_actions: Dict[str, QAction] = {}
-        self.saved_torrent_views_menu: Optional[QMenu] = None
-        self._torrent_open_shortcuts: List[QShortcut] = []
-        self._content_open_shortcuts: List[QShortcut] = []
+        self.column_visibility_actions: dict[str, QAction] = {}
+        self.saved_torrent_views_menu: QMenu | None = None
+        self._torrent_open_shortcuts: list[QShortcut] = []
+        self._content_open_shortcuts: list[QShortcut] = []
         self.clipboard_monitor_enabled = False
         self.debug_logging_enabled = False
         self._last_clipboard_text = ""
@@ -254,21 +265,21 @@ class MainWindow(QMainWindow):
         self.current_text_filter = ""
         self.current_file_filter = ""
         self.current_content_filter = ""
-        self.current_content_files: List[TorrentFileEntry] = []
+        self.current_content_files: list[TorrentFileEntry] = []
         self._selected_torrent = None
-        self._torrent_edit_original: Dict[str, object] = {}
-        self.tab_torrent_edit: Optional[QWidget] = None
+        self._torrent_edit_original: dict[str, object] = {}
+        self.tab_torrent_edit: QWidget | None = None
         self._suppress_next_cache_save = False
         self._sync_rid = 0
-        self._sync_torrent_map: Dict[str, Dict[str, object]] = {}
+        self._sync_torrent_map: dict[str, dict[str, object]] = {}
         self._latest_torrent_fetch_remote_filtered = False
-        self._taxonomy_dialog: Optional[TaxonomyManagerDialog] = None
-        self._speed_limits_dialog: Optional[SpeedLimitsDialog] = None
-        self._app_preferences_dialog: Optional[AppPreferencesDialog] = None
-        self._friendly_add_preferences_dialog: Optional[FriendlyAddPreferencesDialog] = None
-        self._tracker_health_dialog: Optional[TrackerHealthDialog] = None
-        self._session_timeline_dialog: Optional[SessionTimelineDialog] = None
-        self._add_torrent_dialog: Optional[AddTorrentDialog] = None
+        self._taxonomy_dialog: TaxonomyManagerDialog | None = None
+        self._speed_limits_dialog: SpeedLimitsDialog | None = None
+        self._app_preferences_dialog: AppPreferencesDialog | None = None
+        self._friendly_add_preferences_dialog: FriendlyAddPreferencesDialog | None = None
+        self._tracker_health_dialog: TrackerHealthDialog | None = None
+        self._session_timeline_dialog: SessionTimelineDialog | None = None
+        self._add_torrent_dialog: AddTorrentDialog | None = None
         self.session_timeline_history: deque[SessionTimelineSample] = deque(maxlen=720)
         self._last_alt_speed_mode = False
         self._last_dht_nodes = 0
@@ -277,7 +288,7 @@ class MainWindow(QMainWindow):
 
         # Persistent per-torrent content cache (JSON file)
         self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME, self.instance_id)
-        self.content_cache: Dict[str, TorrentCacheEntry] = {}
+        self.content_cache: dict[str, TorrentCacheEntry] = {}
         self._remove_expired_cache_file()
         self._load_content_cache()
 
@@ -294,8 +305,8 @@ class MainWindow(QMainWindow):
 
         # Log file path (set by main() before constructing MainWindow)
         self.log_file_path = config.get(
-            '_log_file_path',
-            _append_instance_id_to_filename('qbiremo_enhanced.log', self.instance_id),
+            "_log_file_path",
+            _append_instance_id_to_filename("qbiremo_enhanced.log", self.instance_id),
         )
 
         # Auto-refresh settings
@@ -330,16 +341,13 @@ class MainWindow(QMainWindow):
         self._update_window_title_speeds()
         # Force startup as maximized regardless of previously persisted geometry.
         self.setWindowState(
-            (self.windowState() & ~Qt.WindowState.WindowMinimized)
-            | Qt.WindowState.WindowMaximized
+            (self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowMaximized
         )
         self.show()
         QTimer.singleShot(500, self._bring_to_front_startup)
 
     def _create_ui(self) -> None:
-        """Create the main UI layout.
-
-        """
+        """Create the main UI layout."""
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -376,13 +384,25 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.main_splitter)
 
     def _create_details_tabs(self) -> None:
-        """Create details tabs (General/Trackers/Peers/Content/Edit).
-
-        """
+        """Create details tabs (General/Trackers/Peers/Content/Edit)."""
         self.detail_tabs = QTabWidget()
         self.detail_tabs.setTabPosition(QTabWidget.TabPosition.South)
+        self.detail_tabs.addTab(self._build_general_details_tab(), "General")
+        self.detail_tabs.addTab(self._build_trackers_details_tab(), "Trackers")
+        self.detail_tabs.addTab(self._build_peers_details_tab(), "Peers")
 
-        # -- General tab --
+        self._set_details_table_message(self.tbl_trackers, "No torrent selected.")
+        self._set_details_table_message(self.tbl_peers, "No torrent selected.")
+        self.detail_tabs.addTab(self._build_content_details_tab(), "Content")
+
+        edit_widget = self._build_torrent_edit_tab()
+        self.detail_tabs.addTab(edit_widget, "Edit")
+        self.tab_torrent_edit = edit_widget
+        self.detail_tabs.currentChanged.connect(self._on_detail_tab_changed)
+        self._set_torrent_edit_enabled(False, "Select one torrent to edit.")
+
+    def _build_general_details_tab(self) -> QWidget:
+        """Build and return the details General tab."""
         general_widget = QWidget()
         general_layout = QVBoxLayout(general_widget)
         general_layout.setContentsMargins(4, 4, 4, 4)
@@ -408,44 +428,42 @@ class MainWindow(QMainWindow):
             "td.value { color: #111; }"
         )
         general_layout.addWidget(self.txt_general_details)
-        self.detail_tabs.addTab(general_widget, "General")
+        return general_widget
 
-        # -- Trackers tab --
+    def _build_details_table(self) -> QTableWidget:
+        """Create a read-only details table with shared visual behavior."""
+        table = QTableWidget()
+        table.setAlternatingRowColors(True)
+        table.setSortingEnabled(True)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
+
+    def _build_trackers_details_tab(self) -> QWidget:
+        """Build and return the details Trackers tab."""
         trackers_widget = QWidget()
         trackers_layout = QVBoxLayout(trackers_widget)
         trackers_layout.setContentsMargins(4, 4, 4, 4)
-        self.tbl_trackers = QTableWidget()
-        self.tbl_trackers.setAlternatingRowColors(True)
-        self.tbl_trackers.setSortingEnabled(True)
-        self.tbl_trackers.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tbl_trackers.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tbl_trackers.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tbl_trackers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.tbl_trackers.horizontalHeader().setStretchLastSection(True)
+        self.tbl_trackers = self._build_details_table()
         trackers_layout.addWidget(self.tbl_trackers)
-        self.detail_tabs.addTab(trackers_widget, "Trackers")
+        return trackers_widget
 
-        # -- Peers tab --
+    def _build_peers_details_tab(self) -> QWidget:
+        """Build and return the details Peers tab."""
         peers_widget = QWidget()
         peers_layout = QVBoxLayout(peers_widget)
         peers_layout.setContentsMargins(4, 4, 4, 4)
-        self.tbl_peers = QTableWidget()
-        self.tbl_peers.setAlternatingRowColors(True)
-        self.tbl_peers.setSortingEnabled(True)
-        self.tbl_peers.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tbl_peers.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tbl_peers.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_peers = self._build_details_table()
         self.tbl_peers.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tbl_peers.customContextMenuRequested.connect(self._show_peers_context_menu)
-        self.tbl_peers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.tbl_peers.horizontalHeader().setStretchLastSection(True)
         peers_layout.addWidget(self.tbl_peers)
-        self.detail_tabs.addTab(peers_widget, "Peers")
+        return peers_widget
 
-        self._set_details_table_message(self.tbl_trackers, "No torrent selected.")
-        self._set_details_table_message(self.tbl_peers, "No torrent selected.")
-
-        # -- Content tab --
+    def _build_content_details_tab(self) -> QWidget:
+        """Build and return the details Content tab."""
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(4, 4, 4, 4)
@@ -462,29 +480,19 @@ class MainWindow(QMainWindow):
 
         content_actions_layout = QHBoxLayout()
         self.btn_content_skip = QPushButton("Skip")
-        self.btn_content_skip.clicked.connect(
-            lambda: self._set_selected_content_priority(0)
-        )
+        self.btn_content_skip.clicked.connect(lambda: self._set_selected_content_priority(0))
         content_actions_layout.addWidget(self.btn_content_skip)
         self.btn_content_normal = QPushButton("Normal Priority")
-        self.btn_content_normal.clicked.connect(
-            lambda: self._set_selected_content_priority(1)
-        )
+        self.btn_content_normal.clicked.connect(lambda: self._set_selected_content_priority(1))
         content_actions_layout.addWidget(self.btn_content_normal)
         self.btn_content_high = QPushButton("High Priority")
-        self.btn_content_high.clicked.connect(
-            lambda: self._set_selected_content_priority(6)
-        )
+        self.btn_content_high.clicked.connect(lambda: self._set_selected_content_priority(6))
         content_actions_layout.addWidget(self.btn_content_high)
         self.btn_content_max = QPushButton("Maximum Priority")
-        self.btn_content_max.clicked.connect(
-            lambda: self._set_selected_content_priority(7)
-        )
+        self.btn_content_max.clicked.connect(lambda: self._set_selected_content_priority(7))
         content_actions_layout.addWidget(self.btn_content_max)
         self.btn_content_rename = QPushButton("Rename...")
-        self.btn_content_rename.clicked.connect(
-            lambda: self._rename_selected_content_item()
-        )
+        self.btn_content_rename.clicked.connect(lambda: self._rename_selected_content_item())
         content_actions_layout.addWidget(self.btn_content_rename)
         content_actions_layout.addStretch(1)
         content_layout.addLayout(content_actions_layout)
@@ -505,9 +513,10 @@ class MainWindow(QMainWindow):
         file_header.setStretchLastSection(False)
         file_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         content_layout.addWidget(self.tree_files)
-        self.detail_tabs.addTab(content_widget, "Content")
+        return content_widget
 
-        # -- Edit tab --
+    def _build_torrent_edit_tab(self) -> QWidget:
+        """Build and return the editable torrent metadata tab."""
         edit_widget = QWidget()
         edit_layout = QVBoxLayout(edit_widget)
         edit_layout.setContentsMargins(8, 8, 8, 8)
@@ -548,7 +557,9 @@ class MainWindow(QMainWindow):
         self.spn_torrent_edit_download_limit.setRange(0, 10_000_000)
         self.spn_torrent_edit_download_limit.setSpecialValueText("Unlimited")
         self.spn_torrent_edit_download_limit.setSuffix(" KiB/s")
-        self.spn_torrent_edit_download_limit.setToolTip("Per-torrent download limit (0 = unlimited)")
+        self.spn_torrent_edit_download_limit.setToolTip(
+            "Per-torrent download limit (0 = unlimited)"
+        )
         edit_form.addRow("Download Speed Limit:", self.spn_torrent_edit_download_limit)
 
         self.spn_torrent_edit_upload_limit = QSpinBox()
@@ -566,7 +577,9 @@ class MainWindow(QMainWindow):
         save_path_row.addWidget(btn_browse_save_path)
         edit_form.addRow("Save Path:", save_path_row)
         self.btn_torrent_edit_browse_save_path = btn_browse_save_path
-        self.txt_torrent_edit_save_path.textChanged.connect(self._update_torrent_edit_path_browse_buttons)
+        self.txt_torrent_edit_save_path.textChanged.connect(
+            self._update_torrent_edit_path_browse_buttons
+        )
 
         self.txt_torrent_edit_incomplete_path = QLineEdit()
         incomplete_path_row = QHBoxLayout()
@@ -576,7 +589,9 @@ class MainWindow(QMainWindow):
         incomplete_path_row.addWidget(btn_browse_incomplete_path)
         edit_form.addRow("Incomplete Path:", incomplete_path_row)
         self.btn_torrent_edit_browse_incomplete_path = btn_browse_incomplete_path
-        self.txt_torrent_edit_incomplete_path.textChanged.connect(self._update_torrent_edit_path_browse_buttons)
+        self.txt_torrent_edit_incomplete_path.textChanged.connect(
+            self._update_torrent_edit_path_browse_buttons
+        )
 
         edit_layout.addLayout(edit_form)
 
@@ -586,20 +601,13 @@ class MainWindow(QMainWindow):
         self.btn_torrent_edit_apply.clicked.connect(self._apply_selected_torrent_edits)
         apply_row.addWidget(self.btn_torrent_edit_apply)
         edit_layout.addLayout(apply_row)
-        self.detail_tabs.addTab(edit_widget, "Edit")
-        self.tab_torrent_edit = edit_widget
-        self.detail_tabs.currentChanged.connect(self._on_detail_tab_changed)
-
-        self._set_torrent_edit_enabled(False, "Select one torrent to edit.")
+        return edit_widget
 
     def _create_filter_bar(self) -> QWidget:
-        """Create the filter bar above the torrents table.
-
-        """
+        """Create the filter bar above the torrents table."""
         widget = QFrame()
         widget.setFrameShape(QFrame.Shape.StyledPanel)
-        widget.setSizePolicy(QSizePolicy.Policy.Preferred,
-                             QSizePolicy.Policy.Fixed)
+        widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(4, 2, 4, 2)
 
@@ -632,9 +640,7 @@ class MainWindow(QMainWindow):
         return widget
 
     def _create_left_panel(self) -> QWidget:
-        """Create the left filter panel as a single tree with collapsible sections.
-
-        """
+        """Create the left filter panel as a single tree with collapsible sections."""
         self.tree_filters = QTreeWidget()
         self.tree_filters.setHeaderLabel("Filters")
         self.tree_filters.setRootIsDecorated(True)
@@ -643,9 +649,7 @@ class MainWindow(QMainWindow):
 
         # -- Status section --
         self._section_status = QTreeWidgetItem(["Status"])
-        self._section_status.setFlags(
-            self._section_status.flags() & ~Qt.ItemFlag.ItemIsSelectable
-        )
+        self._section_status.setFlags(self._section_status.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         font = self._section_status.font(0)
         font.setBold(True)
         self._section_status.setFont(0, font)
@@ -653,7 +657,7 @@ class MainWindow(QMainWindow):
 
         for status in STATUS_FILTERS:
             item = QTreeWidgetItem([self._status_filter_item_text(status)])
-            item.setData(0, Qt.ItemDataRole.UserRole, ('status', status))
+            item.setData(0, Qt.ItemDataRole.UserRole, ("status", status))
             self._section_status.addChild(item)
         self._section_status.setExpanded(True)
 
@@ -669,9 +673,7 @@ class MainWindow(QMainWindow):
 
         # -- Tags section --
         self._section_tag = QTreeWidgetItem(["Tags"])
-        self._section_tag.setFlags(
-            self._section_tag.flags() & ~Qt.ItemFlag.ItemIsSelectable
-        )
+        self._section_tag.setFlags(self._section_tag.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         font = self._section_tag.font(0)
         font.setBold(True)
         self._section_tag.setFont(0, font)
@@ -679,9 +681,7 @@ class MainWindow(QMainWindow):
 
         # -- Size Groups section --
         self._section_size = QTreeWidgetItem(["Size Groups"])
-        self._section_size.setFlags(
-            self._section_size.flags() & ~Qt.ItemFlag.ItemIsSelectable
-        )
+        self._section_size.setFlags(self._section_size.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         font = self._section_size.font(0)
         font.setBold(True)
         self._section_size.setFont(0, font)
@@ -701,9 +701,7 @@ class MainWindow(QMainWindow):
         return self.tree_filters
 
     def _create_torrents_table(self) -> QTableWidget:
-        """Create the torrents table widget.
-
-        """
+        """Create the torrents table widget."""
         table = QTableWidget()
         table.setAlternatingRowColors(True)
         table.setSortingEnabled(True)
@@ -713,7 +711,7 @@ class MainWindow(QMainWindow):
         table.itemSelectionChanged.connect(self._on_torrent_selected)
         table.itemDoubleClicked.connect(self._on_torrent_table_item_double_clicked)
 
-        headers = [col["label"] for col in self.torrent_columns]
+        headers = [str(col.get("label", "") or "") for col in self.torrent_columns]
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
 
@@ -726,7 +724,7 @@ class MainWindow(QMainWindow):
 
         # Default widths and visibility (used on first run before QSettings restore)
         for idx, column in enumerate(self.torrent_columns):
-            table.setColumnWidth(idx, int(column.get("width", 100)))
+            table.setColumnWidth(idx, self._coerce_int(column.get("width", 100), 100))
             table.setColumnHidden(idx, not bool(column.get("default_visible", True)))
 
         # Open selected torrent local directory on Enter/Return.
@@ -739,9 +737,7 @@ class MainWindow(QMainWindow):
         return table
 
     def _create_menus(self) -> None:
-        """Create menu bar.
-
-        """
+        """Create menu bar."""
         menubar = self.menuBar()
         self._build_file_menu(menubar)
         self._build_edit_menu(menubar)
@@ -750,9 +746,7 @@ class MainWindow(QMainWindow):
         self._build_help_menu(menubar)
 
     def _build_file_menu(self, menubar: QMenuBar) -> None:
-        """Create File menu.
-
-        """
+        """Create File menu."""
         file_menu = menubar.addMenu("&File")
 
         add_action = QAction("&Add Torrent...", self)
@@ -781,9 +775,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
     def _build_edit_menu(self, menubar: QMenuBar) -> None:
-        """Create Edit menu.
-
-        """
+        """Create Edit menu."""
         edit_menu = menubar.addMenu("&Edit")
 
         action_start = QAction("&Start", self)
@@ -843,9 +835,7 @@ class MainWindow(QMainWindow):
         action_remove_no_confirm.triggered.connect(self._remove_torrent_no_confirmation)
         edit_menu.addAction(action_remove_no_confirm)
 
-        action_remove_delete_no_confirm = QAction(
-            "Remove and Delete Data (no confirmation)", self
-        )
+        action_remove_delete_no_confirm = QAction("Remove and Delete Data (no confirmation)", self)
         action_remove_delete_no_confirm.setShortcut("Ctrl+Shift+Del")
         action_remove_delete_no_confirm.triggered.connect(
             self._remove_torrent_and_delete_data_no_confirmation
@@ -865,9 +855,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(action_resume_session)
 
     def _build_view_menu(self, menubar: QMenuBar) -> None:
-        """Create View menu.
-
-        """
+        """Create View menu."""
         view_menu = menubar.addMenu("&View")
 
         action_open_log = QAction("Open &Log File", self)
@@ -931,9 +919,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(action_reset_view)
 
     def _build_tools_menu(self, menubar: QMenuBar) -> None:
-        """Create Tools menu.
-
-        """
+        """Create Tools menu."""
         tools_menu = menubar.addMenu("&Tools")
 
         self.action_clipboard_monitor = QAction("Enable &Clipboard Monitor", self)
@@ -957,7 +943,9 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(action_edit_app_preferences)
 
         action_edit_add_preferences_friendly = QAction("Edit Add Preferences (friendly)", self)
-        action_edit_add_preferences_friendly.triggered.connect(self._show_friendly_add_preferences_editor)
+        action_edit_add_preferences_friendly.triggered.connect(
+            self._show_friendly_add_preferences_editor
+        )
         tools_menu.addAction(action_edit_add_preferences_friendly)
 
         action_open_web_ui = QAction("Open Web UI in browser", self)
@@ -985,9 +973,7 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(action_session_timeline)
 
     def _build_help_menu(self, menubar: QMenuBar) -> None:
-        """Create Help menu.
-
-        """
+        """Create Help menu."""
         help_menu = menubar.addMenu("&Help")
 
         about_action = QAction("&About", self)
@@ -995,9 +981,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def _create_statusbar(self) -> None:
-        """Create status bar.
-
-        """
+        """Create status bar."""
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
 
@@ -1032,19 +1016,23 @@ class MainWindow(QMainWindow):
         self._update_statusbar_transfer_summary()
 
     def _statusbar_instance_identity_text(self) -> str:
-        """Build left-most status bar identity text for current connection/instance.
-
-        """
-        user = str(
-            self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
-            if isinstance(self.config, dict)
-            else self.qb_conn_info.get("username", "admin")
-        ).strip() or "admin"
-        raw_host = str(
-            self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
-            if isinstance(self.config, dict)
-            else self.qb_conn_info.get("host", "localhost")
-        ).strip() or "localhost"
+        """Build left-most status bar identity text for current connection/instance."""
+        user = (
+            str(
+                self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
+                if isinstance(self.config, dict)
+                else self.qb_conn_info.get("username", "admin")
+            ).strip()
+            or "admin"
+        )
+        raw_host = (
+            str(
+                self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
+                if isinstance(self.config, dict)
+                else self.qb_conn_info.get("host", "localhost")
+            ).strip()
+            or "localhost"
+        )
         host = raw_host
         if "://" in raw_host:
             try:
@@ -1063,17 +1051,13 @@ class MainWindow(QMainWindow):
         return f"{user}@{host}:{port} [{counter}]"
 
     def _capture_default_view_state(self) -> None:
-        """Capture baseline splitter/header states for Reset View.
-
-        """
+        """Capture baseline splitter/header states for Reset View."""
         self._default_main_splitter_state = self.main_splitter.saveState()
         self._default_right_splitter_state = self.right_splitter.saveState()
         self._default_torrent_header_state = self.tbl_torrents.horizontalHeader().saveState()
 
     def _apply_default_main_splitter_width(self) -> None:
-        """Apply default left-panel width in pixels on current splitter geometry.
-
-        """
+        """Apply default left-panel width in pixels on current splitter geometry."""
         total_width = self.main_splitter.width()
         if total_width <= 0:
             total_width = self.width()
@@ -1085,9 +1069,7 @@ class MainWindow(QMainWindow):
         self.main_splitter.setSizes([left_width, right_width])
 
     def _apply_default_torrent_header_layout(self) -> None:
-        """Apply default torrent-table column order/widths/sort indicator.
-
-        """
+        """Apply default torrent-table column order/widths/sort indicator."""
         header = self.tbl_torrents.horizontalHeader()
 
         # Restore natural logical->visual order.
@@ -1097,17 +1079,15 @@ class MainWindow(QMainWindow):
                 header.moveSection(visual, logical)
 
         for idx, column in enumerate(self.torrent_columns):
-            self.tbl_torrents.setColumnWidth(idx, int(column.get("width", 100)))
-            self.tbl_torrents.setColumnHidden(
-                idx, not bool(column.get("default_visible", True))
+            self.tbl_torrents.setColumnWidth(
+                idx, self._coerce_int(column.get("width", 100), 100)
             )
+            self.tbl_torrents.setColumnHidden(idx, not bool(column.get("default_visible", True)))
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self._sync_torrent_column_actions()
 
     def _restore_default_view_state(self) -> None:
-        """Restore baseline splitter/header states for Reset View.
-
-        """
+        """Restore baseline splitter/header states for Reset View."""
         try:
             self._apply_default_main_splitter_width()
         except (RuntimeError, TypeError, ValueError):
@@ -1123,7 +1103,9 @@ class MainWindow(QMainWindow):
 
         try:
             if getattr(self, "_default_torrent_header_state", None):
-                self.tbl_torrents.horizontalHeader().restoreState(self._default_torrent_header_state)
+                self.tbl_torrents.horizontalHeader().restoreState(
+                    self._default_torrent_header_state
+                )
             else:
                 self._apply_default_torrent_header_layout()
         except (RuntimeError, TypeError, ValueError):
@@ -1133,9 +1115,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _to_bool(value: object, default: bool = False) -> bool:
-        """Convert QSettings-like values to bool.
-
-        """
+        """Convert QSettings-like values to bool."""
         if value is None:
             return default
         if isinstance(value, bool):
@@ -1150,15 +1130,11 @@ class MainWindow(QMainWindow):
         return default
 
     def _settings_app_name(self) -> str:
-        """Return per-instance QSettings app name.
-
-        """
+        """Return per-instance QSettings app name."""
         return settings_app_name_for_instance(self.instance_id)
 
     def _new_settings(self) -> QSettings:
-        """Create QSettings configured to use INI backend.
-
-        """
+        """Create QSettings configured to use INI backend."""
         return QSettings(
             QSettings.Format.IniFormat,
             QSettings.Scope.UserScope,
@@ -1167,9 +1143,7 @@ class MainWindow(QMainWindow):
         )
 
     def _settings_ini_path(self) -> Path:
-        """Return the current INI file path used by QSettings.
-
-        """
+        """Return the current INI file path used by QSettings."""
         settings = self._new_settings()
         settings.sync()
         file_name = str(settings.fileName() or "").strip()
@@ -1177,17 +1151,16 @@ class MainWindow(QMainWindow):
         return Path(file_name) if file_name else Path(fallback_name).resolve()
 
     def _save_refresh_settings(self) -> None:
-        """Persist only auto-refresh runtime settings.
-
-        """
+        """Persist only auto-refresh runtime settings."""
         settings = self._new_settings()
         settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
-        settings.setValue("refreshIntervalSec", int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)))
+        settings.setValue(
+            "refreshIntervalSec",
+            int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)),
+        )
 
     def _setup_clipboard_monitor(self) -> None:
-        """Attach clipboard change listener for optional auto-add behavior.
-
-        """
+        """Attach clipboard change listener for optional auto-add behavior."""
         try:
             self._clipboard = QApplication.clipboard()
             if self._clipboard:
@@ -1197,9 +1170,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_magnet_link(text: str) -> str:
-        """Extract first magnet link from arbitrary clipboard text.
-
-        """
+        """Extract first magnet link from arbitrary clipboard text."""
         if not text:
             return ""
         match = re.search(r"(magnet:\?[^\s]+)", text, flags=re.IGNORECASE)
@@ -1207,29 +1178,20 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _extract_torrent_hash(text: str) -> str:
-        """Extract first torrent hash (hex/base32 BTIH forms) from text.
-
-        """
+        """Extract first torrent hash (hex/base32 BTIH forms) from text."""
         if not text:
             return ""
-        match = re.search(
-            r"\b([A-Fa-f0-9]{40}|[A-Fa-f0-9]{64}|[A-Za-z2-7]{32})\b",
-            text
-        )
+        match = re.search(r"\b([A-Fa-f0-9]{40}|[A-Fa-f0-9]{64}|[A-Za-z2-7]{32})\b", text)
         return match.group(1).strip() if match else ""
 
     @staticmethod
     def _magnet_from_hash(torrent_hash: str) -> str:
-        """Build magnet URI from torrent infohash.
-
-        """
+        """Build magnet URI from torrent infohash."""
         normalized = str(torrent_hash or "").strip().lower()
         return f"magnet:?xt=urn:btih:{normalized}"
 
     def _remember_clipboard_key(self, key: str) -> None:
-        """Remember processed clipboard key and evict oldest entries.
-
-        """
+        """Remember processed clipboard key and evict oldest entries."""
         if not key or key in self._clipboard_seen_keys:
             return
         self._clipboard_seen_keys.add(key)
@@ -1239,22 +1201,18 @@ class MainWindow(QMainWindow):
             self._clipboard_seen_keys.discard(evicted)
 
     def _queue_add_torrent_from_clipboard(self, magnet_url: str, source: str) -> None:
-        """Queue add-torrent task for clipboard-derived magnet url.
-
-        """
+        """Queue add-torrent task for clipboard-derived magnet url."""
         self._log("INFO", f"Clipboard monitor detected {source}; adding torrent")
         self._set_status("Clipboard monitor: adding torrent...")
         self.api_queue.add_task(
             "add_torrent_from_clipboard",
             self._add_torrent_api,
             self._on_add_torrent_complete,
-            {'urls': [magnet_url]}
+            {"urls": [magnet_url]},
         )
 
     def _process_clipboard_text(self, text: str) -> bool:
-        """Process clipboard text and auto-add torrent when magnet/hash appears.
-
-        """
+        """Process clipboard text and auto-add torrent when magnet/hash appears."""
         if not text:
             return False
 
@@ -1275,17 +1233,14 @@ class MainWindow(QMainWindow):
                 return False
             self._remember_clipboard_key(dedupe_key)
             self._queue_add_torrent_from_clipboard(
-                self._magnet_from_hash(normalized),
-                "torrent hash"
+                self._magnet_from_hash(normalized), "torrent hash"
             )
             return True
 
         return False
 
     def _on_clipboard_changed(self) -> None:
-        """Clipboard signal handler used by monitor toggle.
-
-        """
+        """Clipboard signal handler used by monitor toggle."""
         if not self.clipboard_monitor_enabled or not self._clipboard:
             return
         try:
@@ -1298,9 +1253,7 @@ class MainWindow(QMainWindow):
         self._process_clipboard_text(text)
 
     def _toggle_clipboard_monitor(self, enabled: bool) -> None:
-        """Enable or disable clipboard monitor.
-
-        """
+        """Enable or disable clipboard monitor."""
         self.clipboard_monitor_enabled = bool(enabled)
         self._save_settings()
         state = "enabled" if self.clipboard_monitor_enabled else "disabled"
@@ -1310,9 +1263,7 @@ class MainWindow(QMainWindow):
             self._on_clipboard_changed()
 
     def _edit_settings_ini_file(self) -> None:
-        """Open QSettings INI file in system default editor.
-
-        """
+        """Open QSettings INI file in system default editor."""
         try:
             ini_path = self._settings_ini_path()
             ini_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1326,14 +1277,15 @@ class MainWindow(QMainWindow):
             self._set_status(f"Failed to open INI file: {e}")
 
     def _web_ui_browser_url(self) -> str:
-        """Build Web UI URL for the current qBittorrent connection.
-
-        """
-        user = str(
-            self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
-            if isinstance(self.config, dict)
-            else self.qb_conn_info.get("username", "admin")
-        ).strip() or "admin"
+        """Build Web UI URL for the current qBittorrent connection."""
+        user = (
+            str(
+                self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
+                if isinstance(self.config, dict)
+                else self.qb_conn_info.get("username", "admin")
+            ).strip()
+            or "admin"
+        )
         configured_scheme = _normalize_http_protocol_scheme(
             self.config.get("http_protocol_scheme", "http")
             if isinstance(self.config, dict)
@@ -1343,14 +1295,17 @@ class MainWindow(QMainWindow):
             isinstance(self.config, dict)
             and str(self.config.get("http_protocol_scheme", "") or "").strip()
         )
-        raw_host = str(
-            self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
-            if isinstance(self.config, dict)
-            else self.qb_conn_info.get("host", "localhost")
-        ).strip() or "localhost"
+        raw_host = (
+            str(
+                self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
+                if isinstance(self.config, dict)
+                else self.qb_conn_info.get("host", "localhost")
+            ).strip()
+            or "localhost"
+        )
         host = raw_host
         scheme = configured_scheme
-        host_port_from_url: Optional[int] = None
+        host_port_from_url: int | None = None
         if "://" in raw_host:
             try:
                 parsed = urlparse(raw_host)
@@ -1379,9 +1334,7 @@ class MainWindow(QMainWindow):
         return f"{scheme}://{encoded_user}@{host_text}:{port}"
 
     def _open_web_ui_in_browser(self) -> None:
-        """Open qBittorrent Web UI URL in default browser.
-
-        """
+        """Open qBittorrent Web UI URL in default browser."""
         try:
             url = self._web_ui_browser_url()
             _open_file_in_default_app(url)
@@ -1392,12 +1345,19 @@ class MainWindow(QMainWindow):
             self._set_status(f"Failed to open Web UI: {e}")
 
     def _load_settings(self) -> None:
-        """Load window geometry, splitter sizes, column widths, sort order,.
-
-        """
+        """Load window geometry, splitter sizes, column widths, sort order,."""
         settings = self._new_settings()
+        self._load_window_geometry_settings(settings)
+        self._load_splitter_settings(settings)
+        self._load_torrent_table_settings(settings)
+        self._load_filter_selection_settings(settings)
+        self._load_auto_refresh_settings(settings)
+        self._load_display_mode_settings(settings)
+        self._load_clipboard_monitor_settings(settings)
+        self._load_debug_logging_settings(settings)
 
-        # Window geometry
+    def _load_window_geometry_settings(self, settings: QSettings) -> None:
+        """Load and apply persisted window geometry/state."""
         geometry = settings.value("geometry")
         if geometry:
             self.restoreGeometry(geometry)
@@ -1412,7 +1372,8 @@ class MainWindow(QMainWindow):
         if state:
             self.restoreState(state)
 
-        # Splitter sizes
+    def _load_splitter_settings(self, settings: QSettings) -> None:
+        """Load and apply persisted splitter positions."""
         main_sizes = settings.value("mainSplitter")
         if main_sizes:
             self.main_splitter.restoreState(main_sizes)
@@ -1422,7 +1383,8 @@ class MainWindow(QMainWindow):
         if right_sizes:
             self.right_splitter.restoreState(right_sizes)
 
-        # Torrent table header (column widths, order, sort)
+    def _load_torrent_table_settings(self, settings: QSettings) -> None:
+        """Load persisted torrent table header and hidden column selection."""
         header_state = settings.value("torrentTableHeader")
         if header_state:
             self.tbl_torrents.horizontalHeader().restoreState(header_state)
@@ -1439,26 +1401,24 @@ class MainWindow(QMainWindow):
         else:
             medium_keys = set(MEDIUM_TORRENT_VIEW_KEYS)
             hidden_default = [
-                col["key"]
-                for col in self.torrent_columns
-                if col["key"] not in medium_keys
+                col["key"] for col in self.torrent_columns if col["key"] not in medium_keys
             ]
             self._apply_hidden_columns_by_keys(hidden_default)
 
-        # Filter selection
+    def _load_filter_selection_settings(self, settings: QSettings) -> None:
+        """Load persisted filter tree status selection."""
         status = settings.value("filterStatus")
         if status and status in STATUS_FILTERS:
             self.current_status_filter = status
         self._refresh_filter_tree_highlights()
 
-        # Auto-refresh settings
+    def _load_auto_refresh_settings(self, settings: QSettings) -> None:
+        """Load persisted auto-refresh toggle and interval settings."""
         self.auto_refresh_enabled = self._to_bool(
-            settings.value("autoRefreshEnabled"),
-            self.auto_refresh_enabled
+            settings.value("autoRefreshEnabled"), self.auto_refresh_enabled
         )
         loaded_interval = self._safe_int(
-            settings.value("refreshIntervalSec"),
-            self.refresh_interval
+            settings.value("refreshIntervalSec"), self.refresh_interval
         )
         self.refresh_interval = max(1, loaded_interval)
         if hasattr(self, "action_auto_refresh"):
@@ -1466,7 +1426,8 @@ class MainWindow(QMainWindow):
             self._update_auto_refresh_action_text()
         self._sync_auto_refresh_timer_state()
 
-        # Display mode settings (QSettings-only)
+    def _load_display_mode_settings(self, settings: QSettings) -> None:
+        """Load persisted size/speed display mode settings."""
         display_human = settings.value("displayHumanReadable")
         if display_human is not None:
             use_human = self._to_bool(display_human, True)
@@ -1476,12 +1437,11 @@ class MainWindow(QMainWindow):
         else:
             # Backward compatibility for older persisted keys.
             self.display_size_mode = _normalize_display_mode(
-                settings.value("displaySizeMode", self.display_size_mode),
-                DEFAULT_DISPLAY_SIZE_MODE
+                settings.value("displaySizeMode", self.display_size_mode), DEFAULT_DISPLAY_SIZE_MODE
             )
             self.display_speed_mode = _normalize_display_mode(
                 settings.value("displaySpeedMode", self.display_speed_mode),
-                DEFAULT_DISPLAY_SPEED_MODE
+                DEFAULT_DISPLAY_SPEED_MODE,
             )
         if hasattr(self, "action_human_readable"):
             hr_checked = (
@@ -1492,17 +1452,18 @@ class MainWindow(QMainWindow):
             self.action_human_readable.setChecked(hr_checked)
             self.action_human_readable.blockSignals(action_signals)
 
-        # Clipboard monitor
+    def _load_clipboard_monitor_settings(self, settings: QSettings) -> None:
+        """Load clipboard monitor enablement and trigger initial poll."""
         self.clipboard_monitor_enabled = self._to_bool(
-            settings.value("clipboardMonitorEnabled"),
-            self.clipboard_monitor_enabled
+            settings.value("clipboardMonitorEnabled"), self.clipboard_monitor_enabled
         )
         if hasattr(self, "action_clipboard_monitor"):
             self.action_clipboard_monitor.setChecked(self.clipboard_monitor_enabled)
         if self.clipboard_monitor_enabled:
             QTimer.singleShot(0, self._on_clipboard_changed)
 
-        # Debug logging
+    def _load_debug_logging_settings(self, settings: QSettings) -> None:
+        """Load debug logging toggle state."""
         self.debug_logging_enabled = self._to_bool(
             settings.value("debugLoggingEnabled"),
             self.debug_logging_enabled,
@@ -1511,9 +1472,7 @@ class MainWindow(QMainWindow):
             self.action_debug_logging.setChecked(self.debug_logging_enabled)
 
     def _save_settings(self) -> None:
-        """Save window geometry, splitter sizes, column widths, sort order,.
-
-        """
+        """Save window geometry, splitter sizes, column widths, sort order,."""
         settings = self._new_settings()
 
         # Window geometry
@@ -1525,8 +1484,7 @@ class MainWindow(QMainWindow):
         settings.setValue("rightSplitter", self.right_splitter.saveState())
 
         # Torrent table header (column widths, order, sort)
-        settings.setValue("torrentTableHeader",
-                          self.tbl_torrents.horizontalHeader().saveState())
+        settings.setValue("torrentTableHeader", self.tbl_torrents.horizontalHeader().saveState())
         hidden_columns = [
             col["key"]
             for idx, col in enumerate(self.torrent_columns)
@@ -1537,13 +1495,16 @@ class MainWindow(QMainWindow):
         # Filter selection
         settings.setValue("filterStatus", self.current_status_filter)
         settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
-        settings.setValue("refreshIntervalSec", int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)))
+        settings.setValue(
+            "refreshIntervalSec",
+            int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)),
+        )
         settings.setValue(
             "displayHumanReadable",
             bool(
                 self.display_size_mode == "human_readable"
                 and self.display_speed_mode == "human_readable"
-            )
+            ),
         )
         settings.setValue("displaySizeMode", self.display_size_mode)
         settings.setValue("displaySpeedMode", self.display_speed_mode)
@@ -1551,33 +1512,30 @@ class MainWindow(QMainWindow):
         settings.setValue("debugLoggingEnabled", bool(self.debug_logging_enabled))
 
     def _initial_load(self) -> None:
-        """Initial data load on startup.
-
-        """
+        """Initial data load on startup."""
         try:
             self._log("INFO", "Starting initial data load...")
-            self._log("INFO", f"Connecting to qBittorrent at {self.qb_conn_info['host']}:{self.qb_conn_info['port']}")
+            self._log(
+                "INFO",
+                f"Connecting to qBittorrent at {self.qb_conn_info['host']}:{self.qb_conn_info['port']}",
+            )
             self._show_progress("Loading categories...")
 
             # Load categories first
             self.api_queue.add_task(
-                "load_categories",
-                self._fetch_categories,
-                self._on_categories_loaded
+                "load_categories", self._fetch_categories, self._on_categories_loaded
             )
         except (KeyError, TypeError, RuntimeError, AttributeError) as e:
             self._log("ERROR", f"Failed to start initial load: {e}")
             self._hide_progress()
             self._set_status(f"Error: {e}")
 
+
 def main() -> None:
-    """Main application entry point.
+    """Main application entry point."""
 
-        """
     def _positive_instance_counter(value: str) -> int:
-        """Validate CLI instance counter argument as positive integer.
-
-        """
+        """Validate CLI instance counter argument as positive integer."""
         try:
             parsed = int(value)
         except (TypeError, ValueError) as e:
@@ -1594,10 +1552,11 @@ def main() -> None:
         description="qBiremo Enhanced - Advanced qBittorrent GUI Client"
     )
     parser.add_argument(
-        "-c", "--config-file",
+        "-c",
+        "--config-file",
         required=False,
         default="qbiremo_enhanced_config.toml",
-        help="Path to configuration file (TOML format)"
+        help="Path to configuration file (TOML format)",
     )
     parser.add_argument(
         "--instance_counter",
@@ -1630,11 +1589,9 @@ def main() -> None:
     config["_instance_lock_file_path"] = str(lock_path)
     if claimed_counter != requested_counter:
         load_issues.append(
-            (
-                "Lock file already exists; auto-incremented instance counter "
-                f"from {requested_counter} to {claimed_counter} "
-                f"({claimed_instance_id})."
-            )
+            "Lock file already exists; auto-incremented instance counter "
+            f"from {requested_counter} to {claimed_counter} "
+            f"({claimed_instance_id})."
         )
     atexit.register(release_instance_lock, lock_path)
 
@@ -1663,7 +1620,8 @@ def main() -> None:
                 app.setWindowIcon(app_icon)
 
         # Create and show main window
-        app.main_window = MainWindow(config)
+        main_window = MainWindow(config)
+        cast(Any, app).main_window = main_window
 
         # Run application
         sys.exit(app.exec())
@@ -1672,6 +1630,5 @@ def main() -> None:
     except Exception:
         logger.critical("Fatal error during startup", exc_info=True)
         file_handler.flush()
-        _open_file_in_default_app(config.get('_log_file_path', 'qbiremo_enhanced.log'))
+        _open_file_in_default_app(config.get("_log_file_path", "qbiremo_enhanced.log"))
         raise
-

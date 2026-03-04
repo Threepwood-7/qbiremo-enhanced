@@ -11,11 +11,13 @@ class TorrentFileEntry(TypedDict):
     progress: float
     priority: int
 
+
 class TorrentCacheEntry(TypedDict):
     """Cached content entry for one torrent hash."""
 
     state: str
     files: list[TorrentFileEntry]
+
 
 class TrackerRow(TypedDict, total=False):
     """One tracker row rendered in the Trackers tab."""
@@ -29,6 +31,7 @@ class TrackerRow(TypedDict, total=False):
     num_leeches: int
     downloaded: int
     next_announce: int
+
 
 class PeerRow(TypedDict, total=False):
     """One peer row rendered in the Peers tab."""
@@ -47,6 +50,7 @@ class PeerRow(TypedDict, total=False):
     country_code: str
     connection: str
 
+
 class TrackerHealthRow(TypedDict):
     """Aggregated tracker health metrics for dashboard table rows."""
 
@@ -60,6 +64,7 @@ class TrackerHealthRow(TypedDict):
     avg_next_announce: str
     last_error: str
 
+
 class SessionTimelineSample(TypedDict):
     """One sampled timeline point used by session graph views."""
 
@@ -68,5 +73,3 @@ class SessionTimelineSample(TypedDict):
     up_bps: int
     active_count: int
     alt_enabled: bool
-
-

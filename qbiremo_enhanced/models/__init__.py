@@ -1,3 +1,1 @@
 """Shared domain typing models."""
-
-

@@ -2,9 +2,10 @@
 
 import html
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Any, cast
 
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -41,38 +42,36 @@ from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
 class DetailsContentController(WindowControllerBase):
     """Render selected torrent details, peers/trackers, and content tree."""
 
-    def _populate_content_tree(self, files: List[TorrentFileEntry]) -> None:
-        """Populate the content tab from cached/serialized file entries.
-
-        """
+    def _populate_content_tree(self, files: list[TorrentFileEntry]) -> None:
+        """Populate the content tab from cached/serialized file entries."""
         try:
             self.tree_files.clear()
 
             PRIORITY_NAMES = {0: "Skip", 1: "Normal", 6: "High", 7: "Maximum"}
 
             # Build a nested dict for directory structure
-            dir_nodes: Dict[str, QTreeWidgetItem] = {}
+            dir_nodes: dict[str, QTreeWidgetItem] = {}
             for f in files:
                 if isinstance(f, dict):
-                    name = str(f.get('name', '') or '')
-                    size = self._safe_int(f.get('size', 0), 0)
-                    progress = self._safe_float(f.get('progress', 0.0), 0.0)
-                    priority = self._safe_int(f.get('priority', 1), 1)
+                    name = str(f.get("name", "") or "")
+                    size = self._safe_int(f.get("size", 0), 0)
+                    progress = self._safe_float(f.get("progress", 0.0), 0.0)
+                    priority = self._safe_int(f.get("priority", 1), 1)
                 else:
-                    name = getattr(f, 'name', '') or ''
-                    size = getattr(f, 'size', 0)
-                    progress = getattr(f, 'progress', 0)
-                    priority = getattr(f, 'priority', 1)
+                    name = getattr(f, "name", "") or ""
+                    size = getattr(f, "size", 0)
+                    progress = getattr(f, "progress", 0)
+                    priority = getattr(f, "priority", 1)
 
                 if not name:
                     continue
 
-                parts = name.replace('\\', '/').split('/')
+                parts = name.replace("\\", "/").split("/")
                 parent = None
                 for i, part in enumerate(parts[:-1]):
-                    dir_key = '/'.join(parts[:i + 1])
+                    dir_key = "/".join(parts[: i + 1])
                     if dir_key not in dir_nodes:
-                        node = QTreeWidgetItem([part, '', '', ''])
+                        node = QTreeWidgetItem([part, "", "", ""])
                         node.setData(
                             0,
                             Qt.ItemDataRole.UserRole,
@@ -85,12 +84,14 @@ class DetailsContentController(WindowControllerBase):
                         dir_nodes[dir_key] = node
                     parent = dir_nodes[dir_key]
 
-                file_item = QTreeWidgetItem([
-                    parts[-1],
-                    format_size_mode(size, self.display_size_mode),
-                    f"{progress * 100:.1f}%",
-                    PRIORITY_NAMES.get(priority, str(priority))
-                ])
+                file_item = QTreeWidgetItem(
+                    [
+                        parts[-1],
+                        format_size_mode(size, self.display_size_mode),
+                        f"{progress * 100:.1f}%",
+                        PRIORITY_NAMES.get(priority, str(priority)),
+                    ]
+                )
                 file_item.setData(
                     0,
                     Qt.ItemDataRole.UserRole,
@@ -106,16 +107,12 @@ class DetailsContentController(WindowControllerBase):
             self._log("ERROR", f"Error populating file tree: {e}")
 
     def _on_content_filter_changed(self, text: str) -> None:
-        """Apply in-tab content filter for selected torrent files.
-
-        """
+        """Apply in-tab content filter for selected torrent files."""
         self.current_content_filter = normalize_filter_pattern(text)
         self._apply_content_filter()
 
     def _apply_content_filter(self) -> None:
-        """Apply content-file filter to currently loaded selected torrent files.
-
-        """
+        """Apply content-file filter to currently loaded selected torrent files."""
         try:
             files = self.current_content_files or []
             pattern = self.current_content_filter
@@ -130,9 +127,9 @@ class DetailsContentController(WindowControllerBase):
             if pattern:
                 filtered_files = []
                 for entry in files:
-                    name = str(entry.get('name', '') or '')
-                    normalized = name.replace('\\', '/')
-                    basename = normalized.rsplit('/', 1)[-1] if '/' in normalized else normalized
+                    name = str(entry.get("name", "") or "")
+                    normalized = name.replace("\\", "/")
+                    basename = normalized.rsplit("/", 1)[-1] if "/" in normalized else normalized
                     if matches_wildcard(basename, pattern) or matches_wildcard(normalized, pattern):
                         filtered_files.append(entry)
             else:
@@ -150,18 +147,20 @@ class DetailsContentController(WindowControllerBase):
             self._log("ERROR", f"Error applying content filter: {e}")
 
     def _show_cached_torrent_content(self, torrent_hash: str) -> None:
-        """Display content tree from local cache for selected torrent.
-
-        """
+        """Display content tree from local cache for selected torrent."""
         self.current_content_files = self._get_cached_files(torrent_hash)
         self._apply_content_filter()
 
-    def _set_table_item(self, row: int, col: int, text: str,
-                       align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft,
-                       sort_value: Optional[float] = None) -> None:
-        """Helper to set table item with alignment and optional numeric sort.
-
-        """
+    def _set_table_item(
+        self,
+        row: int,
+        col: int,
+        text: str,
+        align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignLeft,
+        sort_value: float | None = None,
+    ) -> None:
+        """Helper to set table item with alignment and optional numeric sort."""
+        item: QTableWidgetItem
         if sort_value is not None:
             item = NumericTableWidgetItem(str(text), sort_value)
         else:
@@ -170,9 +169,7 @@ class DetailsContentController(WindowControllerBase):
         self.tbl_torrents.setItem(row, col, item)
 
     def _copy_general_details(self) -> None:
-        """Copy general details panel content to clipboard.
-
-        """
+        """Copy general details panel content to clipboard."""
         text = self.txt_general_details.toPlainText().strip()
         if not text:
             return
@@ -181,9 +178,7 @@ class DetailsContentController(WindowControllerBase):
 
     @staticmethod
     def _details_table_has_data_rows(table: QTableWidget) -> bool:
-        """Return True when details table contains actual data rows (not info placeholder).
-
-        """
+        """Return True when details table contains actual data rows (not info placeholder)."""
         if table.rowCount() <= 0 or table.columnCount() <= 0:
             return False
         if table.columnCount() == 1:
@@ -194,9 +189,7 @@ class DetailsContentController(WindowControllerBase):
 
     @staticmethod
     def _details_table_column_index(table: QTableWidget, column_name: str) -> int:
-        """Find one details-table column index by header name (case-insensitive).
-
-        """
+        """Find one details-table column index by header name (case-insensitive)."""
         target = str(column_name or "").strip().lower()
         if not target:
             return -1
@@ -209,10 +202,8 @@ class DetailsContentController(WindowControllerBase):
         return -1
 
     @staticmethod
-    def _selected_table_row(table: QTableWidget) -> Optional[int]:
-        """Return first selected row index for table, if any.
-
-        """
+    def _selected_table_row(table: QTableWidget) -> int | None:
+        """Return first selected row index for table, if any."""
         sel_model = table.selectionModel()
         if sel_model:
             selected_rows = sel_model.selectedRows()
@@ -221,11 +212,11 @@ class DetailsContentController(WindowControllerBase):
         current = table.currentRow()
         return current if current >= 0 else None
 
-    def _details_table_to_tsv(self, table: QTableWidget, row_indexes: Optional[List[int]] = None) -> str:
-        """Serialize one details table subset to TSV (header + rows).
-
-        """
-        headers: List[str] = []
+    def _details_table_to_tsv(
+        self, table: QTableWidget, row_indexes: list[int] | None = None
+    ) -> str:
+        """Serialize one details table subset to TSV (header + rows)."""
+        headers: list[str] = []
         for col_idx in range(table.columnCount()):
             header = table.horizontalHeaderItem(col_idx)
             headers.append(str(header.text() if header else f"column_{col_idx}"))
@@ -233,7 +224,7 @@ class DetailsContentController(WindowControllerBase):
         rows = list(row_indexes) if row_indexes is not None else list(range(table.rowCount()))
         lines = ["\t".join(headers)]
         for row_idx in rows:
-            values: List[str] = []
+            values: list[str] = []
             for col_idx in range(table.columnCount()):
                 item = table.item(row_idx, col_idx)
                 values.append(str(item.text() if item else ""))
@@ -241,9 +232,7 @@ class DetailsContentController(WindowControllerBase):
         return "\n".join(lines)
 
     def _selected_peer_endpoint(self) -> str:
-        """Return selected peer endpoint as IP:port.
-
-        """
+        """Return selected peer endpoint as IP:port."""
         if not self._details_table_has_data_rows(self.tbl_peers):
             return ""
         row_idx = self._selected_table_row(self.tbl_peers)
@@ -263,9 +252,7 @@ class DetailsContentController(WindowControllerBase):
         return f"{ip_text}:{port_text}"
 
     def _copy_all_peers_info(self) -> None:
-        """Copy all currently visible peers rows (including headers) to clipboard.
-
-        """
+        """Copy all currently visible peers rows (including headers) to clipboard."""
         if not self._details_table_has_data_rows(self.tbl_peers):
             self._set_status("No peers info to copy")
             return
@@ -274,9 +261,7 @@ class DetailsContentController(WindowControllerBase):
         self._set_status("All peers info copied to clipboard")
 
     def _copy_selected_peer_info(self) -> None:
-        """Copy selected peer row (including headers) to clipboard.
-
-        """
+        """Copy selected peer row (including headers) to clipboard."""
         if not self._details_table_has_data_rows(self.tbl_peers):
             self._set_status("No peers info to copy")
             return
@@ -289,9 +274,7 @@ class DetailsContentController(WindowControllerBase):
         self._set_status("Peer info copied to clipboard")
 
     def _copy_selected_peer_ip_port(self) -> None:
-        """Copy selected peer endpoint to clipboard.
-
-        """
+        """Copy selected peer endpoint to clipboard."""
         endpoint = self._selected_peer_endpoint()
         if not endpoint:
             self._set_status("Select one peer with valid IP and port")
@@ -300,38 +283,34 @@ class DetailsContentController(WindowControllerBase):
         self._set_status("Peer IP:port copied to clipboard")
 
     def _build_peers_context_menu(self) -> QMenu:
-        """Build context menu for peers table.
-
-        """
+        """Build context menu for peers table."""
         menu = QMenu(self)
         has_data = self._details_table_has_data_rows(self.tbl_peers)
         has_selection = has_data and self._selected_table_row(self.tbl_peers) is not None
         endpoint = self._selected_peer_endpoint()
         has_endpoint = bool(endpoint)
 
-        action_copy_all = menu.addAction("Copy All Peers Info")
+        action_copy_all = cast(QAction, menu.addAction("Copy All Peers Info"))
         action_copy_all.triggered.connect(self._copy_all_peers_info)
         action_copy_all.setEnabled(has_data)
 
-        action_copy_peer = menu.addAction("Copy Peer Info")
+        action_copy_peer = cast(QAction, menu.addAction("Copy Peer Info"))
         action_copy_peer.triggered.connect(self._copy_selected_peer_info)
         action_copy_peer.setEnabled(has_selection)
 
-        action_copy_ip_port = menu.addAction("Copy Peer IP:port")
+        action_copy_ip_port = cast(QAction, menu.addAction("Copy Peer IP:port"))
         action_copy_ip_port.triggered.connect(self._copy_selected_peer_ip_port)
         action_copy_ip_port.setEnabled(has_endpoint)
 
         menu.addSeparator()
 
-        action_ban = menu.addAction("Ban Peer")
+        action_ban = cast(QAction, menu.addAction("Ban Peer"))
         action_ban.triggered.connect(self._ban_selected_peer)
         action_ban.setEnabled(has_endpoint)
         return menu
 
     def _show_peers_context_menu(self, pos: QPoint) -> None:
-        """Show peers context menu and keep right-clicked row selected.
-
-        """
+        """Show peers context menu and keep right-clicked row selected."""
         row_idx = self.tbl_peers.rowAt(pos.y())
         if row_idx >= 0:
             self.tbl_peers.selectRow(row_idx)
@@ -339,9 +318,7 @@ class DetailsContentController(WindowControllerBase):
         menu.exec(self.tbl_peers.viewport().mapToGlobal(pos))
 
     def _ban_selected_peer(self) -> None:
-        """Ban selected peer endpoint via qBittorrent API.
-
-        """
+        """Ban selected peer endpoint via qBittorrent API."""
         endpoint = self._selected_peer_endpoint()
         if not endpoint:
             self._set_status("Select one peer with valid IP and port")
@@ -367,9 +344,7 @@ class DetailsContentController(WindowControllerBase):
 
     @staticmethod
     def _display_detail_value(value: object, fallback: str = "N/A") -> str:
-        """Normalize one detail value for display.
-
-        """
+        """Normalize one detail value for display."""
         if value is None:
             return fallback
         if isinstance(value, str):
@@ -379,11 +354,9 @@ class DetailsContentController(WindowControllerBase):
 
     def _build_general_details_html(
         self,
-        sections: List[Tuple[str, List[Tuple[str, object]]]],
+        sections: list[tuple[str, list[tuple[str, object]]]],
     ) -> str:
-        """Build rich read-only HTML layout for the General details panel.
-
-        """
+        """Build rich read-only HTML layout for the General details panel."""
         chunks = ["<html><body>"]
         for title, rows in sections:
             chunks.append(f"<h3>{html.escape(str(title))}</h3>")
@@ -392,16 +365,14 @@ class DetailsContentController(WindowControllerBase):
                 key_text = html.escape(str(key))
                 value_text = html.escape(self._display_detail_value(value))
                 chunks.append(
-                    f"<tr><td class=\"key\">{key_text}</td><td class=\"value\">{value_text}</td></tr>"
+                    f'<tr><td class="key">{key_text}</td><td class="value">{value_text}</td></tr>'
                 )
             chunks.append("</table>")
         chunks.append("</body></html>")
         return "".join(chunks)
 
     def _set_torrent_edit_enabled(self, enabled: bool, message: str) -> None:
-        """Enable/disable torrent edit controls and update state message.
-
-        """
+        """Enable/disable torrent edit controls and update state message."""
         self.lbl_torrent_edit_state.setText(str(message or ""))
         enabled_flag = bool(enabled)
         self.txt_torrent_edit_name.setEnabled(enabled_flag)
@@ -419,9 +390,7 @@ class DetailsContentController(WindowControllerBase):
         self._update_torrent_edit_path_browse_buttons()
 
     def _clear_torrent_edit_panel(self, message: str) -> None:
-        """Reset editable torrent fields.
-
-        """
+        """Reset editable torrent fields."""
         self._torrent_edit_original = {}
         self.txt_torrent_edit_name.clear()
         self.chk_torrent_edit_auto_tmm.setCheckState(Qt.CheckState.PartiallyChecked)
@@ -437,10 +406,10 @@ class DetailsContentController(WindowControllerBase):
         self._set_torrent_edit_enabled(False, message)
 
     def _refresh_torrent_edit_categories(self, current_category: str = "") -> None:
-        """Refresh category combo options while preserving text selection.
-
-        """
-        current_text = str(current_category or self.cmb_torrent_edit_category.currentText() or "").strip()
+        """Refresh category combo options while preserving text selection."""
+        current_text = str(
+            current_category or self.cmb_torrent_edit_category.currentText() or ""
+        ).strip()
         self.cmb_torrent_edit_category.blockSignals(True)
         self.cmb_torrent_edit_category.clear()
         self.cmb_torrent_edit_category.addItems([""] + self.categories)
@@ -452,10 +421,8 @@ class DetailsContentController(WindowControllerBase):
         self.cmb_torrent_edit_category.blockSignals(False)
 
     @staticmethod
-    def _torrent_auto_management_value(torrent: object) -> Optional[bool]:
-        """Extract automatic torrent management state when available.
-
-        """
+    def _torrent_auto_management_value(torrent: object) -> bool | None:
+        """Extract automatic torrent management state when available."""
         for key in (
             "auto_tmm",
             "auto_management",
@@ -477,9 +444,7 @@ class DetailsContentController(WindowControllerBase):
         return None
 
     def _populate_torrent_edit_panel(self, torrent: object) -> None:
-        """Populate the editable torrent panel from selected torrent data.
-
-        """
+        """Populate the editable torrent panel from selected torrent data."""
         torrent_name = str(getattr(torrent, "name", "") or "").strip()
         auto_tmm = self._torrent_auto_management_value(torrent)
         category = str(getattr(torrent, "category", "") or "").strip()
@@ -523,15 +488,11 @@ class DetailsContentController(WindowControllerBase):
 
     @staticmethod
     def _normalize_tags_csv(value: str) -> str:
-        """Normalize tag CSV to comma-separated string without extra spaces.
-
-        """
+        """Normalize tag CSV to comma-separated string without extra spaces."""
         return ",".join(parse_tags(value))
 
     def _add_tags_to_torrent_edit(self) -> None:
-        """Append selected tags from a multi-select dialog into edit tags field.
-
-        """
+        """Append selected tags from a multi-select dialog into edit tags field."""
         available_tags = sorted(
             {str(tag).strip() for tag in list(self.tags or []) if str(tag).strip()},
             key=lambda value: value.lower(),
@@ -552,10 +513,10 @@ class DetailsContentController(WindowControllerBase):
                 merged_tags.append(normalized_tag)
         self.txt_torrent_edit_tags.setText(", ".join(merged_tags))
 
-    def _pick_tags_for_torrent_edit(self, available_tags: List[str], selected_tags: List[str]) -> Optional[List[str]]:
-        """Show multi-select picker for known tags and return selected values.
-
-        """
+    def _pick_tags_for_torrent_edit(
+        self, available_tags: list[str], selected_tags: list[str]
+    ) -> list[str] | None:
+        """Show multi-select picker for known tags and return selected values."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Tags")
         parent_rect = self.frameGeometry()
@@ -592,9 +553,7 @@ class DetailsContentController(WindowControllerBase):
         return [item.text().strip() for item in list_widget.selectedItems() if item.text().strip()]
 
     def _path_exists_on_local_machine(self, raw_path: object) -> bool:
-        """Return True when a provided path exists on this machine.
-
-        """
+        """Return True when a provided path exists on this machine."""
         candidate = self._expand_local_path(raw_path)
         if candidate is None:
             return False
@@ -604,24 +563,20 @@ class DetailsContentController(WindowControllerBase):
             return False
 
     def _update_torrent_edit_path_browse_buttons(self) -> None:
-        """Show browse buttons only for paths that exist on this machine.
-
-        """
+        """Show browse buttons only for paths that exist on this machine."""
         save_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_save_path.text())
-        incomplete_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_incomplete_path.text())
+        incomplete_exists = self._path_exists_on_local_machine(
+            self.txt_torrent_edit_incomplete_path.text()
+        )
         self.btn_torrent_edit_browse_save_path.setVisible(save_exists)
         self.btn_torrent_edit_browse_incomplete_path.setVisible(incomplete_exists)
 
     def _on_detail_tab_changed(self, _index: int) -> None:
-        """React to details tab switches that affect auto-refresh policy.
-
-        """
+        """React to details tab switches that affect auto-refresh policy."""
         self._sync_auto_refresh_timer_state()
 
     def _is_torrent_edit_tab_active(self) -> bool:
-        """Return True when Edit tab is selected and active for editing.
-
-        """
+        """Return True when Edit tab is selected and active for editing."""
         if not self.detail_tabs.isEnabled():
             return False
         if self.tab_torrent_edit is None:
@@ -632,9 +587,7 @@ class DetailsContentController(WindowControllerBase):
 
     @staticmethod
     def _detail_cell_text(value: object) -> str:
-        """Render one trackers/peers cell value to text.
-
-        """
+        """Render one trackers/peers cell value to text."""
         if value is None:
             return ""
         if isinstance(value, (dict, list, tuple, set)):
@@ -645,10 +598,8 @@ class DetailsContentController(WindowControllerBase):
         return str(value)
 
     @staticmethod
-    def _detail_sort_value(value: object) -> Optional[float]:
-        """Return numeric sort value when possible.
-
-        """
+    def _detail_sort_value(value: object) -> float | None:
+        """Return numeric sort value when possible."""
         if isinstance(value, bool):
             return 1.0 if value else 0.0
         if isinstance(value, (int, float)):
@@ -664,10 +615,8 @@ class DetailsContentController(WindowControllerBase):
         return None
 
     @staticmethod
-    def _build_details_columns(rows: List[Dict[str, object]], preferred: List[str]) -> List[str]:
-        """Build ordered column list with preferred first, then remaining keys.
-
-        """
+    def _build_details_columns(rows: list[dict[str, object]], preferred: list[str]) -> list[str]:
+        """Build ordered column list with preferred first, then remaining keys."""
         key_set = set()
         for row in rows:
             key_set.update(str(k) for k in row.keys())
@@ -677,9 +626,7 @@ class DetailsContentController(WindowControllerBase):
         return ordered + remainder
 
     def _set_details_table_message(self, table: QTableWidget, message: str) -> None:
-        """Show one-line status message inside details table.
-
-        """
+        """Show one-line status message inside details table."""
         table.setSortingEnabled(False)
         table.clearContents()
         table.setRowCount(1)
@@ -690,11 +637,10 @@ class DetailsContentController(WindowControllerBase):
         table.setItem(0, 0, item)
         table.horizontalHeader().setStretchLastSection(True)
 
-    def _populate_details_table(self, table: QTableWidget, rows: List[Dict[str, object]],
-                                preferred_columns: List[str]) -> None:
-        """Populate one details table (trackers/peers) with dynamic columns.
-
-        """
+    def _populate_details_table(
+        self, table: QTableWidget, rows: list[dict[str, object]], preferred_columns: list[str]
+    ) -> None:
+        """Populate one details table (trackers/peers) with dynamic columns."""
         if not rows:
             self._set_details_table_message(table, "No data available.")
             return
@@ -712,6 +658,7 @@ class DetailsContentController(WindowControllerBase):
                 raw_value = row.get(key)
                 text = self._detail_cell_text(raw_value)
                 sort_value = self._detail_sort_value(raw_value)
+                item: QTableWidgetItem
                 if sort_value is not None:
                     item = NumericTableWidgetItem(text, sort_value)
                     align = Qt.AlignmentFlag.AlignRight
@@ -726,16 +673,12 @@ class DetailsContentController(WindowControllerBase):
         table.horizontalHeader().setStretchLastSection(True)
 
     def _selected_torrent_hash(self) -> str:
-        """Return selected torrent hash, or empty string when none selected.
-
-        """
+        """Return selected torrent hash, or empty string when none selected."""
         selected = getattr(self, "_selected_torrent", None)
         return str(getattr(selected, "hash", "") or "")
 
     def _load_selected_torrent_network_details(self, torrent_hash: str) -> None:
-        """Load full trackers and peers information for selected torrent.
-
-        """
+        """Load full trackers and peers information for selected torrent."""
         self._set_details_table_message(self.tbl_trackers, "Loading trackers...")
         self._set_details_table_message(self.tbl_peers, "Loading peers...")
 
@@ -743,68 +686,81 @@ class DetailsContentController(WindowControllerBase):
             "load_selected_trackers",
             self._fetch_selected_torrent_trackers,
             lambda r, h=torrent_hash: self._on_selected_trackers_loaded(h, r),
-            torrent_hash
+            torrent_hash,
         )
 
-    def _on_selected_trackers_loaded(self, torrent_hash: str, result: Dict) -> None:
-        """Populate Trackers table and then load Peers for same selection.
-
-        """
+    def _on_selected_trackers_loaded(self, torrent_hash: str, result: dict) -> None:
+        """Populate Trackers table and then load Peers for same selection."""
         if self._selected_torrent_hash() != torrent_hash:
             return
 
-        if result.get('success'):
-            rows = result.get('data', []) or []
+        if result.get("success"):
+            rows = result.get("data", []) or []
             self._populate_details_table(
                 self.tbl_trackers,
                 rows,
-                ["url", "status", "tier", "num_peers", "num_seeds", "num_leeches", "num_downloaded", "msg"]
+                [
+                    "url",
+                    "status",
+                    "tier",
+                    "num_peers",
+                    "num_seeds",
+                    "num_leeches",
+                    "num_downloaded",
+                    "msg",
+                ],
             )
         else:
-            error = result.get('error', 'Unknown error')
+            error = result.get("error", "Unknown error")
             self._set_details_table_message(self.tbl_trackers, f"Failed to load trackers: {error}")
 
         self.details_api_queue.add_task(
             "load_selected_peers",
             self._fetch_selected_torrent_peers,
             lambda r, h=torrent_hash: self._on_selected_peers_loaded(h, r),
-            torrent_hash
+            torrent_hash,
         )
 
-    def _on_selected_peers_loaded(self, torrent_hash: str, result: Dict) -> None:
-        """Populate Peers table for currently selected torrent.
-
-        """
+    def _on_selected_peers_loaded(self, torrent_hash: str, result: dict) -> None:
+        """Populate Peers table for currently selected torrent."""
         if self._selected_torrent_hash() != torrent_hash:
             return
 
-        if result.get('success'):
-            rows = result.get('data', []) or []
+        if result.get("success"):
+            rows = result.get("data", []) or []
             self._populate_details_table(
                 self.tbl_peers,
                 rows,
                 [
-                    "peer_id", "ip", "port", "client", "connection",
-                    "country", "country_code", "flags", "flags_desc",
-                    "progress", "dl_speed", "up_speed",
-                    "downloaded", "uploaded", "relevance", "files"
-                ]
+                    "peer_id",
+                    "ip",
+                    "port",
+                    "client",
+                    "connection",
+                    "country",
+                    "country_code",
+                    "flags",
+                    "flags_desc",
+                    "progress",
+                    "dl_speed",
+                    "up_speed",
+                    "downloaded",
+                    "uploaded",
+                    "relevance",
+                    "files",
+                ],
             )
         else:
-            error = result.get('error', 'Unknown error')
+            error = result.get("error", "Unknown error")
             self._set_details_table_message(self.tbl_peers, f"Failed to load peers: {error}")
 
     def _set_details_panels_enabled(self, enabled: bool) -> None:
-        """Enable/disable bottom details tabs.
-
-        """
+        """Enable/disable bottom details tabs."""
         self.detail_tabs.setEnabled(bool(enabled))
         self._sync_auto_refresh_timer_state()
 
     def _clear_details_panels(self, reason: str) -> None:
-        """Clear all details panels with a reason message for trackers/peers.
-
-        """
+        """Clear all details panels with a reason message for trackers/peers."""
         self.txt_general_details.clear()
         self._set_details_table_message(self.tbl_trackers, reason)
         self._set_details_table_message(self.tbl_peers, reason)
@@ -817,9 +773,7 @@ class DetailsContentController(WindowControllerBase):
         self.txt_content_filter.blockSignals(previous)
 
     def _on_torrent_selected(self) -> None:
-        """Handle torrent selection in table.
-
-        """
+        """Handle torrent selection in table."""
         selected_hashes = self._get_selected_torrent_hashes()
         if not selected_hashes:
             self._selected_torrent = None
@@ -848,69 +802,120 @@ class DetailsContentController(WindowControllerBase):
             self._display_torrent_details(torrent)
 
     def _display_torrent_details(self, torrent: object) -> None:
-        """Display detailed information about selected torrent.
-
-        """
-        self._selected_torrent = torrent
+        """Display detailed information about selected torrent."""
+        self._selected_torrent = cast(Any, torrent)
         self._set_details_panels_enabled(True)
         try:
-            tags_list = parse_tags(getattr(torrent, 'tags', None))
-            tags_str = ', '.join(tags_list) if tags_list else 'None'
+            tags_list = parse_tags(getattr(torrent, "tags", None))
+            tags_str = ", ".join(tags_list) if tags_list else "None"
 
-            completion_on = getattr(torrent, 'completion_on', 0)
-            last_activity = getattr(torrent, 'last_activity', 0)
-            private_value = getattr(torrent, 'private', None)
-            private_str = 'Yes' if private_value else ('No' if private_value is False else 'N/A')
-            num_files = getattr(torrent, 'num_files', 'N/A')
-            content_path = self._display_detail_value(getattr(torrent, 'content_path', None))
-            tracker_url = getattr(torrent, 'tracker', '') or ''
-            tracker_host = self._tracker_display_text(tracker_url) or 'N/A'
-            eta = self._safe_int(getattr(torrent, 'eta', 0), 0)
-            eta_str = format_eta(eta) if eta > 0 else 'N/A'
-            progress_pct = self._safe_float(getattr(torrent, 'progress', 0.0), 0.0) * 100.0
-            ratio = self._safe_float(getattr(torrent, 'ratio', 0.0), 0.0)
+            completion_on = getattr(torrent, "completion_on", 0)
+            last_activity = getattr(torrent, "last_activity", 0)
+            private_value = getattr(torrent, "private", None)
+            private_str = "Yes" if private_value else ("No" if private_value is False else "N/A")
+            num_files = getattr(torrent, "num_files", "N/A")
+            content_path = self._display_detail_value(getattr(torrent, "content_path", None))
+            tracker_url = getattr(torrent, "tracker", "") or ""
+            tracker_host = self._tracker_display_text(tracker_url) or "N/A"
+            eta = self._safe_int(getattr(torrent, "eta", 0), 0)
+            eta_str = format_eta(eta) if eta > 0 else "N/A"
+            progress_pct = self._safe_float(getattr(torrent, "progress", 0.0), 0.0) * 100.0
+            ratio = self._safe_float(getattr(torrent, "ratio", 0.0), 0.0)
 
-            sections = [
-                ("GENERAL", [
-                    ("Name", getattr(torrent, 'name', None)),
-                    ("Hash", getattr(torrent, 'hash', None)),
-                    ("State", getattr(torrent, 'state', None)),
-                    ("Size", format_size_mode(getattr(torrent, 'size', 0), self.display_size_mode)),
-                    ("Total Size", format_size_mode(getattr(torrent, 'total_size', 0), self.display_size_mode)),
-                    ("Progress", f"{progress_pct:.2f}%"),
-                    ("Private", private_str),
-                    ("Files", num_files),
-                ]),
-                ("TRANSFER", [
-                    ("Downloaded", format_size_mode(getattr(torrent, 'downloaded', 0), self.display_size_mode)),
-                    ("Uploaded", format_size_mode(getattr(torrent, 'uploaded', 0), self.display_size_mode)),
-                    ("Download Speed", format_speed_mode(getattr(torrent, 'dlspeed', 0), self.display_speed_mode)),
-                    ("Upload Speed", format_speed_mode(getattr(torrent, 'upspeed', 0), self.display_speed_mode)),
-                    ("Ratio", f"{ratio:.3f}"),
-                    ("ETA", eta_str),
-                ]),
-                ("PEERS", [
-                    ("Seeds", f"{getattr(torrent, 'num_seeds', 0)} ({getattr(torrent, 'num_complete', 0)})"),
-                    ("Peers", f"{getattr(torrent, 'num_leechs', 0)} ({getattr(torrent, 'num_incomplete', 0)})"),
-                ]),
-                ("METADATA", [
-                    ("Tracker Host", tracker_host),
-                    ("Tracker URL", tracker_url or 'N/A'),
-                    ("Category", getattr(torrent, 'category', '') or 'None'),
-                    ("Tags", tags_str),
-                    ("Added On", format_datetime(getattr(torrent, 'added_on', 0))),
-                    ("Completion On", format_datetime(completion_on) if completion_on > 0 else 'N/A'),
-                    ("Last Activity", format_datetime(last_activity) if last_activity > 0 else 'N/A'),
-                    ("Save Path", getattr(torrent, 'save_path', None)),
-                    ("Content Path", content_path),
-                ]),
+            sections: list[tuple[str, list[tuple[str, object]]]] = [
+                (
+                    "GENERAL",
+                    [
+                        ("Name", getattr(torrent, "name", None)),
+                        ("Hash", getattr(torrent, "hash", None)),
+                        ("State", getattr(torrent, "state", None)),
+                        (
+                            "Size",
+                            format_size_mode(getattr(torrent, "size", 0), self.display_size_mode),
+                        ),
+                        (
+                            "Total Size",
+                            format_size_mode(
+                                getattr(torrent, "total_size", 0), self.display_size_mode
+                            ),
+                        ),
+                        ("Progress", f"{progress_pct:.2f}%"),
+                        ("Private", private_str),
+                        ("Files", num_files),
+                    ],
+                ),
+                (
+                    "TRANSFER",
+                    [
+                        (
+                            "Downloaded",
+                            format_size_mode(
+                                getattr(torrent, "downloaded", 0), self.display_size_mode
+                            ),
+                        ),
+                        (
+                            "Uploaded",
+                            format_size_mode(
+                                getattr(torrent, "uploaded", 0), self.display_size_mode
+                            ),
+                        ),
+                        (
+                            "Download Speed",
+                            format_speed_mode(
+                                getattr(torrent, "dlspeed", 0), self.display_speed_mode
+                            ),
+                        ),
+                        (
+                            "Upload Speed",
+                            format_speed_mode(
+                                getattr(torrent, "upspeed", 0), self.display_speed_mode
+                            ),
+                        ),
+                        ("Ratio", f"{ratio:.3f}"),
+                        ("ETA", eta_str),
+                    ],
+                ),
+                (
+                    "PEERS",
+                    [
+                        (
+                            "Seeds",
+                            f"{getattr(torrent, 'num_seeds', 0)} ({getattr(torrent, 'num_complete', 0)})",
+                        ),
+                        (
+                            "Peers",
+                            f"{getattr(torrent, 'num_leechs', 0)} ({getattr(torrent, 'num_incomplete', 0)})",
+                        ),
+                    ],
+                ),
+                (
+                    "METADATA",
+                    [
+                        ("Tracker Host", tracker_host),
+                        ("Tracker URL", tracker_url or "N/A"),
+                        ("Category", getattr(torrent, "category", "") or "None"),
+                        ("Tags", tags_str),
+                        ("Added On", format_datetime(getattr(torrent, "added_on", 0))),
+                        (
+                            "Completion On",
+                            format_datetime(completion_on) if completion_on > 0 else "N/A",
+                        ),
+                        (
+                            "Last Activity",
+                            format_datetime(last_activity) if last_activity > 0 else "N/A",
+                        ),
+                        ("Save Path", getattr(torrent, "save_path", None)),
+                        ("Content Path", content_path),
+                    ],
+                ),
             ]
             self.txt_general_details.setHtml(self._build_general_details_html(sections))
-            self._load_selected_torrent_network_details(str(torrent.hash))
+            torrent_hash = str(getattr(torrent, "hash", "") or "")
+            self._load_selected_torrent_network_details(torrent_hash)
             self._populate_torrent_edit_panel(torrent)
 
             # Show file content from local cache
-            self._show_cached_torrent_content(torrent.hash)
+            self._show_cached_torrent_content(torrent_hash)
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error displaying torrent details: {e}")
             self.txt_general_details.setPlainText(f"Error displaying details: {e}")
@@ -919,9 +924,7 @@ class DetailsContentController(WindowControllerBase):
             self._clear_torrent_edit_panel("Failed to load torrent for editing.")
 
     def _copy_torrent_hash(self) -> None:
-        """Copy selected torrent hash to clipboard.
-
-        """
+        """Copy selected torrent hash to clipboard."""
         hashes = self._get_selected_torrent_hashes()
         if hashes:
             QApplication.clipboard().setText("\n".join(hashes))
@@ -931,36 +934,30 @@ class DetailsContentController(WindowControllerBase):
                 self._set_status(f"{len(hashes)} hashes copied to clipboard")
 
     def _browse_torrent_edit_save_path(self) -> None:
-        """Browse for a new torrent save path.
-
-        """
+        """Browse for a new torrent save path."""
         initial = self.txt_torrent_edit_save_path.text().strip()
         selected = QFileDialog.getExistingDirectory(self, "Select Save Path", initial)
         if selected:
             self.txt_torrent_edit_save_path.setText(selected)
 
     def _browse_torrent_edit_incomplete_path(self) -> None:
-        """Browse for a new torrent incomplete save path.
-
-        """
+        """Browse for a new torrent incomplete save path."""
         initial = self.txt_torrent_edit_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(self, "Select Incomplete Save Path", initial)
         if selected:
             self.txt_torrent_edit_incomplete_path.setText(selected)
 
-    def _collect_selected_torrent_edit_updates(self) -> Dict[str, object]:
-        """Collect changed edit fields for currently selected torrent.
-
-        """
+    def _collect_selected_torrent_edit_updates(self) -> dict[str, object]:
+        """Collect changed edit fields for currently selected torrent."""
         original = dict(self._torrent_edit_original or {})
-        updates: Dict[str, object] = {}
+        updates: dict[str, object] = {}
 
         new_name = str(self.txt_torrent_edit_name.text() or "").strip()
         if new_name != str(original.get("name", "") or "").strip():
             updates["name"] = new_name
 
         auto_state = self.chk_torrent_edit_auto_tmm.checkState()
-        new_auto: Optional[bool]
+        new_auto: bool | None
         if auto_state == Qt.CheckState.PartiallyChecked:
             new_auto = None
         else:
@@ -998,9 +995,7 @@ class DetailsContentController(WindowControllerBase):
         return updates
 
     def _apply_selected_torrent_edits(self) -> None:
-        """Apply torrent edits for exactly one selected torrent.
-
-        """
+        """Apply torrent edits for exactly one selected torrent."""
         selected_hashes = self._get_selected_torrent_hashes()
         if len(selected_hashes) != 1:
             self._set_status("Select exactly one torrent to apply edits")
@@ -1036,5 +1031,3 @@ class DetailsContentController(WindowControllerBase):
             torrent_hash,
             updates,
         )
-
-

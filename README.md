@@ -351,7 +351,8 @@ Runtime dependencies: `PySide6 >=6.6.0`, `qbittorrent-api >=2024.1.54`.
 
 ### Dev/Test Requirements
 ```bash
-pip install -r requirements-dev.txt
+pip install -e .[dev]
+# or: pip install -r requirements-dev.txt
 ```
 
 ### Optional: Virtual Environment
@@ -446,9 +447,28 @@ python -m pytest -q
 Run the same static checks used in CI:
 ```bash
 python -m ruff check qbiremo_enhanced tests
-python -m mypy qbiremo_enhanced/models qbiremo_enhanced/types.py
+python -m ruff format --check qbiremo_enhanced tests
+python -m mypy
 python -m pytest -q
 ```
+
+### Quality Policy
+
+- `mypy` is the authoritative type-check gate in CI.
+- `pyright` is enforced in CI for the current scoped include set in `pyproject.toml`.
+- `ruff format` is mandatory and enforced in CI and pre-commit.
+
+### Pre-commit Setup
+
+```bash
+pip install -e .[dev]
+pre-commit install
+pre-commit install --hook-type pre-push
+```
+
+Local hook stages:
+- `pre-commit`: `ruff`, `ruff-format`
+- `pre-push`: `mypy`, `pyright`, `pytest -q`
 
 Current tests cover:
 - filters and cache behavior,

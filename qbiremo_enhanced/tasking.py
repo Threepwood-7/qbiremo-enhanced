@@ -1,20 +1,16 @@
-
 """Worker threads, API task queue, and API debug proxy."""
 
 import logging
 import sys
 import time
 import traceback
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import Protocol, cast
 
 import qbittorrentapi
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from .constants import G_APP_NAME
 from .types import TaskCallable, TaskCallback
-
-if TYPE_CHECKING:
-    from .main_window import MainWindow
 
 logger = logging.getLogger(G_APP_NAME)
 
@@ -35,13 +31,42 @@ RECOVERABLE_API_CALL_EXCEPTIONS = (
     ValueError,
 )
 
+
+class _ContextManagedClient(Protocol):
+    """Protocol for API clients that can be used as context managers."""
+
+    def __enter__(self) -> object: ...
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None: ...
+
+
+class _DebugLogOwner(Protocol):
+    """Protocol for objects that expose API debug logging hooks."""
+
+    def _debug_log_api_call(
+        self, method_name: str, args: tuple[object, ...], kwargs: dict[str, object]
+    ) -> None: ...
+
+    def _debug_log_api_error(self, method_name: str, error: Exception, elapsed: float) -> None: ...
+
+    def _debug_log_api_response(self, method_name: str, result: object, elapsed: float) -> None: ...
+
+
+class _EmittableSignal(Protocol):
+    """Protocol for Qt-style signal objects exposing `emit`."""
+
+    def emit(self, *args: object) -> None: ...
+
+
 class WorkerSignals(QObject):
     """Signals available from a running worker thread"""
+
     finished = Signal()
     error = Signal(tuple)
     result = Signal(object)
     progress = Signal(int)
     cancelled = Signal()
+
 
 class Worker(QRunnable):
     """Worker thread for background tasks with cancellation support"""
@@ -60,29 +85,41 @@ class Worker(QRunnable):
         """Mark this worker as cancelled."""
         self.is_cancelled = True
 
+    def _is_cancelled_now(self) -> bool:
+        """Read cancellation state with a callable boundary for thread-driven updates."""
+        return bool(self.is_cancelled)
+
+    def _safe_emit(self, signal: _EmittableSignal, *args: object) -> None:
+        """Emit one Qt signal and ignore deleted-source runtime teardown races."""
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            logger.debug("Skipped worker signal emit because signal source was deleted.")
+
     @Slot()
     def run(self) -> None:
         """Execute the worker callable and emit result/error/cancel signals."""
         was_cancelled = False
         try:
-            if self.is_cancelled:
+            if self._is_cancelled_now():
                 was_cancelled = True
                 return
             result = self.fn(*self.args, **self.kwargs)
-            if self.is_cancelled:
+            if self._is_cancelled_now():
                 was_cancelled = True
                 return
-            self.signals.result.emit(result)
+            self._safe_emit(self.signals.result, result)
         except Exception:
-            if self.is_cancelled:
+            if self._is_cancelled_now():
                 was_cancelled = True
             else:
                 exctype, value = sys.exc_info()[:2]
-                self.signals.error.emit((exctype, value, traceback.format_exc()))
+                self._safe_emit(self.signals.error, (exctype, value, traceback.format_exc()))
         finally:
             if was_cancelled:
-                self.signals.cancelled.emit()
-            self.signals.finished.emit()
+                self._safe_emit(self.signals.cancelled)
+            self._safe_emit(self.signals.finished)
+
 
 class APITaskQueue(QObject):
     """Manages queued API tasks with cancellation support"""
@@ -91,28 +128,23 @@ class APITaskQueue(QObject):
     task_failed = Signal(str, str)  # task_name, error_message
     task_cancelled = Signal(str)  # task_name
 
-    def __init__(self, parent: Optional[QObject] = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         """Initialize queue state and thread pool."""
         super().__init__(parent)
-        self.current_worker: Optional[Worker] = None
+        self.current_worker: Worker | None = None
         self.is_processing = False
         self.threadpool = QThreadPool()
-        self.current_task_name: Optional[str] = None
-        self.pending_task: Optional[
-            Tuple[
-                str,
-                TaskCallable,
-                Optional[TaskCallback],
-                Tuple[object, ...],
-                Dict[str, object],
-            ]
-        ] = None
+        self.current_task_name: str | None = None
+        self.pending_task: (
+            tuple[str, TaskCallable, TaskCallback | None, tuple[object, ...], dict[str, object]]
+            | None
+        ) = None
 
     def _start_task(
         self,
         task_name: str,
         fn: TaskCallable,
-        callback: Optional[TaskCallback],
+        callback: TaskCallback | None,
         *args: object,
         **kwargs: object,
     ) -> None:
@@ -141,16 +173,14 @@ class APITaskQueue(QObject):
         worker.signals.cancelled.connect(
             lambda _worker=worker: self._on_task_cancelled(_worker, task_name)
         )
-        worker.signals.finished.connect(
-            lambda _worker=worker: self._on_worker_finished(_worker)
-        )
+        worker.signals.finished.connect(lambda _worker=worker: self._on_worker_finished(_worker))
         self.threadpool.start(worker)
 
     def add_task(
         self,
         task_name: str,
         fn: TaskCallable,
-        callback: Optional[TaskCallback],
+        callback: TaskCallback | None,
         *args: object,
         **kwargs: object,
     ) -> None:
@@ -176,7 +206,7 @@ class APITaskQueue(QObject):
         self,
         worker: Worker,
         task_name: str,
-        callback: Optional[TaskCallback],
+        callback: TaskCallback | None,
         result: object,
     ) -> None:
         """Handle successful task completion for the active worker."""
@@ -197,7 +227,7 @@ class APITaskQueue(QObject):
         self,
         worker: Worker,
         task_name: str,
-        error: Tuple[type[BaseException], BaseException, str],
+        error: tuple[type[BaseException], BaseException, str],
     ) -> None:
         """Handle task failure for the active worker."""
         if worker is not self.current_worker:
@@ -239,24 +269,25 @@ class APITaskQueue(QObject):
             task_name, fn, callback, args, kwargs = pending
             self._start_task(task_name, fn, callback, *args, **kwargs)
 
+
 class _DebugAPIClientProxy:
     """Proxy that logs qBittorrent API calls and responses."""
 
-    def __init__(self, client: object, owner: "MainWindow") -> None:
+    def __init__(self, client: object, owner: _DebugLogOwner) -> None:
         """Wrap one API client and route debug logs via main window hooks."""
         self._client = client
         self._owner = owner
 
     def __enter__(self) -> "_DebugAPIClientProxy":
         """Enter wrapped context manager while preserving proxy behavior."""
-        entered = self._client.__enter__()
+        entered = cast(_ContextManagedClient, self._client).__enter__()
         if entered is self._client:
             return self
         return _DebugAPIClientProxy(entered, self._owner)
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         """Delegate context-manager exit to wrapped client."""
-        return self._client.__exit__(exc_type, exc, tb)
+        return bool(cast(_ContextManagedClient, self._client).__exit__(exc_type, exc, tb))
 
     def __getattr__(self, name: str) -> object:
         """Intercept callable attributes to add debug call/response/error logs."""
@@ -279,4 +310,3 @@ class _DebugAPIClientProxy:
             return result
 
         return _wrapped
-

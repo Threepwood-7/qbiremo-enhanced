@@ -15,6 +15,6 @@ class NumericTableWidgetItem(QTableWidgetItem):
         """Compare numeric sort keys when both items are numeric wrappers."""
         if isinstance(other, NumericTableWidgetItem):
             return self._sort_value < other._sort_value
-        return super().__lt__(other)
-
-
+        if isinstance(other, QTableWidgetItem):
+            return super().__lt__(other)
+        return False
