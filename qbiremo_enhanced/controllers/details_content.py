@@ -160,13 +160,33 @@ class DetailsContentController(WindowControllerBase):
         sort_value: float | None = None,
     ) -> None:
         """Helper to set table item with alignment and optional numeric sort."""
+        text_value = str(text)
+        target_alignment = align | Qt.AlignmentFlag.AlignVCenter
+        existing = self.tbl_torrents.item(row, col)
         item: QTableWidgetItem
+
         if sort_value is not None:
-            item = NumericTableWidgetItem(str(text), sort_value)
+            numeric_value = float(sort_value)
+            if isinstance(existing, NumericTableWidgetItem):
+                item = existing
+                if item.text() != text_value:
+                    item.setText(text_value)
+                if item.sort_value() != numeric_value:
+                    item.set_sort_value(numeric_value)
+            else:
+                item = NumericTableWidgetItem(text_value, numeric_value)
+                self.tbl_torrents.setItem(row, col, item)
         else:
-            item = QTableWidgetItem(str(text))
-        item.setTextAlignment(align | Qt.AlignmentFlag.AlignVCenter)
-        self.tbl_torrents.setItem(row, col, item)
+            if existing is None or isinstance(existing, NumericTableWidgetItem):
+                item = QTableWidgetItem(text_value)
+                self.tbl_torrents.setItem(row, col, item)
+            else:
+                item = existing
+                if item.text() != text_value:
+                    item.setText(text_value)
+
+        if int(item.textAlignment()) != int(target_alignment):
+            item.setTextAlignment(target_alignment)
 
     def _copy_general_details(self) -> None:
         """Copy general details panel content to clipboard."""

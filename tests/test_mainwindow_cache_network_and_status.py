@@ -836,3 +836,22 @@ def test_filter_tree_count_labels_do_not_invoke_api(window, make_torrent, monkey
     assert _find_filter_item(window.tree_filters, "status", "all").text(0) == "All (1)"
     assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (1)"
     assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (1)"
+
+
+def test_filter_tree_count_cache_updates_when_torrent_snapshot_is_replaced(window, make_torrent):
+    window.categories = ["movies"]
+    window.tags = ["tag1"]
+    window._update_category_tree()
+    window._update_tag_tree()
+
+    window.all_torrents = [
+        make_torrent(hash="h1", state="downloading", dlspeed=100, category="movies", tags="tag1")
+    ]
+    window._update_filter_tree_count_labels()
+    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (1)"
+    assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (1)"
+
+    window.all_torrents = [make_torrent(hash="h2", state="pausedDL", category="", tags="")]
+    window._update_filter_tree_count_labels()
+    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (0)"
+    assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (0)"

@@ -74,6 +74,8 @@ It combines:
   - `private`
 - Maintains and merges `rid` state for incremental sync updates.
 - Tracks and updates alt-speed-mode state from transfer API.
+- Auto-refresh default interval is `30s`.
+- Auto-refresh interval can be increased automatically after slow refresh cycles (API task or UI render cycle), capped at `600s`.
 
 ### Details Area (Tabs)
 - `General` tab:

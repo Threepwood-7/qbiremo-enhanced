@@ -85,6 +85,11 @@ def test_auto_refresh_menu_label_includes_current_interval(window):
     assert window.action_auto_refresh.text() == f"Enable &Auto-Refresh ({window.refresh_interval})"
 
 
+def test_default_refresh_interval_uses_new_baseline(window):
+    assert window.default_refresh_interval == 30
+    assert window.refresh_interval == 30
+
+
 def test_api_task_queue_ignores_stale_worker_completion(window):
     queue = window.api_queue
     active_worker = appmod.Worker(lambda **_kwargs: None)
@@ -341,6 +346,52 @@ def test_task_completion_does_not_bump_auto_refresh_interval_when_elapsed_is_not
     assert save_calls["count"] == 0
 
 
+def test_task_completion_bump_respects_auto_refresh_max_cap(window, monkeypatch):
+    window.auto_refresh_enabled = True
+    window.refresh_interval = 100
+    window._sync_auto_refresh_timer_state()
+    assert window.refresh_timer.interval() == 100000
+
+    save_calls = {"count": 0}
+    monkeypatch.setattr(
+        window,
+        "_save_refresh_settings",
+        lambda: save_calls.__setitem__("count", save_calls["count"] + 1),
+    )
+
+    window._on_task_completed("refresh_torrents", {"success": True, "elapsed": 160.0})
+
+    assert window.refresh_interval == 600
+    assert window.action_auto_refresh.text() == "Enable &Auto-Refresh (600)"
+    assert window.refresh_timer.interval() == 600000
+    assert save_calls["count"] == 1
+
+
+def test_ui_cycle_elapsed_can_bump_and_persist_auto_refresh_interval(window, monkeypatch):
+    window.auto_refresh_enabled = True
+    window.refresh_interval = 2
+    window._sync_auto_refresh_timer_state()
+    assert window.refresh_timer.interval() == 2000
+
+    save_calls = {"count": 0}
+    monkeypatch.setattr(
+        window,
+        "_save_refresh_settings",
+        lambda: save_calls.__setitem__("count", save_calls["count"] + 1),
+    )
+
+    window._maybe_bump_auto_refresh_interval_for_elapsed(
+        source="ui_refresh_cycle",
+        task_name="torrents_loaded",
+        elapsed_seconds=2.6,
+    )
+
+    assert window.refresh_interval == 11
+    assert window.action_auto_refresh.text() == "Enable &Auto-Refresh (11)"
+    assert window.refresh_timer.interval() == 11000
+    assert save_calls["count"] == 1
+
+
 def test_refresh_torrents_skips_reentry_while_request_is_in_progress(window, monkeypatch):
     calls = {"count": 0}
     monkeypatch.setattr(
@@ -390,6 +441,36 @@ def test_refresh_torrents_pauses_auto_refresh_timer_until_load_finishes(
     assert window._refresh_torrents_in_progress is False
     assert window.refresh_timer.isActive() is True
     assert window.refresh_timer.interval() == 5000
+
+
+def test_on_torrents_loaded_reports_ui_cycle_elapsed_for_interval_bump(
+    window, monkeypatch, make_torrent
+):
+    monkeypatch.setattr(window, "_get_cache_refresh_candidates", lambda **_kwargs: {})
+    monkeypatch.setattr(
+        window, "_load_selected_torrent_network_details", lambda *_args, **_kwargs: None
+    )
+
+    calls = {"source": "", "task_name": "", "elapsed_seconds": 0.0}
+    monkeypatch.setattr(
+        window,
+        "_maybe_bump_auto_refresh_interval_for_elapsed",
+        lambda source, task_name, elapsed_seconds: calls.update(
+            {
+                "source": source,
+                "task_name": task_name,
+                "elapsed_seconds": float(elapsed_seconds),
+            }
+        ),
+    )
+
+    window._on_torrents_loaded(
+        {"success": True, "data": [make_torrent(hash="h1", name="One")], "elapsed": 0.01}
+    )
+
+    assert calls["source"] == "ui_refresh_cycle"
+    assert calls["task_name"] == "torrents_loaded"
+    assert calls["elapsed_seconds"] >= 0.0
 
 
 def test_refresh_torrents_failure_resumes_auto_refresh_timer(window):

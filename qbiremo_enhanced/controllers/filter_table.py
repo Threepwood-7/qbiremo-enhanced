@@ -63,6 +63,51 @@ class _StayOpenOnToggleMenu(QMenu):
 class FilterTableController(WindowControllerBase):
     """Manage filter tree state and torrent table rendering."""
 
+    def _filter_count_snapshot_signature(self) -> tuple[int, int]:
+        """Return lightweight signature for current torrent snapshot."""
+        torrents = self.all_torrents if isinstance(self.all_torrents, list) else []
+        return (id(torrents), len(torrents))
+
+    def _invalidate_filter_count_cache(self) -> None:
+        """Invalidate cached status/category/tag count maps."""
+        self._filter_count_snapshot_signature_cached = (-1, -1)
+        self._status_filter_counts = {}
+        self._category_filter_counts = {}
+        self._tag_filter_counts = {}
+
+    def _ensure_filter_count_cache(self) -> None:
+        """Build cached status/category/tag counts for the current torrent snapshot."""
+        signature = self._filter_count_snapshot_signature()
+        if signature == getattr(self, "_filter_count_snapshot_signature_cached", (-1, -1)):
+            return
+
+        torrents = self.all_torrents if isinstance(self.all_torrents, list) else []
+        status_counts = {status: 0 for status in STATUS_FILTERS}
+        status_counts["all"] = len(torrents)
+        category_counts: dict[object, int] = {None: len(torrents)}
+        tag_counts: dict[object, int] = {None: len(torrents)}
+
+        status_filters = [status for status in STATUS_FILTERS if status != "all"]
+        for torrent in torrents:
+            for status in status_filters:
+                if self._torrent_matches_status_filter(torrent, status):
+                    status_counts[status] = status_counts.get(status, 0) + 1
+
+            category_key = str(getattr(torrent, "category", "") or "")
+            category_counts[category_key] = category_counts.get(category_key, 0) + 1
+
+            tags = parse_tags(getattr(torrent, "tags", None))
+            if not tags:
+                tag_counts[""] = tag_counts.get("", 0) + 1
+            else:
+                for tag in tags:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+        self._filter_count_snapshot_signature_cached = signature
+        self._status_filter_counts = status_counts
+        self._category_filter_counts = category_counts
+        self._tag_filter_counts = tag_counts
+
     def _is_filter_item_active(self, kind: str, value: object) -> bool:
         """Return whether a filter tree item is currently active."""
         if kind == "status":
@@ -368,39 +413,22 @@ class FilterTableController(WindowControllerBase):
 
     def _count_status_filter_matches(self, status_filter: str) -> int:
         """Count torrents matching one status filter using current in-memory torrent list."""
-        torrents = list(self.all_torrents or [])
-        if not torrents:
-            return 0
+        self._ensure_filter_count_cache()
         status = str(status_filter or "all").strip().lower()
-        if status == "all":
-            return len(torrents)
-        return sum(
-            1 for torrent in torrents if self._torrent_matches_status_filter(torrent, status)
-        )
+        return self._safe_int(getattr(self, "_status_filter_counts", {}).get(status, 0), 0)
 
     def _count_category_filter_matches(self, category_filter: object) -> int:
         """Count torrents matching one category filter using current in-memory torrent list."""
-        torrents = list(self.all_torrents or [])
-        if not torrents:
-            return 0
-        if category_filter is None:
-            return len(torrents)
-        return sum(
-            1
-            for torrent in torrents
-            if self._torrent_matches_category_filter(torrent, category_filter)
+        self._ensure_filter_count_cache()
+        return self._safe_int(
+            getattr(self, "_category_filter_counts", {}).get(category_filter, 0),
+            0,
         )
 
     def _count_tag_filter_matches(self, tag_filter: object) -> int:
         """Count torrents matching one tag filter using current in-memory torrent list."""
-        torrents = list(self.all_torrents or [])
-        if not torrents:
-            return 0
-        if tag_filter is None:
-            return len(torrents)
-        return sum(
-            1 for torrent in torrents if self._torrent_matches_tag_filter(torrent, tag_filter)
-        )
+        self._ensure_filter_count_cache()
+        return self._safe_int(getattr(self, "_tag_filter_counts", {}).get(tag_filter, 0), 0)
 
     def _status_filter_item_text(self, status_filter: str) -> str:
         """Build display text for one status filter row with live torrent count."""
@@ -434,6 +462,7 @@ class FilterTableController(WindowControllerBase):
         if not hasattr(self, "tree_filters"):
             return
         try:
+            self._ensure_filter_count_cache()
             for top_idx in range(self.tree_filters.topLevelItemCount()):
                 section = self.tree_filters.topLevelItem(top_idx)
                 if section is None:
@@ -1000,9 +1029,18 @@ class FilterTableController(WindowControllerBase):
 
     def _update_torrents_table(self) -> None:
         """Update the torrents table with filtered data."""
+        table = self.tbl_torrents
+        previous_sorting = table.isSortingEnabled()
+        previous_table_signals = table.blockSignals(True)
+        previous_updates_enabled = table.updatesEnabled()
+        table.setUpdatesEnabled(False)
+        selection_model = table.selectionModel()
+        previous_selection_signals = False
+        if selection_model is not None:
+            previous_selection_signals = selection_model.blockSignals(True)
         try:
-            self.tbl_torrents.setSortingEnabled(False)
-            self.tbl_torrents.setRowCount(len(self.filtered_torrents))
+            table.setSortingEnabled(False)
+            table.setRowCount(len(self.filtered_torrents))
 
             for row, torrent in enumerate(self.filtered_torrents):
                 try:
@@ -1015,8 +1053,13 @@ class FilterTableController(WindowControllerBase):
                     self._log("ERROR", f"Error updating row {row}: {e}")
                     continue
 
-            self.tbl_torrents.setSortingEnabled(True)
             self.lbl_count.setText(f"{len(self.filtered_torrents)} torrents")
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error updating torrents table: {e}")
             self.lbl_count.setText("0 torrents")
+        finally:
+            table.setSortingEnabled(previous_sorting)
+            if selection_model is not None:
+                selection_model.blockSignals(previous_selection_signals)
+            table.setUpdatesEnabled(previous_updates_enabled)
+            table.blockSignals(previous_table_signals)

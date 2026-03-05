@@ -2,6 +2,7 @@ import logging
 
 import qbiremo_enhanced.main_window as appmod
 from PySide6.QtCore import Qt
+from qbiremo_enhanced.widgets import NumericTableWidgetItem
 
 
 def _top_level_names(tree_widget):
@@ -68,6 +69,48 @@ def _table_first_cell(table):
         return ""
     item = table.item(0, 0)
     return item.text() if item else ""
+
+
+def test_update_torrents_table_reuses_items_and_updates_numeric_sort_values(
+    window, monkeypatch, make_torrent
+):
+    monkeypatch.setattr(
+        window, "_load_selected_torrent_network_details", lambda *_args, **_kwargs: None
+    )
+
+    name_col = window.torrent_column_index["name"]
+    dlspeed_col = window.torrent_column_index["dlspeed"]
+    private_col = window.torrent_column_index["private"]
+
+    window.filtered_torrents = [
+        make_torrent(hash="h1", name="Old Name", dlspeed=100, private=False),
+    ]
+    window._update_torrents_table()
+
+    name_item_before = window.tbl_torrents.item(0, name_col)
+    dlspeed_item_before = window.tbl_torrents.item(0, dlspeed_col)
+    private_item_before = window.tbl_torrents.item(0, private_col)
+    old_speed_text = dlspeed_item_before.text() if dlspeed_item_before else ""
+
+    window.filtered_torrents = [
+        make_torrent(hash="h1", name="New Name", dlspeed=250, private=True),
+    ]
+    window._update_torrents_table()
+
+    name_item_after = window.tbl_torrents.item(0, name_col)
+    dlspeed_item_after = window.tbl_torrents.item(0, dlspeed_col)
+    private_item_after = window.tbl_torrents.item(0, private_col)
+
+    assert name_item_after is name_item_before
+    assert dlspeed_item_after is dlspeed_item_before
+    assert private_item_after is private_item_before
+
+    assert name_item_after.text() == "New Name"
+    assert dlspeed_item_after.text() != old_speed_text
+    assert isinstance(dlspeed_item_after, NumericTableWidgetItem)
+    assert dlspeed_item_after.sort_value() == 250.0
+    assert isinstance(private_item_after, NumericTableWidgetItem)
+    assert private_item_after.sort_value() == 1.0
 
 
 def test_toggle_debug_logging_updates_state_and_persists(window, monkeypatch):

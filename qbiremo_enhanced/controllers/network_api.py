@@ -15,6 +15,7 @@ import qbittorrentapi
 from PySide6.QtCore import QTimer
 
 from ..constants import (
+    AUTO_REFRESH_INTERVAL_MAX,
     CACHE_MAX_AGE_DAYS,
     DEFAULT_HTTP_TIMEOUT_SECONDS,
     DEFAULT_REFRESH_INTERVAL,
@@ -1558,6 +1559,7 @@ class NetworkApiController(WindowControllerBase):
                 self._set_status(f"Error: {error}")
                 # Show empty table
                 self.all_torrents = []
+                self._invalidate_filter_count_cache()
                 self._update_filter_tree_count_labels()
                 self.filtered_torrents = []
                 self._update_window_title_speeds()
@@ -1565,9 +1567,11 @@ class NetworkApiController(WindowControllerBase):
                 self._update_torrents_table()
                 return
 
+            ui_cycle_start = time.perf_counter()
             previous_selected_hash = self._get_selected_torrent_hash()
             self._latest_torrent_fetch_remote_filtered = bool(result.get("remote_filtered", False))
             self.all_torrents = result.get("data", [])
+            self._invalidate_filter_count_cache()
             self._update_filter_tree_count_labels()
             if "alt_speed_mode" in result:
                 self._last_alt_speed_mode = bool(result.get("alt_speed_mode"))
@@ -1619,6 +1623,11 @@ class NetworkApiController(WindowControllerBase):
             self._apply_filters()
             self._select_first_torrent_after_refresh(previous_selected_hash)
             self._hide_progress()
+            self._maybe_bump_auto_refresh_interval_for_elapsed(
+                source="ui_refresh_cycle",
+                task_name="torrents_loaded",
+                elapsed_seconds=(time.perf_counter() - ui_cycle_start),
+            )
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._latest_torrent_fetch_remote_filtered = False
             self._log("ERROR", f"Exception in _on_torrents_loaded: {e}")
@@ -1626,6 +1635,7 @@ class NetworkApiController(WindowControllerBase):
             self._set_status(f"Error loading torrents: {e}")
             # Show empty table
             self.all_torrents = []
+            self._invalidate_filter_count_cache()
             self._update_filter_tree_count_labels()
             self.filtered_torrents = []
             self._update_window_title_speeds()
@@ -1769,21 +1779,24 @@ class NetworkApiController(WindowControllerBase):
         self._maybe_bump_auto_refresh_interval_from_api_elapsed(task_name, result)
         self._log("DEBUG", f"Task completed: {task_name}")
 
-    def _maybe_bump_auto_refresh_interval_from_api_elapsed(
-        self, task_name: str, result: object
+    def _maybe_bump_auto_refresh_interval_for_elapsed(
+        self,
+        source: str,
+        task_name: str,
+        elapsed_seconds: float,
     ) -> None:
-        """Increase auto-refresh interval when one API task exceeds current interval."""
-        if not isinstance(result, dict):
-            return
-        elapsed_seconds = self._safe_float(result.get("elapsed", 0.0), 0.0)
-        if elapsed_seconds <= 0:
+        """Increase auto-refresh interval when one measured cycle exceeds current interval."""
+        elapsed = self._safe_float(elapsed_seconds, 0.0)
+        if elapsed <= 0:
             return
 
         current_interval = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
-        if elapsed_seconds <= float(current_interval):
+        if elapsed <= float(current_interval):
             return
 
-        new_interval = max(current_interval, int(math.ceil(elapsed_seconds * 4.0)))
+        scaled_interval = int(math.ceil(elapsed * 4.0))
+        clamped_interval = min(AUTO_REFRESH_INTERVAL_MAX, max(1, scaled_interval))
+        new_interval = max(current_interval, clamped_interval)
         if new_interval <= current_interval:
             return
 
@@ -1795,9 +1808,22 @@ class NetworkApiController(WindowControllerBase):
             "INFO",
             (
                 "Auto-refresh interval bumped to "
-                f"{new_interval}s after slow API task {task_name} "
-                f"({elapsed_seconds:.2f}s)"
+                f"{new_interval}s after slow {source} {task_name} "
+                f"({elapsed:.2f}s)"
             ),
+        )
+
+    def _maybe_bump_auto_refresh_interval_from_api_elapsed(
+        self, task_name: str, result: object
+    ) -> None:
+        """Increase auto-refresh interval when one API task exceeds current interval."""
+        if not isinstance(result, dict):
+            return
+        elapsed_seconds = self._safe_float(result.get("elapsed", 0.0), 0.0)
+        self._maybe_bump_auto_refresh_interval_for_elapsed(
+            source="api_task",
+            task_name=task_name,
+            elapsed_seconds=elapsed_seconds,
         )
 
     def _on_task_failed(self, task_name: str, error_msg: str) -> None:

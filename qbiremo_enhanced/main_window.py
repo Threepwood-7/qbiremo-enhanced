@@ -236,6 +236,10 @@ class MainWindow(QMainWindow):
         self.tags = []
         self.trackers = []
         self.size_buckets = []
+        self._filter_count_snapshot_signature_cached = (-1, -1)
+        self._status_filter_counts: dict[str, int] = {}
+        self._category_filter_counts: dict[object, int] = {}
+        self._tag_filter_counts: dict[object, int] = {}
         self.torrent_columns = list(TORRENT_COLUMNS)
         self.torrent_column_index = {
             col["key"]: idx for idx, col in enumerate(self.torrent_columns)
