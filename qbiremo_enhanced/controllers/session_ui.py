@@ -11,6 +11,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QMainWindow,
+    QWidget,
 )
 
 from ..constants import (
@@ -99,7 +100,7 @@ class SessionUiController(WindowControllerBase):
             self._session_timeline_dialog.set_samples(list(self.session_timeline_history))
             return
 
-        dialog = SessionTimelineDialog(self)
+        dialog = SessionTimelineDialog(cast(QWidget | None, self))
         dialog.refresh_requested.connect(self._refresh_torrents)
         dialog.clear_requested.connect(self._clear_session_timeline_history)
         dialog.finished.connect(self._on_session_timeline_dialog_closed)
@@ -126,7 +127,7 @@ class SessionUiController(WindowControllerBase):
             self._request_tracker_health_refresh()
             return
 
-        dialog = TrackerHealthDialog(self)
+        dialog = TrackerHealthDialog(cast(QWidget | None, self))
         dialog.refresh_requested.connect(self._request_tracker_health_refresh)
         dialog.finished.connect(self._on_tracker_health_dialog_closed)
         self._tracker_health_dialog = cast(TrackerHealthDialog | None, dialog)

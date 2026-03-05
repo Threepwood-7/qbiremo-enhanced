@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..constants import (
@@ -668,7 +669,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._request_app_preferences_refresh()
             return
 
-        dialog = AppPreferencesDialog(self)
+        dialog = AppPreferencesDialog(cast(QWidget | None, self))
         dialog.apply_requested.connect(self._on_app_preferences_apply_requested)
         dialog.finished.connect(self._on_app_preferences_dialog_closed)
         self._app_preferences_dialog = cast(AppPreferencesDialog | None, dialog)
@@ -753,7 +754,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._request_friendly_add_preferences_refresh()
             return
 
-        dialog = FriendlyAddPreferencesDialog(self)
+        dialog = FriendlyAddPreferencesDialog(cast(QWidget | None, self))
         dialog.apply_requested.connect(self._on_friendly_add_preferences_apply_requested)
         dialog.finished.connect(self._on_friendly_add_preferences_dialog_closed)
         self._friendly_add_preferences_dialog = cast(FriendlyAddPreferencesDialog | None, dialog)
@@ -839,7 +840,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._request_speed_limits_profile()
             return
 
-        dialog = SpeedLimitsDialog(self)
+        dialog = SpeedLimitsDialog(cast(QWidget | None, self))
         dialog.refresh_requested.connect(self._request_speed_limits_profile)
         dialog.apply_requested.connect(self._on_speed_limits_apply_requested)
         dialog.finished.connect(self._on_speed_limits_dialog_closed)
@@ -1224,7 +1225,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._taxonomy_dialog.activateWindow()
             return
 
-        dialog = TaxonomyManagerDialog(self)
+        dialog = TaxonomyManagerDialog(cast(QWidget | None, self))
         dialog.set_taxonomy_data(self._taxonomy_category_data(), list(self.tags))
         dialog.create_category_requested.connect(self._on_taxonomy_create_category_requested)
         dialog.edit_category_requested.connect(self._on_taxonomy_edit_category_requested)
