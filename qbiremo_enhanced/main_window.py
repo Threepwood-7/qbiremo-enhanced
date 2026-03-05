@@ -242,6 +242,7 @@ class MainWindow(QMainWindow):
         self.column_visibility_actions: dict[str, QAction] = {}
         self.saved_torrent_views_menu: QMenu | None = None
         self._torrent_open_shortcuts: list[QShortcut] = []
+        self._torrent_sort_shortcuts: list[QShortcut] = []
         self._content_open_shortcuts: list[QShortcut] = []
         self.clipboard_monitor_enabled = False
         self.debug_logging_enabled = False
@@ -733,8 +734,53 @@ class MainWindow(QMainWindow):
             shortcut = QShortcut(QKeySequence(key_name), table)
             shortcut.activated.connect(self._open_selected_torrent_location)
             self._torrent_open_shortcuts.append(shortcut)
+        self._install_torrent_sort_shortcuts(table)
 
         return table
+
+    def _install_torrent_sort_shortcuts(self, table: QTableWidget) -> None:
+        """Install torrent-table sorting shortcuts scoped to the table widget."""
+        shortcut_specs: tuple[tuple[str, str, Qt.SortOrder], ...] = (
+            ("Ctrl+F1", "ratio", Qt.SortOrder.DescendingOrder),
+            ("Ctrl+Alt+F1", "uploaded", Qt.SortOrder.DescendingOrder),
+            ("Ctrl+F2", "progress", Qt.SortOrder.DescendingOrder),
+            ("Ctrl+Alt+F2", "eta", Qt.SortOrder.AscendingOrder),
+            ("Ctrl+F3", "name", Qt.SortOrder.AscendingOrder),
+            ("Ctrl+Alt+F3", "state", Qt.SortOrder.AscendingOrder),
+            ("Ctrl+F5", "total_size", Qt.SortOrder.DescendingOrder),
+            ("Ctrl+Alt+F5", "size", Qt.SortOrder.DescendingOrder),
+            ("Ctrl+F6", "added_on", Qt.SortOrder.DescendingOrder),
+            ("Ctrl+Alt+F6", "completion_on", Qt.SortOrder.DescendingOrder),
+        )
+        self._torrent_sort_shortcuts = []
+        for key_name, column_key, default_order in shortcut_specs:
+            shortcut = QShortcut(QKeySequence(key_name), table)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(
+                lambda ck=column_key, so=default_order: self._sort_torrents_by_column_shortcut(ck, so)
+            )
+            self._torrent_sort_shortcuts.append(shortcut)
+
+    def _sort_torrents_by_column_shortcut(
+        self, column_key: str, default_order: Qt.SortOrder
+    ) -> None:
+        """Sort the torrent table by column key, toggling order on repeated use."""
+        column_index = self.torrent_column_index.get(column_key)
+        if column_index is None:
+            self._log("WARNING", f"Unknown torrent sort column key: {column_key}")
+            return
+
+        header = self.tbl_torrents.horizontalHeader()
+        sort_order = default_order
+        if header.sortIndicatorSection() == column_index:
+            sort_order = (
+                Qt.SortOrder.AscendingOrder
+                if header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+                else Qt.SortOrder.DescendingOrder
+            )
+
+        self.tbl_torrents.sortItems(column_index, sort_order)
+        self._save_settings()
 
     def _create_menus(self) -> None:
         """Create menu bar."""

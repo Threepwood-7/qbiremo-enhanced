@@ -41,6 +41,7 @@ It combines:
 - Fit visible columns to content (`View -> Fit Columns`).
 - Multi-select enabled for bulk actions.
 - Numeric-aware sorting for numeric columns (sizes, speeds, dates, ratios, counts, progress sort by value, not text; booleans sort as `1.0`/`0.0`/`-1.0`).
+- Torrent-list sort shortcuts for quick ordering by ratio/uploaded/progress/eta/name/status/size/date columns.
 - After refresh, the previously selected torrent is restored by hash when still present.
 - Enter/Return on selected torrent opens local torrent directory when path is available.
 - Double-click row also opens local torrent directory.
@@ -273,16 +274,28 @@ It combines:
 
 ## Keyboard Shortcuts
 
+Torrent-table sort shortcuts apply when the torrent list has focus.
+
 | Shortcut | Action |
 |---|---|
 | `Ctrl+O` | Add Torrent |
 | `Ctrl+Shift+N` | New instance (current config) |
 | `Ctrl+Q` / `Alt+X` | Exit |
 | `F5` | Refresh |
-| `Ctrl+F5` | Clear Cache & Refresh |
+| `Ctrl+F5` | Clear Cache & Refresh (global view action) |
 | `F6` | Show active torrents |
 | `F7` | Show complete torrents |
 | `F8` | Show all torrents |
+| `Ctrl+F1` | Sort torrents by ratio |
+| `Ctrl+Alt+F1` | Sort torrents by uploaded |
+| `Ctrl+F2` | Sort torrents by progress |
+| `Ctrl+Alt+F2` | Sort torrents by ETA |
+| `Ctrl+F3` | Sort torrents by name |
+| `Ctrl+Alt+F3` | Sort torrents by status |
+| `Ctrl+F5` | Sort torrents by total size (torrent list focus) |
+| `Ctrl+Alt+F5` | Sort torrents by size |
+| `Ctrl+F6` | Sort torrents by added date |
+| `Ctrl+Alt+F6` | Sort torrents by complete date |
 | `Ctrl+S` | Start selected |
 | `Ctrl+P` | Stop selected |
 | `Ctrl+M` | Force Start selected |

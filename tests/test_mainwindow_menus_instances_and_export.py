@@ -70,6 +70,10 @@ def _shortcut_text(action):
     return text
 
 
+def _shortcut_key_text(shortcut):
+    return shortcut.key().toString().lower().replace(" ", "")
+
+
 def _tab_names(tab_widget):
     return [tab_widget.tabText(i) for i in range(tab_widget.count())]
 
@@ -96,6 +100,70 @@ def test_clear_cache_refresh_action_is_under_view_menu(window):
     assert action_in_view is not None
     assert _shortcut_text(action_in_view) == "ctrl+f5"
     assert action_in_file is None
+
+
+def test_torrent_table_sort_shortcuts_are_registered(window):
+    expected = {
+        "ctrl+f1",
+        "ctrl+alt+f1",
+        "ctrl+f2",
+        "ctrl+alt+f2",
+        "ctrl+f3",
+        "ctrl+alt+f3",
+        "ctrl+f5",
+        "ctrl+alt+f5",
+        "ctrl+f6",
+        "ctrl+alt+f6",
+    }
+    actual = {_shortcut_key_text(shortcut) for shortcut in window._torrent_sort_shortcuts}
+    assert actual == expected
+    assert all(
+        shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+        and shortcut.parent() is window.tbl_torrents
+        for shortcut in window._torrent_sort_shortcuts
+    )
+
+
+def test_torrent_table_sort_shortcuts_trigger_expected_columns(window, monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        window,
+        "_sort_torrents_by_column_shortcut",
+        lambda column_key, default_order: captured.append((column_key, default_order)),
+    )
+    shortcuts_by_key = {
+        _shortcut_key_text(shortcut): shortcut for shortcut in window._torrent_sort_shortcuts
+    }
+    expected = {
+        "ctrl+f1": ("ratio", Qt.SortOrder.DescendingOrder),
+        "ctrl+alt+f1": ("uploaded", Qt.SortOrder.DescendingOrder),
+        "ctrl+f2": ("progress", Qt.SortOrder.DescendingOrder),
+        "ctrl+alt+f2": ("eta", Qt.SortOrder.AscendingOrder),
+        "ctrl+f3": ("name", Qt.SortOrder.AscendingOrder),
+        "ctrl+alt+f3": ("state", Qt.SortOrder.AscendingOrder),
+        "ctrl+f5": ("total_size", Qt.SortOrder.DescendingOrder),
+        "ctrl+alt+f5": ("size", Qt.SortOrder.DescendingOrder),
+        "ctrl+f6": ("added_on", Qt.SortOrder.DescendingOrder),
+        "ctrl+alt+f6": ("completion_on", Qt.SortOrder.DescendingOrder),
+    }
+
+    assert set(shortcuts_by_key) == set(expected)
+    for key_name in expected:
+        shortcuts_by_key[key_name].activated.emit()
+    assert captured == [expected[key_name] for key_name in expected]
+
+
+def test_sort_shortcut_helper_toggles_sort_order_on_repeat(window):
+    header = window.tbl_torrents.horizontalHeader()
+    ratio_index = window.torrent_column_index["ratio"]
+
+    window._sort_torrents_by_column_shortcut("ratio", Qt.SortOrder.DescendingOrder)
+    assert header.sortIndicatorSection() == ratio_index
+    assert header.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+
+    window._sort_torrents_by_column_shortcut("ratio", Qt.SortOrder.DescendingOrder)
+    assert header.sortIndicatorSection() == ratio_index
+    assert header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
 
 
 def test_view_menu_contains_human_readable_toggle(window):
