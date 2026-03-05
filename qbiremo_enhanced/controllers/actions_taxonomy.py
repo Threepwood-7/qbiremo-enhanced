@@ -270,7 +270,18 @@ class ActionsTaxonomyController(WindowControllerBase):
         text = str(raw_path or "").strip().strip('"').strip("'")
         if not text:
             return None
-        expanded = os.path.expandvars(os.path.expanduser(text))
+
+        # Support %VAR% placeholders on all platforms (not only Windows).
+        def _percent_env_replacer(match: re.Match[str]) -> str:
+            key = match.group(1)
+            return os.environ.get(key, match.group(0))
+
+        with_percent_vars = re.sub(
+            r"%([A-Za-z_][A-Za-z0-9_]*)%",
+            _percent_env_replacer,
+            text,
+        )
+        expanded = os.path.expandvars(os.path.expanduser(with_percent_vars))
         if not expanded:
             return None
         return Path(expanded)
