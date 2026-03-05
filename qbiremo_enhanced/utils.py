@@ -298,8 +298,12 @@ def _try_acquire_os_file_lock(handle: BinaryIO) -> bool:
         if os.name == "nt":
             import msvcrt
 
+            locking = getattr(msvcrt, "locking", None)
+            lock_non_blocking = getattr(msvcrt, "LK_NBLCK", None)
+            if not callable(locking) or not isinstance(lock_non_blocking, int):
+                return False
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            locking(handle.fileno(), lock_non_blocking, 1)
             return True
 
         import fcntl
@@ -321,8 +325,12 @@ def _release_os_file_lock(handle: BinaryIO) -> None:
         if os.name == "nt":
             import msvcrt
 
+            locking = getattr(msvcrt, "locking", None)
+            lock_unlock = getattr(msvcrt, "LK_UNLCK", None)
+            if not callable(locking) or not isinstance(lock_unlock, int):
+                return
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            locking(handle.fileno(), lock_unlock, 1)
             return
 
         import fcntl
