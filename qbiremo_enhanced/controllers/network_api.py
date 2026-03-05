@@ -547,9 +547,7 @@ class NetworkApiController(WindowControllerBase):
                         tracker_host = self._tracker_host_from_url(str(row.get("url", "") or ""))
                         if not tracker_host:
                             continue
-                        bucket = cast(
-                            dict[str, Any],
-                            stats.setdefault(
+                        bucket = stats.setdefault(
                             tracker_host,
                             {
                                 "tracker": tracker_host,
@@ -562,7 +560,6 @@ class NetworkApiController(WindowControllerBase):
                                 "next_announce_count": 0,
                                 "last_error": "",
                             },
-                            ),
                         )
                         bucket["torrent_hashes"].add(str(torrent_hash))
                         bucket["row_count"] += 1
@@ -717,9 +714,7 @@ class NetworkApiController(WindowControllerBase):
                                 )
                         except RECOVERABLE_CONTROLLER_EXCEPTIONS as ex:
                             result_ok = False
-                            failed_sources.append(
-                                {"source": file_path, "error": str(ex)}
-                            )
+                            failed_sources.append({"source": file_path, "error": str(ex)})
 
                 if urls_payload in (None, "", []) and files_payload in (None, "", []):
                     raise ValueError("No torrent sources provided")
@@ -985,13 +980,17 @@ class NetworkApiController(WindowControllerBase):
                 if "download_limit_bytes" in normalized_updates:
                     qb.torrents_set_download_limit(
                         torrent_hashes=hashes,
-                        limit=max(0, self._safe_int(normalized_updates.get("download_limit_bytes", 0), 0)),
+                        limit=max(
+                            0, self._safe_int(normalized_updates.get("download_limit_bytes", 0), 0)
+                        ),
                     )
 
                 if "upload_limit_bytes" in normalized_updates:
                     qb.torrents_set_upload_limit(
                         torrent_hashes=hashes,
-                        limit=max(0, self._safe_int(normalized_updates.get("upload_limit_bytes", 0), 0)),
+                        limit=max(
+                            0, self._safe_int(normalized_updates.get("upload_limit_bytes", 0), 0)
+                        ),
                     )
 
             elapsed = time.time() - start_time

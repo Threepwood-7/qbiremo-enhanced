@@ -336,7 +336,8 @@ qbiremo-enhanced/
 |-- qbiremo_enhanced_config.toml         # Active TOML configuration
 |-- qbiremo_enhanced_config_example.toml # Annotated example configuration
 |-- requirements.txt                     # Runtime dependencies
-|-- requirements-dev.txt                 # Dev/test dependencies
+|-- requirements-dev.txt                 # Dev/test install entrypoint (uses constraints)
+|-- constraints-dev.txt                  # Pinned dev-tool versions for reproducible checks
 |-- pyproject.toml                       # Central project/tool config (pytest/ruff/mypy)
 |-- qbiremo_enhanced_launch.cmd          # Windows batch launcher
 |-- qbiremo_enhanced_test.cmd            # Windows batch test runner
@@ -364,8 +365,8 @@ Runtime dependencies: `PySide6 >=6.6.0`, `qbittorrent-api >=2024.1.54`.
 
 ### Dev/Test Requirements
 ```bash
-pip install -e .[dev]
-# or: pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt
+# or: pip install -e .[dev] -c constraints-dev.txt
 ```
 
 ### Optional: Virtual Environment
@@ -448,31 +449,37 @@ python -m pytest -q
 
 ## Quality Gates
 
-Run the same static checks used in CI:
+Run the same blocking checks used in CI:
 ```bash
 python -m ruff check qbiremo_enhanced tests
 python -m ruff format --check qbiremo_enhanced tests
 python -m mypy
-python -m pytest -q
+python -m pytest -q --cov=qbiremo_enhanced --cov-report=term-missing --cov-report=xml
+```
+
+Run Pyright as a non-blocking canary check:
+```bash
+python -m pyright
 ```
 
 ### Quality Policy
 
 - `mypy` is the authoritative type-check gate in CI.
-- `pyright` is enforced in CI for the current scoped include set in `pyproject.toml`.
+- `pyright` runs as a non-blocking canary in scheduled/manual CI workflows.
 - `ruff format` is mandatory and enforced in CI and pre-commit.
 
 ### Pre-commit Setup
 
 ```bash
-pip install -e .[dev]
+pip install -r requirements-dev.txt
 pre-commit install
 pre-commit install --hook-type pre-push
 ```
 
 Local hook stages:
 - `pre-commit`: `ruff`, `ruff-format`
-- `pre-push`: `mypy`, `pyright`, `pytest -q`
+- `pre-push`: `mypy`, `pytest` (with coverage)
+- `manual`: `pyright-advisory` (run with `pre-commit run pyright-advisory --hook-stage manual`)
 
 Current tests cover:
 - filters and cache behavior,

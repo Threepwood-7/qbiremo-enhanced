@@ -213,7 +213,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._initialize_controllers()
 
-        self.config = cast(NormalizedConfig, config if isinstance(config, dict) else {})
+        normalized_config: NormalizedConfig = config if isinstance(config, dict) else {}
+        self.config = normalized_config
         config = self.config
         self.instance_id = str(config.get("_instance_id", "") or "").strip().lower()
         if not self.instance_id:
@@ -757,7 +758,9 @@ class MainWindow(QMainWindow):
             shortcut = QShortcut(QKeySequence(key_name), table)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             shortcut.activated.connect(
-                lambda ck=column_key, so=default_order: self._sort_torrents_by_column_shortcut(ck, so)
+                lambda ck=column_key, so=default_order: self._sort_torrents_by_column_shortcut(
+                    ck, so
+                )
             )
             self._torrent_sort_shortcuts.append(shortcut)
 
@@ -1125,9 +1128,7 @@ class MainWindow(QMainWindow):
                 header.moveSection(visual, logical)
 
         for idx, column in enumerate(self.torrent_columns):
-            self.tbl_torrents.setColumnWidth(
-                idx, self._coerce_int(column.get("width", 100), 100)
-            )
+            self.tbl_torrents.setColumnWidth(idx, self._coerce_int(column.get("width", 100), 100))
             self.tbl_torrents.setColumnHidden(idx, not bool(column.get("default_visible", True)))
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self._sync_torrent_column_actions()
