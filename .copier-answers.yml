@@ -1,0 +1,12 @@
+_commit: v1.4.0
+_src_path: C:/prj/p2p/ongithub/aatemplate
+project_name: qbiremo-enhanced
+package_name: qbiremo_enhanced
+description: Advanced qBittorrent GUI client built with PySide6.
+author_name: MT0z
+author_email: mt0z1@pir0z.yxz
+github_username: Threepwood-7
+project_version: 0.1.0
+runtime_dependencies:
+- PySide6>=6.10.2
+- qbittorrent-api>=2025.11.1

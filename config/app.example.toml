@@ -1,0 +1,31 @@
+# qBiremo Enhanced configuration example
+#
+# Usage:
+# 1) Copy this file to config/app.local.toml
+# 2) Edit local values for your qBittorrent server
+#
+# Optional:
+# - APP_CONFIG_PATH points to a custom local config file path
+# - APP_SECRETS_PATH points to an external secrets TOML file
+# - env secrets override file values:
+#   QBIREMO_PASSWORD
+#   QBIREMO_HTTP_BASIC_AUTH_PASSWORD
+
+qb_host = "127.0.0.1"
+qb_port = 8080
+qb_username = "admin"
+qb_password = "CHANGE_ME"
+http_basic_auth_username = ""
+http_basic_auth_password = ""
+http_protocol_scheme = "http"
+http_timeout = 300
+title_bar_speed_format = "[D: {down_text}, U: {up_text}]"
+log_file = "qbiremo_enhanced.log"
+
+# Legacy keys (still accepted with deprecation warning)
+# host = "127.0.0.1"
+# port = 8080
+# username = "admin"
+# password = "CHANGE_ME"
+# http_user = ""
+# http_password = ""

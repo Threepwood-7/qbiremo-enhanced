@@ -1,0 +1,47 @@
+"""Base controller primitives and shared exception policy."""
+
+import json
+import logging
+import subprocess
+from typing import TYPE_CHECKING, Any
+
+import qbittorrentapi
+
+from ..constants import G_APP_NAME
+
+if TYPE_CHECKING:
+    from ..main_window import MainWindow
+
+
+logger = logging.getLogger(G_APP_NAME)
+
+RECOVERABLE_CONTROLLER_EXCEPTIONS = (
+    AttributeError,
+    ConnectionError,
+    json.JSONDecodeError,
+    KeyError,
+    LookupError,
+    OSError,
+    qbittorrentapi.APIError,
+    RuntimeError,
+    subprocess.SubprocessError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
+
+class WindowControllerBase:
+    """Proxy unknown attribute access/assignment to the owning MainWindow."""
+
+    def __init__(self, window: "MainWindow") -> None:
+        self.window = window
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.window, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "window":
+            super().__setattr__(name, value)
+            return
+        setattr(self.window, name, value)
