@@ -4,7 +4,6 @@ import fnmatch
 import hashlib
 import logging
 import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, cast
@@ -14,13 +13,13 @@ from PySide6.QtGui import QIcon
 from .constants import (
     APP_ICON_FILE_NAME,
     CACHE_FILE_NAME,
-    CACHE_TEMP_SUBDIR,
     DEFAULT_DISPLAY_SIZE_MODE,
     DEFAULT_DISPLAY_SPEED_MODE,
     G_APP_NAME,
     INSTANCE_ID_LENGTH,
 )
 from .models.config import NormalizedConfig
+from .runtime_paths import resolve_app_data_dir
 
 logger = logging.getLogger(G_APP_NAME)
 _INSTANCE_LOCK_HANDLES: dict[str, BinaryIO] = {}
@@ -253,13 +252,13 @@ def resolve_cache_file_path(
     cache_file_name: str = CACHE_FILE_NAME,
     instance_id: str = "",
 ) -> Path:
-    """Resolve cache file path under OS temp dir unless absolute override is used."""
+    """Resolve cache file path under app data dir unless absolute override is used."""
     raw_path = Path(str(cache_file_name))
     if instance_id:
         raw_path = Path(_append_instance_id_to_filename(str(raw_path), instance_id))
     if raw_path.is_absolute():
         return raw_path
-    return Path(tempfile.gettempdir()) / CACHE_TEMP_SUBDIR / raw_path
+    return resolve_app_data_dir() / raw_path
 
 
 def resolve_instance_lock_file_path(instance_id: str, instance_counter: object) -> Path:

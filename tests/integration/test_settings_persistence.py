@@ -15,6 +15,8 @@ def _default_settings_app_name() -> str:
 
 
 def _make_window(qtbot, monkeypatch, tmp_path):
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "qsettings"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     cache_path = tmp_path / "qbiremo_enhanced.cache"
     monkeypatch.setattr(appmod, "CACHE_FILE_NAME", str(cache_path))
     monkeypatch.setattr(appmod.MainWindow, "_initial_load", lambda self: None)
@@ -122,9 +124,10 @@ def test_display_mode_toggle_is_persisted_via_qsettings(qtbot, monkeypatch, tmp_
     assert w2.action_human_readable.isChecked() is False
 
 
-def test_default_cache_path_uses_temp_subfolder(qtbot, monkeypatch, tmp_path):
+def test_default_cache_path_uses_data_dir(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(appmod, "CACHE_FILE_NAME", "qbiremo_enhanced.cache")
-    monkeypatch.setattr(appmod.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "qsettings"))
     monkeypatch.setattr(appmod.MainWindow, "_initial_load", lambda self: None)
     monkeypatch.setattr(appmod.MainWindow, "_load_settings", lambda self: None)
     monkeypatch.setattr(appmod.MainWindow, "_save_settings", lambda self: None)

@@ -1,11 +1,11 @@
 import logging
-import tempfile
 from pathlib import Path
 
 import pytest
 
 import qbiremo_enhanced.main_window as appmod
 import qbiremo_enhanced.utils as apputils
+from qbiremo_enhanced.runtime_paths import resolve_app_data_dir
 
 
 def test_compute_instance_id_uses_length_8_and_default_counter_suffix():
@@ -222,6 +222,8 @@ def test_main_opens_log_file_on_startup_crash(monkeypatch, tmp_path):
 
 def test_main_accepts_instance_counter_cli_argument(monkeypatch):
     captured = {"config": None}
+    config_override = Path("tmp_config_override")
+    data_override = Path("tmp_data_override")
 
     class DummyHandler:
         def flush(self):
@@ -268,7 +270,15 @@ def test_main_accepts_instance_counter_cli_argument(monkeypatch):
     monkeypatch.setattr(
         appmod.sys,
         "argv",
-        ["qbiremo_enhanced.py", "--instance_counter", "5"],
+        [
+            "qbiremo_enhanced.py",
+            "--instance_counter",
+            "5",
+            "--config-dir",
+            str(config_override),
+            "--data-dir",
+            str(data_override),
+        ],
     )
 
     with pytest.raises(SystemExit) as exc:
@@ -278,6 +288,8 @@ def test_main_accepts_instance_counter_cli_argument(monkeypatch):
     assert captured["config"] is not None
     assert captured["config"]["_instance_counter"] == 5
     assert str(captured["config"]["_instance_id"]).endswith("_5")
+    assert appmod.os.environ["CONFIG_DIR"].endswith(str(config_override))
+    assert appmod.os.environ["DATA_DIR"].endswith(str(data_override))
 
 
 def test_main_uses_incremented_instance_counter_when_lock_exists(monkeypatch):
@@ -356,6 +368,7 @@ def test_setup_logging_falls_back_to_default_file_when_primary_path_fails(monkey
     original_level = appmod.logger.level
     appmod.logger.handlers.clear()
     monkeypatch.setattr(appmod.logging, "FileHandler", FakeFileHandler)
+    monkeypatch.setenv("DATA_DIR", str(Path.cwd() / ".tmp_test_data"))
 
     try:
         handler = appmod._setup_logging(config)
@@ -370,10 +383,10 @@ def test_setup_logging_falls_back_to_default_file_when_primary_path_fails(monkey
     assert created_paths[0].endswith("custom_deadbeef_1.log")
     assert created_paths[1].endswith("qbiremo_enhanced_deadbeef_1.log")
     assert str(config["_log_file_path"]).endswith("qbiremo_enhanced_deadbeef_1.log")
-    temp_root = Path(tempfile.gettempdir()).resolve()
-    assert Path(created_paths[0]).resolve().is_relative_to(temp_root)
-    assert Path(created_paths[1]).resolve().is_relative_to(temp_root)
-    assert Path(str(config["_log_file_path"])).resolve().is_relative_to(temp_root)
+    data_root = Path(resolve_app_data_dir()).resolve()
+    assert Path(created_paths[0]).resolve().is_relative_to(data_root)
+    assert Path(created_paths[1]).resolve().is_relative_to(data_root)
+    assert Path(str(config["_log_file_path"])).resolve().is_relative_to(data_root)
 
 
 def test_main_logs_load_issues_and_starts_with_defaults(monkeypatch, caplog):

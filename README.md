@@ -280,6 +280,8 @@ python -m qbiremo_enhanced
 ```text
 -p, --profile        Runtime profile id (default: default)
 --instance_counter   Positive per-server instance counter suffix (default: 1)
+--config-dir         Override QSettings INI root (takes precedence over CONFIG_DIR)
+--data-dir           Override runtime data root (takes precedence over DATA_DIR)
 -h, --help           Show help
 ```
 
@@ -293,7 +295,11 @@ python -m qbiremo_enhanced
 
 Runtime config uses QSettings profile storage:
 
-- Store backend: `QSettings(IniFormat, UserScope, "qBiremo", "qBiremoEnhancedConfig")`
+- Store backend: `QSettings(IniFormat, UserScope, "ThreepSoftwz", "qbiremo_enhanced")`
+- Default INI path: `%APPDATA%\ThreepSoftwz\qbiremo_enhanced.ini`
+- OV01 overrides:
+  - `CONFIG_DIR` env var or `--config-dir`
+  - `DATA_DIR` env var or `--data-dir`
 - Profiles are stored under `profiles/<profile_id>/...`
 - Startup profile is selected with `--profile` (default: `default`)
 - Env secret overrides remain supported:
@@ -314,7 +320,7 @@ Validated key contract (`validate_and_normalize_config`):
 | `http_basic_auth_password` | `str` | `""` | Optional reverse-proxy basic-auth password. If `qb_host` has embedded password, embedded value wins. |
 | `http_protocol_scheme` | `str` | Effective default: `"http"` | Allowed: `"http"`, `"https"`. Invalid value is normalized to `"http"`. |
 | `http_timeout` | `int` | `300` | Must be integer `> 0`. Used as qBittorrent API HTTP timeout in seconds. |
-| `log_file` | `str` | `"qbiremo_enhanced.log"` | Non-empty path string. Relative paths are resolved under the OS temp runtime folder (`<temp>/qbiremo-enhanced`). |
+| `log_file` | `str` | `"qbiremo_enhanced.log"` | Non-empty path string. Relative paths are resolved under `%LOCALAPPDATA%\\ThreepSoftwz\\qbiremo_enhanced\\logs\\` (or `DATA_DIR\\qbiremo_enhanced\\logs\\` when overridden). |
 | `title_bar_speed_format` | `str` | `"[D: {down_text}, U: {up_text}]"` | Must be non-empty and format successfully with `{down_text}` and `{up_text}` placeholders. |
 
 ### Behavior Notes
@@ -330,7 +336,7 @@ Validated key contract (`validate_and_normalize_config`):
 ### Caching, Persistence, and Instance Isolation
 
 - Persistent content cache stored as JSON.
-- Cache path defaults to OS temp under `qbiremo_enhanced_temp/`.
+- Cache path defaults to `%LOCALAPPDATA%\ThreepSoftwz\qbiremo_enhanced\`.
 - Cache filename is instance-scoped using deterministic host+port hash suffix.
 - Cache older than 3 days is deleted on startup.
 - `Clear Cache & Refresh` removes cache file and refreshes list.
@@ -507,8 +513,8 @@ Every qBittorrent server connection is fully isolated:
 - A deterministic 8-character hex hash is computed from `host:port`.
 - The `instance_counter` (default `1`) is appended to create the final instance ID.
 - Each instance gets its own:
-  - QSettings INI file (`qBiremoEnhanced_<id>`),
-  - content cache file (JSON, under OS temp),
+  - QSettings INI file (`qbiremo_enhanced_<id>`),
+  - content cache file (JSON, under app data root),
   - log file (instance-suffixed filename),
   - OS-level lock file (`.lck`).
 - On startup, the app acquires an exclusive byte-range lock on the `.lck` file. If the lock is already held (another instance is running with the same counter), the counter auto-increments until a free slot is found.
@@ -614,7 +620,7 @@ uv lock --check
 
 - If the app fails to start with a lock error, another instance may be running with the same profile and counter
 - Use `--instance_counter 2` (or higher) to run a second instance against the same server
-- Lock files are in `%TEMP%\qbiremo-enhanced\` and are cleaned up on normal exit
+- Lock files are in `%LOCALAPPDATA%\ThreepSoftwz\qbiremo_enhanced\` by default (or under `DATA_DIR`) and are cleaned up on normal exit
 
 ### Config issues
 

@@ -4,6 +4,7 @@ import argparse
 import atexit
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -106,6 +107,7 @@ from .dialogs import (
 from .models.config import NormalizedConfig
 from .models.torrent import SessionTimelineSample, TorrentCacheEntry, TorrentFileEntry
 from .profile_wizard import run_profile_setup_wizard
+from .runtime_paths import configure_qsettings
 from .tasking import APITaskQueue, Worker
 from .utils import (
     _normalize_display_mode,
@@ -216,6 +218,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config: NormalizedConfig) -> None:
         """Initialize UI, runtime state, queues, settings, and startup refresh."""
         super().__init__()
+        configure_qsettings()
         self._initialize_controllers()
 
         normalized_config: NormalizedConfig = config if isinstance(config, dict) else {}
@@ -1627,8 +1630,27 @@ def main() -> None:
             "against the same qBittorrent server."
         ),
     )
+    parser.add_argument(
+        "--config-dir",
+        dest="config_dir",
+        required=False,
+        default=None,
+        help="Override QSettings INI root directory (takes precedence over CONFIG_DIR).",
+    )
+    parser.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        required=False,
+        default=None,
+        help="Override runtime data root directory (takes precedence over DATA_DIR).",
+    )
 
     args = parser.parse_args()
+    if args.config_dir:
+        os.environ["CONFIG_DIR"] = str(Path(args.config_dir).expanduser())
+    if args.data_dir:
+        os.environ["DATA_DIR"] = str(Path(args.data_dir).expanduser())
+    configure_qsettings()
     selected_profile = normalize_profile_id(args.profile)
 
     try:

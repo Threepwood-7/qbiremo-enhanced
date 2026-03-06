@@ -45,6 +45,11 @@ def make_torrent():
 
 @pytest.fixture
 def window(qtbot, monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+
     cache_path = tmp_path / "qbiremo_enhanced.cache"
     monkeypatch.setattr(appmod, "CACHE_FILE_NAME", str(cache_path))
     monkeypatch.setattr(appmod.MainWindow, "_initial_load", lambda self: None)

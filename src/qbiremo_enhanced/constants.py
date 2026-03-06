@@ -1,7 +1,7 @@
 """Application constants and static schemas."""
 
-G_ORG_NAME = "qBiremo"
-G_APP_NAME = "qBiremoEnhanced"
+G_ORG_NAME = "ThreepSoftwz"
+G_APP_NAME = "qbiremo_enhanced"
 DEFAULT_REFRESH_INTERVAL = 30
 DEFAULT_AUTO_REFRESH = True
 AUTO_REFRESH_INTERVAL_MAX = 600
@@ -13,7 +13,7 @@ DEFAULT_DISPLAY_SIZE_MODE = "bytes"
 DEFAULT_DISPLAY_SPEED_MODE = "bytes"
 DEFAULT_TITLE_BAR_SPEED_FORMAT = "[D: {down_text}, U: {up_text}]"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 300
-CACHE_TEMP_SUBDIR = "qbiremo_enhanced_temp"
+CACHE_TEMP_SUBDIR = "cache"
 CACHE_FILE_NAME = "qbiremo_enhanced.cache"
 CACHE_MAX_AGE_DAYS = 3
 INSTANCE_ID_LENGTH = 8

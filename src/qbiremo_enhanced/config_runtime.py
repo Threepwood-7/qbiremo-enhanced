@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import sys
-import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -20,6 +19,7 @@ from .constants import (
     G_APP_NAME,
     G_ORG_NAME,
 )
+from .runtime_paths import configure_qsettings, resolve_app_data_dir
 from .utils import (
     _append_instance_id_to_filename,
     _normalize_http_protocol_scheme,
@@ -35,7 +35,7 @@ logger = logging.getLogger(G_APP_NAME)
 
 APP_SLUG = "qbiremo-enhanced"
 DEFAULT_LOG_FILE_NAME = "qbiremo_enhanced.log"
-CONFIG_SETTINGS_APP_NAME = "qBiremoEnhancedConfig"
+CONFIG_SETTINGS_APP_NAME = G_APP_NAME
 DEFAULT_PROFILE_ID = "default"
 _PROFILE_ROOT = "profiles"
 
@@ -122,6 +122,7 @@ PROFILE_SCHEMA: tuple[tuple[str, type, Any], ...] = (
 
 
 def _new_profile_settings() -> QSettings:
+    configure_qsettings()
     return QSettings(
         QSettings.Format.IniFormat,
         QSettings.Scope.UserScope,
@@ -160,8 +161,8 @@ def _profile_base_key(profile_id: str) -> str:
 
 
 def _runtime_log_dir() -> Path:
-    """Resolve runtime log directory under OS temp storage."""
-    return Path(tempfile.gettempdir()) / APP_SLUG
+    """Resolve runtime log directory under app data storage."""
+    return resolve_app_data_dir() / "logs"
 
 
 def _resolve_log_file_path(raw_log_file: str, instance_id: str) -> Path:
