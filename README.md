@@ -9,7 +9,25 @@ It combines:
 - deep details/edit panels,
 - and operational tooling (taxonomy management, speed profile management, tracker analytics, session timeline, clipboard ingest, and export).
 
-![qBiremo Enhanced Screenshot](docs/images/qbiremo_enhanced_screenshot.jpg)
+## UI Walkthrough
+
+1. Review session health and torrent activity at a glance.
+
+   ![Review session health](docs/images/ui-01-overview.png)
+
+   Overview of torrent table, status filters, and live transfer context.
+
+2. Inspect content/details workflow for a selected torrent.
+
+   ![Inspect content and details](docs/images/ui-02-workflow.png)
+
+   Workflow state showing content cache and detailed transfer metadata.
+
+3. Execute edit and action controls from detail tabs.
+
+   ![Execute edit and action controls](docs/images/ui-03-details.png)
+
+   Action-focused detail tab state for updating torrent settings safely.
 
 ## Current Feature Set
 
