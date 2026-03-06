@@ -244,7 +244,7 @@ It combines:
 - `Add Torrent...` (`Ctrl+O`)
 - `Export Torrent...`
 - `New instance` (`Ctrl+Shift+N`) - launch another app instance with current config
-- `New instance from config...` - choose a `.toml` file and launch a new instance
+- `New instance from profile...` - choose a profile id and launch a new instance
 - `Exit` (`Ctrl+Q`, `Alt+X`)
 
 ### Edit
@@ -360,9 +360,6 @@ qbiremo-enhanced/
 |-- docs/
 |   `-- architecture/
 |       `-- MEMORY_SPEC.md               # Architecture reference spec
-|-- config/
-|   |-- app.defaults.toml                # Tracked non-secret defaults
-|   `-- app.example.toml                 # Annotated example configuration
 |-- requirements.lock                    # Runtime lockfile generated from pyproject.toml
 |-- requirements-dev.lock                # Dev lockfile generated from pyproject.toml
 |-- pyproject.toml                       # Central project/tool config (pytest/ruff/mypy)
@@ -385,7 +382,7 @@ qbiremo-enhanced/
 
 ### Requirements
 
-- **Python 3.11+** (uses the stdlib `tomllib` module for TOML parsing)
+- **Python 3.11+**
 
 ```bash
 python -m pip install -r requirements.lock
@@ -419,20 +416,14 @@ python -m pip install -e . --no-deps
 
 ## Configuration
 
-### TOML File
-Default file: `config/app.local.toml`
+Runtime config uses QSettings profile storage:
 
-Config layering order:
-
-1. `config/app.defaults.toml`
-2. local config (`config/app.local.toml` or `APP_CONFIG_PATH`)
-3. external secret file (`APP_SECRETS_PATH` or OS default path)
-4. env secret overrides (`QBIREMO_PASSWORD`, `QBIREMO_HTTP_BASIC_AUTH_PASSWORD`)
-
-Secret file default locations:
-
-- Windows: `%APPDATA%/qbiremo-enhanced/secrets.toml`
-- Linux/macOS: `~/.config/qbiremo-enhanced/secrets.toml`
+- Store backend: `QSettings(IniFormat, UserScope, "qBiremo", "qBiremoEnhancedConfig")`
+- Profiles are stored under `profiles/<profile_id>/...`
+- Startup profile is selected with `--profile` (default: `default`)
+- Env secret overrides remain supported:
+  - `QBIREMO_PASSWORD`
+  - `QBIREMO_HTTP_BASIC_AUTH_PASSWORD`
 
 Validated key contract (`validate_and_normalize_config`):
 
@@ -450,13 +441,13 @@ Validated key contract (`validate_and_normalize_config`):
 | `title_bar_speed_format` | `str` | `"[D: {down_text}, U: {up_text}]"` | Must be non-empty and format successfully with `{down_text}` and `{up_text}` placeholders. |
 
 Behavior notes:
-- Unknown TOML keys are ignored with warnings.
+- Unknown profile keys are ignored with warnings.
 - If `qb_host` includes a full URL with embedded userinfo, HTTP basic auth is extracted and sent via `Authorization` header.
 - Environment fallback for HTTP basic auth:
   - `X_HTTP_USER`
   - `X_HTTP_PASS`
 - Internal keys are runtime-managed and should not be set manually:
-  - `_config_file_path`, `_log_file_path`, `_instance_id`, `_instance_counter`, `_instance_lock_file_path`
+  - `_profile_id`, `_log_file_path`, `_instance_id`, `_instance_counter`, `_instance_lock_file_path`
 
 ## Usage
 
@@ -472,14 +463,14 @@ python -m pip install -e . --no-deps
 python -m qbiremo_enhanced
 ```
 
-### Run with custom config
+### Run with specific profile
 ```bash
-python -m qbiremo_enhanced -c path\to\custom.toml
+python -m qbiremo_enhanced --profile home
 ```
 
 ### Command-line options
 ```text
--c, --config-file    Path to config file (default: config/app.local.toml)
+-p, --profile        Runtime profile id (default: default)
 --instance_counter   Positive per-server instance counter suffix (default: 1)
 -h, --help           Show help
 ```

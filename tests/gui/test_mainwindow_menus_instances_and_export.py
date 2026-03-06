@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
 import qbiremo_enhanced.main_window as appmod
+import qbiremo_enhanced.controllers.actions_taxonomy as actionsmod
 
 
 def _top_level_names(tree_widget):
@@ -607,7 +608,7 @@ def test_add_torrent_dialog_accept_queues_api_task(window, monkeypatch, qtbot):
 def test_file_menu_contains_new_instance_actions(window):
     action_new_instance = _find_menu_action(window, "&File", "New &instance")
     action_new_instance_from_config = _find_menu_action(
-        window, "&File", "New instance from con&fig..."
+        window, "&File", "New instance from pro&file..."
     )
 
     assert action_new_instance is not None
@@ -619,61 +620,57 @@ def test_new_instance_action_uses_current_config_and_counter(window, monkeypatch
     calls = []
     monkeypatch.setattr(
         window,
-        "_launch_new_instance_with_config_path",
-        lambda config_path, instance_counter=None: calls.append((config_path, instance_counter)),
+        "_launch_new_instance_with_profile",
+        lambda profile_id, instance_counter=None: calls.append((profile_id, instance_counter)),
     )
-    window.config["_config_file_path"] = "C:/cfg/current.toml"
+    window.config["_profile_id"] = "work"
     window.config["_instance_counter"] = 4
 
     action_new_instance = _find_menu_action(window, "&File", "New &instance")
     assert action_new_instance is not None
     action_new_instance.trigger()
 
-    assert calls == [("C:/cfg/current.toml", 4)]
+    assert calls == [("work", 4)]
 
 
 def test_new_instance_from_config_action_prompts_and_launches(window, monkeypatch, tmp_path):
-    selected_config = tmp_path / "second.toml"
-    selected_config.write_text("qb_host='localhost'\n", encoding="utf-8")
     calls = []
 
     monkeypatch.setattr(
-        appmod.QFileDialog,
-        "getOpenFileName",
-        lambda *_args, **_kwargs: (str(selected_config), "TOML files (*.toml)"),
+        actionsmod,
+        "prompt_profile_selection",
+        lambda *_args, **_kwargs: "lab",
     )
     monkeypatch.setattr(
         window,
-        "_launch_new_instance_with_config_path",
-        lambda config_path, instance_counter=None: calls.append((config_path, instance_counter)),
+        "_launch_new_instance_with_profile",
+        lambda profile_id, instance_counter=None: calls.append((profile_id, instance_counter)),
     )
 
     action_new_instance_from_config = _find_menu_action(
-        window, "&File", "New instance from con&fig..."
+        window, "&File", "New instance from pro&file..."
     )
     assert action_new_instance_from_config is not None
     action_new_instance_from_config.trigger()
 
-    assert calls == [(str(selected_config), 1)]
+    assert calls == [("lab", 1)]
 
 
 def test_launch_new_instance_with_config_path_spawns_process(window, monkeypatch, tmp_path):
-    config_path = tmp_path / "launch.toml"
-    config_path.write_text("qb_host='localhost'\n", encoding="utf-8")
     captured = {"cmd": None}
 
     monkeypatch.setattr(
-        appmod.subprocess,
+        actionsmod.subprocess,
         "Popen",
         lambda cmd: captured.__setitem__("cmd", list(cmd)),
     )
 
-    window._launch_new_instance_with_config_path(str(config_path), 7)
+    window._launch_new_instance_with_profile("home", 7)
 
     assert captured["cmd"] is not None
     assert captured["cmd"][0] == appmod.sys.executable
-    assert captured["cmd"][1:4] == ["-m", "qbiremo_enhanced", "--config-file"]
-    assert captured["cmd"][4] == str(config_path.resolve())
+    assert captured["cmd"][1:4] == ["-m", "qbiremo_enhanced", "--profile"]
+    assert captured["cmd"][4] == "home"
     assert captured["cmd"][5:] == ["--instance_counter", "7"]
 
 

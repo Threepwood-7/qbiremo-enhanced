@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..config_runtime import DEFAULT_PROFILE_ID, list_profile_ids, normalize_profile_id
 from ..constants import (
     DEFAULT_REFRESH_INTERVAL,
 )
@@ -37,6 +38,7 @@ from ..dialogs import (
     SpeedLimitsDialog,
     TaxonomyManagerDialog,
 )
+from ..profile_wizard import prompt_profile_selection
 from ..types import APITaskResult
 from ..utils import (
     _normalize_instance_counter,
@@ -50,16 +52,16 @@ class ActionsTaxonomyController(WindowControllerBase):
 
     @staticmethod
     def _build_new_instance_command(
-        config_file_path: str, instance_counter: int | None = None
+        profile_id: str, instance_counter: int | None = None
     ) -> list[str]:
         """Build command line used to spawn one new application instance."""
-        config_path = str(Path(str(config_file_path)).expanduser().resolve())
+        normalized_profile = normalize_profile_id(profile_id)
         command = [
             sys.executable,
             "-m",
             "qbiremo_enhanced",
-            "--config-file",
-            config_path,
+            "--profile",
+            normalized_profile,
         ]
         if instance_counter is not None:
             command.extend(
@@ -67,54 +69,47 @@ class ActionsTaxonomyController(WindowControllerBase):
             )
         return command
 
-    def _launch_new_instance_with_config_path(
+    def _launch_new_instance_with_profile(
         self,
-        config_file_path: str,
+        profile_id: str,
         instance_counter: int | None = None,
     ) -> None:
-        """Spawn one new process instance with the provided config path."""
+        """Spawn one new process instance with the provided profile id."""
         try:
-            command = self._build_new_instance_command(config_file_path, instance_counter)
+            normalized_profile = normalize_profile_id(profile_id)
+            command = self._build_new_instance_command(normalized_profile, instance_counter)
             subprocess.Popen(command)
             self._log("INFO", f"Launched new instance: {' '.join(command)}")
-            self._set_status(f"Launched new instance: {Path(config_file_path).name}")
+            self._set_status(f"Launched new instance: {normalized_profile}")
         except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
             self._log("ERROR", f"Failed to launch new instance: {e}")
             self._set_status(f"Failed to launch new instance: {e}")
 
     def _launch_new_instance_current_config(self) -> None:
-        """Launch a new app instance using the currently loaded config file."""
-        raw_config_path = str(
-            (self.config.get("_config_file_path") if isinstance(self.config, dict) else "") or ""
-        ).strip()
-        config_path = (
-            raw_config_path
-            if raw_config_path
-            else str(Path("config/app.local.toml").resolve())
+        """Launch a new app instance using the current runtime profile."""
+        profile_id = normalize_profile_id(
+            (self.config.get("_profile_id") if isinstance(self.config, dict) else DEFAULT_PROFILE_ID)
+            or DEFAULT_PROFILE_ID
         )
         counter = _normalize_instance_counter(
             self.config.get("_instance_counter", 1) if isinstance(self.config, dict) else 1
         )
-        self._launch_new_instance_with_config_path(config_path, counter)
+        self._launch_new_instance_with_profile(profile_id, counter)
 
     def _launch_new_instance_from_config(self) -> None:
-        """Launch a new app instance after selecting a .toml config file."""
-        current_config_path = str(
-            (self.config.get("_config_file_path") if isinstance(self.config, dict) else "") or ""
-        ).strip()
-        if current_config_path:
-            initial_dir = str(Path(current_config_path).expanduser().resolve().parent)
-        else:
-            initial_dir = str(Path.cwd())
-        selected_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Config File",
-            initial_dir,
-            "TOML files (*.toml);;All files (*.*)",
+        """Launch a new app instance after selecting a profile id."""
+        current_profile = normalize_profile_id(
+            (self.config.get("_profile_id") if isinstance(self.config, dict) else DEFAULT_PROFILE_ID)
+            or DEFAULT_PROFILE_ID
         )
-        if not selected_path:
+        selected_profile = prompt_profile_selection(
+            list_profile_ids(),
+            current_profile=current_profile,
+            parent=self,
+        )
+        if not selected_profile:
             return
-        self._launch_new_instance_with_config_path(selected_path, 1)
+        self._launch_new_instance_with_profile(selected_profile, 1)
 
     def _show_add_torrent_dialog(self) -> None:
         """Show add torrent dialog."""
@@ -301,9 +296,8 @@ class ActionsTaxonomyController(WindowControllerBase):
                 return parent_dir
 
         save_path = self._expand_local_path(getattr(torrent, "save_path", ""))
-        if save_path is not None:
-            if save_path.is_dir():
-                return save_path
+        if save_path is not None and save_path.is_dir():
+            return save_path
 
         return None
 

@@ -56,11 +56,15 @@ from PySide6.QtWidgets import (
 )
 
 from .config_runtime import (
+    DEFAULT_PROFILE_ID,
     _default_instance_log_file_path,
     _install_exception_hooks,
     _open_file_in_default_app,
     _setup_logging,
+    get_missing_required_config,
     load_config_with_issues,
+    normalize_profile_id,
+    save_profile_config,
     validate_and_normalize_config,
 )
 from .constants import (
@@ -101,6 +105,7 @@ from .dialogs import (
 )
 from .models.config import NormalizedConfig
 from .models.torrent import SessionTimelineSample, TorrentCacheEntry, TorrentFileEntry
+from .profile_wizard import run_profile_setup_wizard
 from .tasking import APITaskQueue, Worker
 from .utils import (
     _normalize_display_mode,
@@ -225,7 +230,7 @@ class MainWindow(QMainWindow):
         if not window_icon.isNull():
             self.setWindowIcon(window_icon)
 
-        # Connection info from config (TOML), falling back to env vars
+        # Connection info from profile config, falling back to env vars
         self.qb_conn_info = self._build_connection_info(config)
 
         # State
@@ -256,7 +261,7 @@ class MainWindow(QMainWindow):
         self._clipboard_seen_order = deque()
         self._clipboard = None
 
-        # Defaults are managed by code/QSettings (not TOML).
+        # Defaults are managed by code/QSettings.
         self.default_status_filter = DEFAULT_STATUS_FILTER
         self.default_auto_refresh_enabled = DEFAULT_AUTO_REFRESH
         self.default_refresh_interval = DEFAULT_REFRESH_INTERVAL
@@ -816,7 +821,7 @@ class MainWindow(QMainWindow):
         action_new_instance.triggered.connect(self._launch_new_instance_current_config)
         file_menu.addAction(action_new_instance)
 
-        action_new_instance_from_config = QAction("New instance from con&fig...", self)
+        action_new_instance_from_config = QAction("New instance from pro&file...", self)
         action_new_instance_from_config.triggered.connect(self._launch_new_instance_from_config)
         file_menu.addAction(action_new_instance_from_config)
 
@@ -1603,11 +1608,11 @@ def main() -> None:
         description="qBiremo Enhanced - Advanced qBittorrent GUI Client"
     )
     parser.add_argument(
-        "-c",
-        "--config-file",
+        "-p",
+        "--profile",
         required=False,
-        default="config/app.local.toml",
-        help="Path to configuration file (TOML format)",
+        default=DEFAULT_PROFILE_ID,
+        help="Runtime profile id (default: default)",
     )
     parser.add_argument(
         "--instance_counter",
@@ -1624,43 +1629,9 @@ def main() -> None:
     )
 
     args = parser.parse_args()
-    config_file_path = str(Path(args.config_file).expanduser().resolve())
-
-    # Load configuration (collect load-time issues before logging is configured)
-    config, load_issues = load_config_with_issues(args.config_file)
-    config["_config_file_path"] = config_file_path
-    requested_counter = int(args.instance_counter)
-    config["_instance_counter"] = requested_counter
-    claimed_counter, claimed_instance_id, lock_path = acquire_instance_lock(
-        config,
-        requested_counter,
-    )
-    config["_instance_counter"] = int(claimed_counter)
-    config["_instance_id"] = str(claimed_instance_id)
-    config["_instance_lock_file_path"] = str(lock_path)
-    if claimed_counter != requested_counter:
-        load_issues.append(
-            "Lock file already exists; auto-incremented instance counter "
-            f"from {requested_counter} to {claimed_counter} "
-            f"({claimed_instance_id})."
-        )
-    atexit.register(release_instance_lock, lock_path)
-
-    # Set up logging *first*, then install the global exception hook
-    file_handler = _setup_logging(config)
-    _install_exception_hooks(file_handler)
-    for issue in load_issues:
-        logger.warning("%s", issue)
-
-    # Validate and normalize config values now that file logging is active.
-    config = validate_and_normalize_config(config, args.config_file)
-    config["_config_file_path"] = config_file_path
-    config["_instance_counter"] = int(claimed_counter)
-    config["_instance_id"] = str(claimed_instance_id)
-    config["_instance_lock_file_path"] = str(lock_path)
+    selected_profile = normalize_profile_id(args.profile)
 
     try:
-        # Create application
         app = QApplication(sys.argv)
         app.setOrganizationName(G_ORG_NAME)
         app.setApplicationName(G_APP_NAME)
@@ -1670,17 +1641,61 @@ def main() -> None:
             if not app_icon.isNull():
                 app.setWindowIcon(app_icon)
 
-        # Create and show main window
+        # Load profile config (collect load-time issues before logging is configured)
+        config, load_issues = load_config_with_issues(selected_profile)
+        config["_profile_id"] = selected_profile
+        missing = get_missing_required_config(config)
+        if missing:
+            wizard_result = run_profile_setup_wizard(selected_profile, dict(config))
+            if wizard_result is None:
+                print("Profile setup wizard was cancelled; required config is missing.")
+                raise SystemExit(1)
+            selected_profile, payload = wizard_result
+            save_profile_config(selected_profile, payload)
+            config, reload_issues = load_config_with_issues(selected_profile)
+            config["_profile_id"] = selected_profile
+            load_issues.extend(reload_issues)
+
+        requested_counter = int(args.instance_counter)
+        config["_instance_counter"] = requested_counter
+        claimed_counter, claimed_instance_id, lock_path = acquire_instance_lock(
+            config,
+            requested_counter,
+        )
+        config["_instance_counter"] = int(claimed_counter)
+        config["_instance_id"] = str(claimed_instance_id)
+        config["_instance_lock_file_path"] = str(lock_path)
+        if claimed_counter != requested_counter:
+            load_issues.append(
+                "Lock file already exists; auto-incremented instance counter "
+                f"from {requested_counter} to {claimed_counter} "
+                f"({claimed_instance_id})."
+            )
+        atexit.register(release_instance_lock, lock_path)
+
+        # Set up logging first, then install the global exception hook.
+        file_handler = _setup_logging(config)
+        _install_exception_hooks(file_handler)
+        for issue in load_issues:
+            logger.warning("%s", issue)
+
+        # Validate and normalize config values now that file logging is active.
+        config = validate_and_normalize_config(config, selected_profile)
+        config["_profile_id"] = selected_profile
+        config["_instance_counter"] = int(claimed_counter)
+        config["_instance_id"] = str(claimed_instance_id)
+        config["_instance_lock_file_path"] = str(lock_path)
+
         main_window = MainWindow(config)
         cast("Any", app).main_window = main_window
 
-        # Run application
         sys.exit(app.exec())
     except SystemExit:
         raise
     except Exception:
         logger.critical("Fatal error during startup", exc_info=True)
-        file_handler.flush()
+        if "file_handler" in locals():
+            file_handler.flush()
         _open_file_in_default_app(
             config.get("_log_file_path", _default_instance_log_file_path(str(config.get("_instance_id", "") or "")))
         )

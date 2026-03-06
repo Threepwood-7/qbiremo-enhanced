@@ -4,7 +4,7 @@ from typing import TypedDict
 
 
 class NormalizedConfig(TypedDict, total=False):
-    """Normalized application config loaded from TOML and runtime defaults."""
+    """Normalized application config loaded from QSettings profiles and defaults."""
 
     qb_host: str
     qb_port: int
@@ -16,7 +16,7 @@ class NormalizedConfig(TypedDict, total=False):
     http_timeout: int
     log_file: str
     title_bar_speed_format: str
-    _config_file_path: str
+    _profile_id: str
     _log_file_path: str
     _instance_id: str
     _instance_counter: int

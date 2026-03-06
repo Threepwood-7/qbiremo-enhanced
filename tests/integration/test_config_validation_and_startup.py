@@ -98,7 +98,7 @@ def test_validate_and_normalize_config_logs_invalid_values(caplog):
     log_text = caplog.text
     assert "Config validation" in log_text
     assert "qb_port" in log_text
-    assert "ignored in TOML; managed via QSettings" in log_text
+    assert "ignored in runtime profile config; managed via UI settings" in log_text
     assert "http_protocol_scheme" in log_text
     assert "http_timeout" in log_text
     assert "title_bar_speed_format" in log_text

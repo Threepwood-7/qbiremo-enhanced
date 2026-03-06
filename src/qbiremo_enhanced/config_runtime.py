@@ -1,27 +1,43 @@
 """Config loading/validation and runtime bootstrap helpers."""
 
+from __future__ import annotations
+
 import atexit
 import logging
 import os
+import re
 import sys
 import tempfile
+from contextlib import suppress
 from pathlib import Path
-from types import TracebackType
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
+
+from PySide6.QtCore import QSettings
 
 from .constants import (
     DEFAULT_HTTP_TIMEOUT_SECONDS,
     DEFAULT_TITLE_BAR_SPEED_FORMAT,
     G_APP_NAME,
+    G_ORG_NAME,
 )
-from .models.config import NormalizedConfig
 from .utils import (
     _append_instance_id_to_filename,
     _normalize_http_protocol_scheme,
     compute_instance_id_from_config,
 )
 
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from .models.config import NormalizedConfig
+
 logger = logging.getLogger(G_APP_NAME)
+
+APP_SLUG = "qbiremo-enhanced"
+DEFAULT_LOG_FILE_NAME = "qbiremo_enhanced.log"
+CONFIG_SETTINGS_APP_NAME = "qBiremoEnhancedConfig"
+DEFAULT_PROFILE_ID = "default"
+_PROFILE_ROOT = "profiles"
 
 CONFIG_VALIDATION_KNOWN_KEYS = {
     "qb_host",
@@ -34,7 +50,7 @@ CONFIG_VALIDATION_KNOWN_KEYS = {
     "http_timeout",
     "log_file",
     "title_bar_speed_format",
-    "_config_file_path",
+    "_profile_id",
     "_log_file_path",
     "_instance_id",
     "_instance_counter",
@@ -59,63 +75,88 @@ CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS = (
     "display_size_mode",
     "display_speed_mode",
 )
-APP_SLUG = "qbiremo-enhanced"
-DEFAULT_CONFIG_REL = Path("config/app.defaults.toml")
-LOCAL_CONFIG_REL = Path("config/app.local.toml")
-APP_CONFIG_PATH_ENV = "APP_CONFIG_PATH"
-APP_SECRETS_PATH_ENV = "APP_SECRETS_PATH"
+
 SECRET_ENV_TO_KEYS = (
     ("QBIREMO_PASSWORD", ("qb_password",)),
     ("QBIREMO_HTTP_BASIC_AUTH_PASSWORD", ("http_basic_auth_password",)),
 )
-DEFAULT_LOG_FILE_NAME = "qbiremo_enhanced.log"
+
+DEFAULT_PROFILE_CONFIG: dict[str, Any] = {
+    "qb_host": "127.0.0.1",
+    "qb_port": 8080,
+    "qb_username": "admin",
+    "qb_password": "CHANGE_ME",
+    "http_basic_auth_username": "",
+    "http_basic_auth_password": "",
+    "http_protocol_scheme": "http",
+    "http_timeout": DEFAULT_HTTP_TIMEOUT_SECONDS,
+    "log_file": DEFAULT_LOG_FILE_NAME,
+    "title_bar_speed_format": DEFAULT_TITLE_BAR_SPEED_FORMAT,
+}
+
+# (key, expected_type, default)
+PROFILE_SCHEMA: tuple[tuple[str, type, Any], ...] = (
+    ("qb_host", str, DEFAULT_PROFILE_CONFIG["qb_host"]),
+    ("qb_port", int, DEFAULT_PROFILE_CONFIG["qb_port"]),
+    ("qb_username", str, DEFAULT_PROFILE_CONFIG["qb_username"]),
+    ("qb_password", str, DEFAULT_PROFILE_CONFIG["qb_password"]),
+    (
+        "http_basic_auth_username",
+        str,
+        DEFAULT_PROFILE_CONFIG["http_basic_auth_username"],
+    ),
+    (
+        "http_basic_auth_password",
+        str,
+        DEFAULT_PROFILE_CONFIG["http_basic_auth_password"],
+    ),
+    ("http_protocol_scheme", str, DEFAULT_PROFILE_CONFIG["http_protocol_scheme"]),
+    ("http_timeout", int, DEFAULT_PROFILE_CONFIG["http_timeout"]),
+    ("log_file", str, DEFAULT_PROFILE_CONFIG["log_file"]),
+    (
+        "title_bar_speed_format",
+        str,
+        DEFAULT_PROFILE_CONFIG["title_bar_speed_format"],
+    ),
+)
 
 
-def _deep_merge_dicts(base: dict, overlay: dict) -> dict:
-    merged: dict = dict(base)
-    for key, value in overlay.items():
-        base_value = merged.get(key)
-        if isinstance(base_value, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge_dicts(base_value, value)
-        else:
-            merged[key] = value
-    return merged
+def _new_profile_settings() -> QSettings:
+    return QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        G_ORG_NAME,
+        CONFIG_SETTINGS_APP_NAME,
+    )
 
 
-def _set_nested_value(target: dict, key_path: tuple[str, ...], value: str) -> None:
-    current = target
-    for key in key_path[:-1]:
-        next_value = current.get(key)
-        if not isinstance(next_value, dict):
-            next_value = {}
-            current[key] = next_value
-        current = next_value
-    current[key_path[-1]] = value
+def normalize_profile_id(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return DEFAULT_PROFILE_ID
+    cleaned = re.sub(r"[^a-z0-9_-]+", "-", raw).strip("-_")
+    return cleaned or DEFAULT_PROFILE_ID
 
 
-def _resolve_local_config_path(config_file: str | None) -> Path:
-    explicit_path = config_file or os.environ.get(APP_CONFIG_PATH_ENV, "")
-    if explicit_path:
-        path = Path(explicit_path).expanduser()
-        return path if path.is_absolute() else Path.cwd() / path
-    return Path.cwd() / LOCAL_CONFIG_REL
+def list_profile_ids() -> list[str]:
+    settings = _new_profile_settings()
+    settings.beginGroup(_PROFILE_ROOT)
+    profiles = [normalize_profile_id(group) for group in settings.childGroups()]
+    settings.endGroup()
+    deduped = sorted({profile for profile in profiles if profile})
+    if DEFAULT_PROFILE_ID not in deduped:
+        deduped.insert(0, DEFAULT_PROFILE_ID)
+    return deduped
 
 
-def _resolve_defaults_path() -> Path:
-    return Path.cwd() / DEFAULT_CONFIG_REL
+def profile_store_file_path() -> str:
+    settings = _new_profile_settings()
+    settings.sync()
+    return str(settings.fileName() or "").strip()
 
 
-def _resolve_secrets_path() -> Path:
-    explicit_path = os.environ.get(APP_SECRETS_PATH_ENV, "")
-    if explicit_path:
-        path = Path(explicit_path).expanduser()
-        return path if path.is_absolute() else Path.cwd() / path
-    if os.name == "nt":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            return Path(appdata) / APP_SLUG / "secrets.toml"
-        return Path.home() / "AppData" / "Roaming" / APP_SLUG / "secrets.toml"
-    return Path.home() / ".config" / APP_SLUG / "secrets.toml"
+def _profile_base_key(profile_id: str) -> str:
+    return f"{_PROFILE_ROOT}/{normalize_profile_id(profile_id)}"
 
 
 def _runtime_log_dir() -> Path:
@@ -136,65 +177,122 @@ def _default_instance_log_file_path(instance_id: str) -> str:
     return str(_resolve_log_file_path(DEFAULT_LOG_FILE_NAME, instance_id))
 
 
-def _load_optional_toml(path: Path, issues: list[str], role: str) -> dict:
-    if not path.exists():
-        issues.append(f"{role} config file not found: {path}")
-        return {}
-    try:
-        import tomllib
-
-        with path.open("rb") as f:
-            loaded = tomllib.load(f)
-        return loaded if isinstance(loaded, dict) else {}
-    except (ModuleNotFoundError, OSError, TypeError, ValueError) as e:
-        issues.append(f"Failed to parse {role} config file {path}: {e}")
-        return {}
-
-
-def _load_optional_toml_if_exists(path: Path, issues: list[str], role: str) -> dict:
-    if not path.exists():
-        return {}
-    return _load_optional_toml(path, issues, role)
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    return bool(default)
 
 
-def _apply_secret_env_overrides(config: dict) -> None:
+def _coerce_value(value: Any, expected_type: type, default: Any) -> Any:
+    if expected_type is bool:
+        return _coerce_bool(value, bool(default))
+    if expected_type is int:
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return int(default)
+    if expected_type is float:
+        try:
+            return float(value)
+        except (TypeError, ValueError, OverflowError):
+            return float(default)
+    if value is None:
+        return default
+    return str(value)
+
+
+def save_profile_config(profile_id: str, config: dict[str, Any]) -> str:
+    """Persist one profile into QSettings and return normalized profile id."""
+    normalized_profile = normalize_profile_id(profile_id)
+    merged = dict(DEFAULT_PROFILE_CONFIG)
+    if isinstance(config, dict):
+        merged.update(config)
+
+    settings = _new_profile_settings()
+    base_key = _profile_base_key(normalized_profile)
+    for key, expected_type, default in PROFILE_SCHEMA:
+        settings.setValue(
+            f"{base_key}/{key}",
+            _coerce_value(merged.get(key, default), expected_type, default),
+        )
+    settings.sync()
+    return normalized_profile
+
+
+def delete_profile_config(profile_id: str) -> None:
+    normalized_profile = normalize_profile_id(profile_id)
+    settings = _new_profile_settings()
+    settings.remove(_profile_base_key(normalized_profile))
+    settings.sync()
+
+
+def _apply_secret_env_overrides(config: dict[str, Any]) -> None:
     for env_name, key_path in SECRET_ENV_TO_KEYS:
         env_value = os.environ.get(env_name, "")
         if env_value:
-            _set_nested_value(config, key_path, env_value)
+            config[key_path[0]] = env_value
 
 
-def _empty_config() -> NormalizedConfig:
-    """Build one empty normalized config value for typed fallbacks."""
-    return cast("NormalizedConfig", {})
+def _load_profile_settings(profile_id: str, issues: list[str]) -> dict[str, Any]:
+    normalized_profile = normalize_profile_id(profile_id)
+    settings = _new_profile_settings()
+    base_key = _profile_base_key(normalized_profile)
+
+    profile_exists = any(
+        settings.contains(f"{base_key}/{key}") for key, _expected_type, _default in PROFILE_SCHEMA
+    )
+    if not profile_exists:
+        issues.append(
+            f"Profile '{normalized_profile}' not found in QSettings; seeding defaults."
+        )
+        save_profile_config(normalized_profile, DEFAULT_PROFILE_CONFIG)
+
+    loaded: dict[str, Any] = dict(DEFAULT_PROFILE_CONFIG)
+    for key, expected_type, default in PROFILE_SCHEMA:
+        raw = settings.value(f"{base_key}/{key}", default)
+        loaded[key] = _coerce_value(raw, expected_type, default)
+    loaded["_profile_id"] = normalized_profile
+    return loaded
 
 
-def load_config(config_file: str | None) -> NormalizedConfig:
-    """Load layered TOML configuration (defaults/local/secrets/env)."""
-    config, _issues = load_config_with_issues(config_file)
+def load_config(profile_id: str | None) -> NormalizedConfig:
+    """Load one profile-backed configuration from QSettings."""
+    config, _issues = load_config_with_issues(profile_id)
     return config
 
 
-def load_config_with_issues(config_file: str | None) -> tuple[NormalizedConfig, list[str]]:
-    """Load layered TOML configuration and collect non-fatal issues."""
+def load_config_with_issues(profile_id: str | None) -> tuple[NormalizedConfig, list[str]]:
+    """Load one profile-backed configuration and collect non-fatal issues."""
     issues: list[str] = []
-    defaults_path = _resolve_defaults_path()
-    local_path = _resolve_local_config_path(config_file)
-    secrets_path = _resolve_secrets_path()
+    normalized_profile = normalize_profile_id(profile_id)
+    loaded = _load_profile_settings(normalized_profile, issues)
+    _apply_secret_env_overrides(loaded)
+    return cast("NormalizedConfig", loaded), issues
 
-    defaults_config = _load_optional_toml(defaults_path, issues, "defaults")
-    local_config = _load_optional_toml(local_path, issues, "local")
-    secrets_config = _load_optional_toml_if_exists(secrets_path, issues, "secrets")
 
-    merged = _deep_merge_dicts(defaults_config, local_config)
-    merged = _deep_merge_dicts(merged, secrets_config)
-    _apply_secret_env_overrides(merged)
-
-    if not merged:
-        issues.append("No valid config loaded from defaults/local/secrets; using built-in defaults.")
-        return _empty_config(), issues
-
-    return cast("NormalizedConfig", merged), issues
+def get_missing_required_config(config: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    if "qb_host" in config:
+        host = str(config.get("qb_host", "") or "").strip()
+        if not host:
+            missing.append("qb_host is required")
+    if "qb_username" in config:
+        username = str(config.get("qb_username", "") or "").strip()
+        if not username:
+            missing.append("qb_username is required")
+    if "qb_password" in config:
+        password = str(config.get("qb_password", "") or "").strip()
+        if not password or password.upper() == "CHANGE_ME":
+            missing.append("qb_password is required")
+    return missing
 
 
 def _config_validation_warn(message: str) -> None:
@@ -226,7 +324,7 @@ def _remove_settings_managed_config_keys(normalized: dict[str, object]) -> None:
     """Drop config keys that are intentionally managed by QSettings."""
     for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
         if key in normalized:
-            _config_validation_warn(f"'{key}' is ignored in TOML; managed via QSettings.")
+            _config_validation_warn(f"'{key}' is ignored in runtime profile config; managed via UI settings.")
             normalized.pop(key, None)
 
 
@@ -350,12 +448,12 @@ def _warn_unknown_config_keys(normalized: dict[str, object]) -> None:
         _config_validation_warn(f"Unknown config key '{key}' will be ignored.")
 
 
-def validate_and_normalize_config(config: object, config_file: str) -> NormalizedConfig:
+def validate_and_normalize_config(config: object, profile_id: str) -> NormalizedConfig:
     """Validate config values and return one sanitized config mapping."""
     if not isinstance(config, dict):
         logger.warning(
-            "Config validation: root config from %s is not a TOML table/object. Using defaults.",
-            config_file,
+            "Config validation: root config from profile %s is not a mapping. Using defaults.",
+            profile_id,
         )
         config = {}
 
@@ -371,7 +469,9 @@ def validate_and_normalize_config(config: object, config_file: str) -> Normalize
     _normalize_title_bar_speed_format_value(normalized)
     _warn_unknown_config_keys(normalized)
 
-    logger.info("Configuration validated from %s", config_file)
+    normalized_profile = normalize_profile_id(normalized.get("_profile_id", profile_id))
+    normalized["_profile_id"] = normalized_profile
+    logger.info("Configuration validated from profile %s", normalized_profile)
     return cast("NormalizedConfig", normalized)
 
 
@@ -388,16 +488,12 @@ def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
     log_file_path = _resolve_log_file_path(log_file, instance_id)
     config["_log_file_path"] = str(log_file_path)
 
-    try:
+    with suppress(OSError):
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        # Directory creation failure will be handled by FileHandler fallback.
-        pass
 
     try:
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
     except OSError:
-        # Fallback to temp-dir default if configured log path is not writable.
         fallback_log_file = Path(_default_instance_log_file_path(instance_id))
         fallback_log_file.parent.mkdir(parents=True, exist_ok=True)
         config["_log_file_path"] = str(fallback_log_file)
@@ -448,6 +544,4 @@ def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
         file_handler.flush()
 
     sys.excepthook = _excepthook
-
-    # Also flush the log file on normal exit so nothing is lost
     atexit.register(file_handler.flush)

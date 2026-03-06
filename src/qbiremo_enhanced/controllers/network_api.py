@@ -41,7 +41,7 @@ class NetworkApiController(WindowControllerBase):
     """Handle API calls, cache I/O, and queue callbacks for network data."""
 
     def _build_connection_info(self, config: NormalizedConfig) -> dict[str, object]:
-        """Build qBittorrent connection info from TOML config with env var fallback."""
+        """Build qBittorrent connection info from profile config with env var fallback."""
         # Host URL may contain scheme, basic-auth credentials, and port.
         raw_host = config.get("qb_host") or "localhost"
         scheme_override = _normalize_http_protocol_scheme(
