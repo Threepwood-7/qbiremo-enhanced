@@ -583,8 +583,6 @@ Original qBiremo concept extended with:
 
 ---
 
-**Tags:** qbittorrent, qbittorrent-api, torrent, pyside6, qt, desktop-app, windows
-
 ---
 
 <!-- legal-disclaimer:start -->
