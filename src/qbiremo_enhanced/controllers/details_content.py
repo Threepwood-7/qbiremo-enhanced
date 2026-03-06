@@ -47,7 +47,7 @@ class DetailsContentController(WindowControllerBase):
         try:
             self.tree_files.clear()
 
-            PRIORITY_NAMES = {0: "Skip", 1: "Normal", 6: "High", 7: "Maximum"}
+            priority_names = {0: "Skip", 1: "Normal", 6: "High", 7: "Maximum"}
 
             # Build a nested dict for directory structure
             dir_nodes: dict[str, QTreeWidgetItem] = {}
@@ -89,7 +89,7 @@ class DetailsContentController(WindowControllerBase):
                         parts[-1],
                         format_size_mode(size, self.display_size_mode),
                         f"{progress * 100:.1f}%",
-                        PRIORITY_NAMES.get(priority, str(priority)),
+                        priority_names.get(priority, str(priority)),
                     ]
                 )
                 file_item.setData(
