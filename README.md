@@ -180,7 +180,7 @@ It combines:
 - Debug logging toggle:
   - logs API calls, responses, errors with timing.
 - Edit `.ini` settings file (opens current QSettings INI path).
-- Open Web UI in browser:
+- Open Web UI in Browser:
   - launches the current qBittorrent Web UI URL in the default browser (`<scheme>://<user>@<host>:<port>`).
 - Edit App Preferences dialog:
   - full preference tree editor with type-aware parsing,
@@ -363,6 +363,7 @@ Torrent-table sort shortcuts apply when the torrent list has focus.
 | `Ctrl+O` | Add Torrent |
 | `Ctrl+Shift+N` | New instance (current config) |
 | `Ctrl+Q` / `Alt+X` | Exit |
+| `F1` | Help |
 | `F5` | Refresh |
 | `Ctrl+F5` | Clear Cache & Refresh (global view action) |
 | `F6` | Show active torrents |
@@ -433,18 +434,18 @@ Torrent-table sort shortcuts apply when the torrent list has focus.
 
 ### Tools
 - `Enable Clipboard Monitor` (toggle)
-- `Enable Debug logging` (toggle)
-- `Edit .ini file`
-- `Open Web UI in browser`
+- `Enable Debug Logging` (toggle)
+- `Edit .ini File`
+- `Open Web UI in Browser`
 - `Edit App Preferences`
-- `Edit Add Preferences (friendly)`
+- `Edit Add Preferences (Friendly)`
 - `Manage Speed Limits...`
 - `Manage Tags and Categories`
 - `Tracker Health Dashboard...`
 - `Session Timeline...`
 
 ### Help
-- `About`
+- `Help` (`F1`)
 
 ## Project Structure
 
@@ -624,7 +625,7 @@ uv lock --check
 
 ### Config issues
 
-- Use *Tools > Edit .ini file* to manually inspect and edit the config
+- Use *Tools > Edit .ini File* to manually inspect and edit the config
 - Unknown keys are silently ignored; check log file for validation warnings
 - To reset, delete the QSettings INI file and restart
 

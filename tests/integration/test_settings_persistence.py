@@ -62,7 +62,7 @@ def test_auto_refresh_toggle_and_interval_are_persisted(qtbot, monkeypatch, tmp_
     assert w2.auto_refresh_enabled is True
     assert w2.refresh_interval == 37
     assert w2.action_auto_refresh.isChecked() is True
-    assert w2.action_auto_refresh.text() == "Enable &Auto-Refresh (37)"
+    assert w2.action_auto_refresh.text() == "Enable A&uto-Refresh (37)"
     assert w2.refresh_timer.isActive()
     assert w2.refresh_timer.interval() == 37000
 

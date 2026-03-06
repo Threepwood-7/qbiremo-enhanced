@@ -157,21 +157,21 @@ class FilterTableController(WindowControllerBase):
 
     def _create_torrent_columns_menu(self, parent_menu: QMenu) -> None:
         """Create View -> Torrent Columns submenu with per-column visibility toggles."""
-        columns_menu = _StayOpenOnToggleMenu("Torrent &Columns", self)
+        columns_menu = _StayOpenOnToggleMenu("Torrent Colu&mns", self)
         parent_menu.addMenu(columns_menu)
-        action_basic_view = QAction("Basic View", self)
+        action_basic_view = QAction("&Basic View", self)
         action_basic_view.triggered.connect(self._apply_basic_torrent_view)
         columns_menu.addAction(action_basic_view)
 
-        action_medium_view = QAction("Medium View", self)
+        action_medium_view = QAction("&Medium View", self)
         action_medium_view.triggered.connect(self._apply_medium_torrent_view)
         columns_menu.addAction(action_medium_view)
 
-        action_save_current = QAction("Save Current View..", self)
+        action_save_current = QAction("&Save Current View..", self)
         action_save_current.triggered.connect(self._save_current_torrent_view)
         columns_menu.addAction(action_save_current)
 
-        self.saved_torrent_views_menu = columns_menu.addMenu("Saved Views")
+        self.saved_torrent_views_menu = columns_menu.addMenu("Sa&ved Views")
         self._refresh_saved_torrent_views_menu()
 
         columns_menu.addSeparator()
@@ -191,7 +191,7 @@ class FilterTableController(WindowControllerBase):
             self.column_visibility_actions[key] = action
 
         columns_menu.addSeparator()
-        action_show_all = QAction("&Show All Columns", self)
+        action_show_all = QAction("Show &All Columns", self)
         action_show_all.triggered.connect(self._show_all_torrent_columns)
         columns_menu.addAction(action_show_all)
 

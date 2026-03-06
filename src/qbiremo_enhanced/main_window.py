@@ -928,7 +928,7 @@ class MainWindow(QMainWindow):
         action_refresh.triggered.connect(self._refresh_torrents)
         view_menu.addAction(action_refresh)
 
-        clear_cache_action = QAction("Clear Cache && &Refresh", self)
+        clear_cache_action = QAction("&Clear Cache && Refresh", self)
         clear_cache_action.setShortcut("Ctrl+F5")
         clear_cache_action.triggered.connect(self._clear_cache_and_refresh)
         view_menu.addAction(clear_cache_action)
@@ -938,12 +938,12 @@ class MainWindow(QMainWindow):
         action_show_active.triggered.connect(self._show_active_torrents_only)
         view_menu.addAction(action_show_active)
 
-        action_show_complete = QAction("Show &Complete Torrents", self)
+        action_show_complete = QAction("Show Com&plete Torrents", self)
         action_show_complete.setShortcut("F7")
         action_show_complete.triggered.connect(self._show_completed_torrents_only)
         view_menu.addAction(action_show_complete)
 
-        action_show_all = QAction("Show &All Torrents", self)
+        action_show_all = QAction("Show All T&orrents", self)
         action_show_all.setShortcut("F8")
         action_show_all.triggered.connect(self._show_all_torrents_only)
         view_menu.addAction(action_show_all)
@@ -957,13 +957,13 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         self._create_torrent_columns_menu(view_menu)
 
-        action_fit_columns = QAction("Fit &Columns", self)
+        action_fit_columns = QAction("&Fit Columns", self)
         action_fit_columns.triggered.connect(self._fit_torrent_columns)
         view_menu.addAction(action_fit_columns)
 
         view_menu.addSeparator()
 
-        self.action_auto_refresh = QAction("Enable &Auto-Refresh", self)
+        self.action_auto_refresh = QAction("Enable A&uto-Refresh", self)
         self.action_auto_refresh.setCheckable(True)
         self.action_auto_refresh.setChecked(self.auto_refresh_enabled)
         self.action_auto_refresh.triggered.connect(self._toggle_auto_refresh)
@@ -975,7 +975,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(action_set_refresh_interval)
 
         view_menu.addSeparator()
-        action_reset_view = QAction("&Reset View", self)
+        action_reset_view = QAction("Reset &View", self)
         action_reset_view.triggered.connect(self._reset_view_defaults)
         view_menu.addAction(action_reset_view)
 
@@ -989,27 +989,27 @@ class MainWindow(QMainWindow):
         self.action_clipboard_monitor.triggered.connect(self._toggle_clipboard_monitor)
         tools_menu.addAction(self.action_clipboard_monitor)
 
-        self.action_debug_logging = QAction("Enable &Debug logging", self)
+        self.action_debug_logging = QAction("Enable &Debug Logging", self)
         self.action_debug_logging.setCheckable(True)
         self.action_debug_logging.setChecked(self.debug_logging_enabled)
         self.action_debug_logging.triggered.connect(self._toggle_debug_logging)
         tools_menu.addAction(self.action_debug_logging)
 
-        action_edit_ini = QAction("&Edit .ini file", self)
+        action_edit_ini = QAction("Edit &.ini File", self)
         action_edit_ini.triggered.connect(self._edit_settings_ini_file)
         tools_menu.addAction(action_edit_ini)
 
-        action_edit_app_preferences = QAction("Edit App Preferences", self)
+        action_edit_app_preferences = QAction("Edit &App Preferences", self)
         action_edit_app_preferences.triggered.connect(self._show_app_preferences_editor)
         tools_menu.addAction(action_edit_app_preferences)
 
-        action_edit_add_preferences_friendly = QAction("Edit Add Preferences (friendly)", self)
+        action_edit_add_preferences_friendly = QAction("Edit Add Preferences (&Friendly)", self)
         action_edit_add_preferences_friendly.triggered.connect(
             self._show_friendly_add_preferences_editor
         )
         tools_menu.addAction(action_edit_add_preferences_friendly)
 
-        action_open_web_ui = QAction("Open Web UI in browser", self)
+        action_open_web_ui = QAction("&Open Web UI in Browser", self)
         action_open_web_ui.triggered.connect(self._open_web_ui_in_browser)
         tools_menu.addAction(action_open_web_ui)
 
@@ -1019,7 +1019,7 @@ class MainWindow(QMainWindow):
         action_manage_speed_limits.triggered.connect(self._show_speed_limits_manager)
         tools_menu.addAction(action_manage_speed_limits)
 
-        action_manage_taxonomy = QAction("Manage Tags and Categories", self)
+        action_manage_taxonomy = QAction("Manage &Tags and Categories", self)
         action_manage_taxonomy.triggered.connect(self._show_taxonomy_manager)
         tools_menu.addAction(action_manage_taxonomy)
 
@@ -1029,7 +1029,7 @@ class MainWindow(QMainWindow):
         action_tracker_health.triggered.connect(self._show_tracker_health_dashboard)
         tools_menu.addAction(action_tracker_health)
 
-        action_session_timeline = QAction("Session &Timeline...", self)
+        action_session_timeline = QAction("Session Time&line...", self)
         action_session_timeline.triggered.connect(self._show_session_timeline)
         tools_menu.addAction(action_session_timeline)
 
@@ -1037,9 +1037,10 @@ class MainWindow(QMainWindow):
         """Create Help menu."""
         help_menu = menubar.addMenu("&Help")
 
-        about_action = QAction("&About", self)
-        about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
+        help_action = QAction("&Help", self)
+        help_action.setShortcut("F1")
+        help_action.triggered.connect(self._show_about)
+        help_menu.addAction(help_action)
 
     def _create_statusbar(self) -> None:
         """Create status bar."""

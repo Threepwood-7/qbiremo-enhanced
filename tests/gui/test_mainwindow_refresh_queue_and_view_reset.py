@@ -79,11 +79,11 @@ def test_set_auto_refresh_interval_from_menu(window, monkeypatch):
     assert window.refresh_interval == 60
     assert window.refresh_timer.isActive()
     assert window.refresh_timer.interval() == 60000
-    assert window.action_auto_refresh.text() == "Enable &Auto-Refresh (60)"
+    assert window.action_auto_refresh.text() == "Enable A&uto-Refresh (60)"
 
 
 def test_auto_refresh_menu_label_includes_current_interval(window):
-    assert window.action_auto_refresh.text() == f"Enable &Auto-Refresh ({window.refresh_interval})"
+    assert window.action_auto_refresh.text() == f"Enable A&uto-Refresh ({window.refresh_interval})"
 
 
 def test_default_refresh_interval_uses_new_baseline(window):
@@ -316,7 +316,7 @@ def test_task_completion_bumps_auto_refresh_interval_when_elapsed_exceeds_curren
     window._on_task_completed("refresh_torrents", {"success": True, "elapsed": 6.2})
 
     assert window.refresh_interval == 25
-    assert window.action_auto_refresh.text() == "Enable &Auto-Refresh (25)"
+    assert window.action_auto_refresh.text() == "Enable A&uto-Refresh (25)"
     assert window.refresh_timer.isActive() is True
     assert window.refresh_timer.interval() == 25000
     assert save_calls["count"] == 1
@@ -342,7 +342,7 @@ def test_task_completion_does_not_bump_auto_refresh_interval_when_elapsed_is_not
     window._on_task_completed("refresh_torrents", None)
 
     assert window.refresh_interval == 7
-    assert window.action_auto_refresh.text() == "Enable &Auto-Refresh (7)"
+    assert window.action_auto_refresh.text() == "Enable A&uto-Refresh (7)"
     assert window.refresh_timer.interval() == 7000
     assert save_calls["count"] == 0
 
@@ -363,7 +363,7 @@ def test_task_completion_bump_respects_auto_refresh_max_cap(window, monkeypatch)
     window._on_task_completed("refresh_torrents", {"success": True, "elapsed": 160.0})
 
     assert window.refresh_interval == 600
-    assert window.action_auto_refresh.text() == "Enable &Auto-Refresh (600)"
+    assert window.action_auto_refresh.text() == "Enable A&uto-Refresh (600)"
     assert window.refresh_timer.interval() == 600000
     assert save_calls["count"] == 1
 
@@ -388,7 +388,7 @@ def test_ui_cycle_elapsed_can_bump_and_persist_auto_refresh_interval(window, mon
     )
 
     assert window.refresh_interval == 11
-    assert window.action_auto_refresh.text() == "Enable &Auto-Refresh (11)"
+    assert window.action_auto_refresh.text() == "Enable A&uto-Refresh (11)"
     assert window.refresh_timer.interval() == 11000
     assert save_calls["count"] == 1
 

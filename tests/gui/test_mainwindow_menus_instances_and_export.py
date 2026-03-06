@@ -96,8 +96,8 @@ def test_main_window_starts_maximized(window):
 
 
 def test_clear_cache_refresh_action_is_under_view_menu(window):
-    action_in_view = _find_menu_action(window, "&View", "Clear Cache && &Refresh")
-    action_in_file = _find_menu_action(window, "&File", "Clear Cache && &Refresh")
+    action_in_view = _find_menu_action(window, "&View", "&Clear Cache && Refresh")
+    action_in_file = _find_menu_action(window, "&File", "&Clear Cache && Refresh")
 
     assert action_in_view is not None
     assert _shortcut_text(action_in_view) == "ctrl+f5"
@@ -176,15 +176,15 @@ def test_view_menu_contains_human_readable_toggle(window):
 
 
 def test_view_menu_contains_fit_columns_action(window):
-    action = _find_menu_action(window, "&View", "Fit &Columns")
+    action = _find_menu_action(window, "&View", "&Fit Columns")
     assert action is not None
 
 
 def test_view_menu_contains_status_shortcut_actions(window):
     expected_actions = [
         ("Show &Active Torrents", "F6"),
-        ("Show &Complete Torrents", "F7"),
-        ("Show &All Torrents", "F8"),
+        ("Show Com&plete Torrents", "F7"),
+        ("Show All T&orrents", "F8"),
     ]
 
     for text, shortcut in expected_actions:
@@ -203,8 +203,8 @@ def test_status_shortcut_actions_clear_non_status_filters(window, monkeypatch):
 
     expected = [
         ("Show &Active Torrents", "active"),
-        ("Show &Complete Torrents", "completed"),
-        ("Show &All Torrents", "all"),
+        ("Show Com&plete Torrents", "completed"),
+        ("Show All T&orrents", "all"),
     ]
 
     for expected_calls, (action_text, expected_status) in enumerate(expected, start=1):
@@ -239,7 +239,7 @@ def test_fit_columns_action_triggers_fit_method(window, monkeypatch):
         window, "_fit_torrent_columns", lambda: calls.__setitem__("count", calls["count"] + 1)
     )
 
-    action = _find_menu_action(window, "&View", "Fit &Columns")
+    action = _find_menu_action(window, "&View", "&Fit Columns")
     assert action is not None
 
     action.trigger()
@@ -337,7 +337,7 @@ def test_view_menu_column_toggles_hide_and_show_columns(window):
     tracker_index = window.torrent_column_index["tracker"]
     assert not window.tbl_torrents.isColumnHidden(tracker_index)
 
-    tracker_action = _find_submenu_action(window, "&View", "Torrent &Columns", "Tracker")
+    tracker_action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "Tracker")
     assert tracker_action is not None
     assert tracker_action.isCheckable()
     assert tracker_action.isChecked() is True
@@ -350,8 +350,8 @@ def test_view_menu_column_toggles_hide_and_show_columns(window):
 
 
 def test_torrent_columns_menu_stays_open_when_toggling_column(window, qtbot):
-    columns_menu = _find_submenu(window, "&View", "Torrent &Columns")
-    tracker_action = _find_submenu_action(window, "&View", "Torrent &Columns", "Tracker")
+    columns_menu = _find_submenu(window, "&View", "Torrent Colu&mns")
+    tracker_action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "Tracker")
 
     assert columns_menu is not None
     assert tracker_action is not None
@@ -374,18 +374,18 @@ def test_torrent_columns_menu_stays_open_when_toggling_column(window, qtbot):
 
 
 def test_torrent_columns_menu_contains_view_management_actions(window):
-    assert _find_submenu_action(window, "&View", "Torrent &Columns", "Basic View") is not None
-    assert _find_submenu_action(window, "&View", "Torrent &Columns", "Medium View") is not None
+    assert _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Basic View") is not None
+    assert _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Medium View") is not None
     assert (
-        _find_submenu_action(window, "&View", "Torrent &Columns", "Save Current View..") is not None
+        _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Save Current View..") is not None
     )
-    saved_views_action = _find_submenu_action(window, "&View", "Torrent &Columns", "Saved Views")
+    saved_views_action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "Sa&ved Views")
     assert saved_views_action is not None
     assert saved_views_action.menu() is not None
 
 
 def test_basic_view_action_applies_expected_columns(window):
-    action = _find_submenu_action(window, "&View", "Torrent &Columns", "Basic View")
+    action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Basic View")
     assert action is not None
 
     action.trigger()
@@ -398,7 +398,7 @@ def test_basic_view_action_applies_expected_columns(window):
 
 
 def test_medium_view_action_applies_expected_columns(window):
-    action = _find_submenu_action(window, "&View", "Torrent &Columns", "Medium View")
+    action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Medium View")
     assert action is not None
 
     action.trigger()
@@ -464,17 +464,17 @@ def test_torrent_table_cells_are_not_editable(window):
 
 def test_tools_menu_contains_clipboard_monitor_toggle(window):
     action_clipboard = _find_menu_action(window, "&Tools", "Enable &Clipboard Monitor")
-    action_debug_logging = _find_menu_action(window, "&Tools", "Enable &Debug logging")
-    action_edit_ini = _find_menu_action(window, "&Tools", "&Edit .ini file")
-    action_edit_app_preferences = _find_menu_action(window, "&Tools", "Edit App Preferences")
+    action_debug_logging = _find_menu_action(window, "&Tools", "Enable &Debug Logging")
+    action_edit_ini = _find_menu_action(window, "&Tools", "Edit &.ini File")
+    action_edit_app_preferences = _find_menu_action(window, "&Tools", "Edit &App Preferences")
     action_edit_add_preferences_friendly = _find_menu_action(
-        window, "&Tools", "Edit Add Preferences (friendly)"
+        window, "&Tools", "Edit Add Preferences (&Friendly)"
     )
-    action_open_web_ui = _find_menu_action(window, "&Tools", "Open Web UI in browser")
+    action_open_web_ui = _find_menu_action(window, "&Tools", "&Open Web UI in Browser")
     action_speed_limits = _find_menu_action(window, "&Tools", "Manage &Speed Limits...")
-    action_manage_taxonomy = _find_menu_action(window, "&Tools", "Manage Tags and Categories")
+    action_manage_taxonomy = _find_menu_action(window, "&Tools", "Manage &Tags and Categories")
     action_tracker_health = _find_menu_action(window, "&Tools", "Tracker &Health Dashboard...")
-    action_session_timeline = _find_menu_action(window, "&Tools", "Session &Timeline...")
+    action_session_timeline = _find_menu_action(window, "&Tools", "Session Time&line...")
     assert action_clipboard is not None
     assert action_clipboard.isCheckable()
     assert action_debug_logging is not None
@@ -501,7 +501,7 @@ def test_open_web_ui_action_opens_expected_url(window, monkeypatch):
     window.config["qb_host"] = "https://httpuser:httppass@qb.example.com:9443"
     window.config["qb_port"] = 8080
 
-    action_open_web_ui = _find_menu_action(window, "&Tools", "Open Web UI in browser")
+    action_open_web_ui = _find_menu_action(window, "&Tools", "&Open Web UI in Browser")
     assert action_open_web_ui is not None
     action_open_web_ui.trigger()
 
@@ -521,7 +521,7 @@ def test_open_web_ui_action_uses_configured_http_protocol_scheme(window, monkeyp
     window.config["qb_port"] = 38081
     window.config["http_protocol_scheme"] = "http"
 
-    action_open_web_ui = _find_menu_action(window, "&Tools", "Open Web UI in browser")
+    action_open_web_ui = _find_menu_action(window, "&Tools", "&Open Web UI in Browser")
     assert action_open_web_ui is not None
     action_open_web_ui.trigger()
 
@@ -545,6 +545,12 @@ def test_file_menu_exit_action_supports_alt_x_shortcut(window):
     shortcuts = {seq.toString().lower().replace(" ", "") for seq in action_exit.shortcuts()}
     assert "ctrl+q" in shortcuts
     assert "alt+x" in shortcuts
+
+
+def test_help_menu_action_uses_f1_shortcut(window):
+    action_help = _find_menu_action(window, "&Help", "&Help")
+    assert action_help is not None
+    assert _shortcut_text(action_help) == "f1"
 
 
 def test_file_menu_contains_export_torrent_action(window):
@@ -820,5 +826,5 @@ def test_on_add_torrent_complete_reports_partial_success(window, monkeypatch):
 
 
 def test_tools_menu_contains_manage_tags_and_categories_action(window):
-    action = _find_menu_action(window, "&Tools", "Manage Tags and Categories")
+    action = _find_menu_action(window, "&Tools", "Manage &Tags and Categories")
     assert action is not None

@@ -63,7 +63,7 @@ class SessionUiController(WindowControllerBase):
         if not hasattr(self, "action_auto_refresh"):
             return
         interval_seconds = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
-        self.action_auto_refresh.setText(f"Enable &Auto-Refresh ({interval_seconds})")
+        self.action_auto_refresh.setText(f"Enable A&uto-Refresh ({interval_seconds})")
 
     def _record_session_timeline_sample(self, alt_enabled: bool | None = None) -> None:
         """Record one session timeline sample from current torrent list."""
