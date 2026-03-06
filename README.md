@@ -9,27 +9,23 @@ It combines:
 - deep details/edit panels,
 - and operational tooling (taxonomy management, speed profile management, tracker analytics, session timeline, clipboard ingest, and export).
 
-## UI Walkthrough
+## Table of Contents
 
-1. Review session health and torrent activity at a glance.
+- [Features](#features)
+- [UI Walkthrough](#ui-walkthrough)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Menu Reference](#menu-reference)
+- [Project Structure](#project-structure)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Legal Disclaimer](#legal-disclaimer)
 
-   ![Review session health](docs/images/ui-01-overview.png)
-
-   Overview of torrent table, status filters, and live transfer context.
-
-2. Inspect content/details workflow for a selected torrent.
-
-   ![Inspect content and details](docs/images/ui-02-workflow.png)
-
-   Workflow state showing content cache and detailed transfer metadata.
-
-3. Execute edit and action controls from detail tabs.
-
-   ![Execute edit and action controls](docs/images/ui-03-details.png)
-
-   Action-focused detail tab state for updating torrent settings safely.
-
-## Current Feature Set
+## Features
 
 ### Main Workspace
 - Unified main window with split layout:
@@ -211,7 +207,128 @@ It combines:
   - visual alt-mode background bands,
   - refresh and clear history controls.
 
+## UI Walkthrough
+
+1. Review session health and torrent activity at a glance.
+
+   ![Review session health](docs/images/ui-01-overview.png)
+
+   Overview of torrent table, status filters, and live transfer context.
+
+2. Inspect content/details workflow for a selected torrent.
+
+   ![Inspect content and details](docs/images/ui-02-workflow.png)
+
+   Workflow state showing content cache and detailed transfer metadata.
+
+3. Execute edit and action controls from detail tabs.
+
+   ![Execute edit and action controls](docs/images/ui-03-details.png)
+
+   Action-focused detail tab state for updating torrent settings safely.
+
+## Requirements
+
+- **Windows** (10 or later)
+- **Python 3.13+**
+- **qBittorrent** instance with WebUI API access
+
+Runtime dependencies: `PySide6 >=6.10.2`, `qbittorrent-api >=2025.11.1`.
+
+## Installation
+
+### First-time Setup
+
+```bat
+python scripts\windows\setup_env.py
+```
+
+Creates the `.venv` by running `uv sync --locked` (falls back to `uv sync` if no lockfile).
+
+Manual alternative for development:
+
+```bat
+uv sync --group dev
+```
+
+## Usage
+
+### Recommended (console-less)
+
+```bat
+pyw scripts\windows\run_app_gui.pyw
+```
+
+Launches the GUI without a console window. Auto-bootstraps the `.venv` via `setup_env.py` if not yet created.
+
+### With console
+
+```bat
+python scripts\windows\run_app.py
+```
+
+Runs via `hatch run python -m qbiremo_enhanced`. Requires `hatch` in PATH.
+
+### Direct
+
+```bat
+python -m qbiremo_enhanced
+```
+
+### Command-line Options
+
+```text
+-p, --profile        Runtime profile id (default: default)
+--instance_counter   Positive per-server instance counter suffix (default: 1)
+-h, --help           Show help
+```
+
+### Quick Start
+
+1. Launch the app using one of the methods above
+2. On first launch, configure your qBittorrent host, port, and credentials
+3. The main window opens maximized with the torrent table and filter tree
+
+## Configuration
+
+Runtime config uses QSettings profile storage:
+
+- Store backend: `QSettings(IniFormat, UserScope, "qBiremo", "qBiremoEnhancedConfig")`
+- Profiles are stored under `profiles/<profile_id>/...`
+- Startup profile is selected with `--profile` (default: `default`)
+- Env secret overrides remain supported:
+  - `QBIREMO_PASSWORD`
+  - `QBIREMO_HTTP_BASIC_AUTH_PASSWORD`
+
+### Key Settings
+
+Validated key contract (`validate_and_normalize_config`):
+
+| Key | Type | Default if Missing/Invalid | Allowed Values / Validation Rules |
+|---|---|---|---|
+| `qb_host` | `str` | `"localhost"` | Non-empty string. Can be hostname/IP or full URL (`http[s]://host[:port][/path]`). If URL includes `user:pass@`, those are used for HTTP basic auth. |
+| `qb_port` | `int` | `8080` | Must be in range `1..65535`. |
+| `qb_username` | `str` | `"admin"` | qBittorrent API username (not reverse-proxy basic auth). |
+| `qb_password` | `str` | `""` | qBittorrent API password. |
+| `http_basic_auth_username` | `str` | `""` | Optional reverse-proxy basic-auth username. If `qb_host` has embedded username, embedded value wins. |
+| `http_basic_auth_password` | `str` | `""` | Optional reverse-proxy basic-auth password. If `qb_host` has embedded password, embedded value wins. |
+| `http_protocol_scheme` | `str` | Effective default: `"http"` | Allowed: `"http"`, `"https"`. Invalid value is normalized to `"http"`. |
+| `http_timeout` | `int` | `300` | Must be integer `> 0`. Used as qBittorrent API HTTP timeout in seconds. |
+| `log_file` | `str` | `"qbiremo_enhanced.log"` | Non-empty path string. Relative paths are resolved under the OS temp runtime folder (`<temp>/qbiremo-enhanced`). |
+| `title_bar_speed_format` | `str` | `"[D: {down_text}, U: {up_text}]"` | Must be non-empty and format successfully with `{down_text}` and `{up_text}` placeholders. |
+
+### Behavior Notes
+
+- Unknown profile keys are ignored with warnings.
+- If `qb_host` includes a full URL with embedded userinfo, HTTP basic auth is extracted and sent via `Authorization` header.
+- Environment fallback for HTTP basic auth:
+  - `X_HTTP_USER`
+  - `X_HTTP_PASS`
+- Internal keys are runtime-managed and should not be set manually:
+  - `_profile_id`, `_log_file_path`, `_instance_id`, `_instance_counter`, `_instance_lock_file_path`
+
 ### Caching, Persistence, and Instance Isolation
+
 - Persistent content cache stored as JSON.
 - Cache path defaults to OS temp under `qbiremo_enhanced_temp/`.
 - Cache filename is instance-scoped using deterministic host+port hash suffix.
@@ -231,12 +348,43 @@ It combines:
   - debug logging toggle,
   - named column views.
 
-### Logging and Error Handling
-- File-based logging only (no floating log panel in current build).
-- Log file path can be configured and is instance-suffixed.
-- Startup fatal exceptions are logged and the log file is opened automatically.
-- Global exception hook logs unhandled exceptions and flushes file handler.
-- Background task failures surface to status bar and log.
+## Keyboard Shortcuts
+
+Torrent-table sort shortcuts apply when the torrent list has focus.
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+O` | Add Torrent |
+| `Ctrl+Shift+N` | New instance (current config) |
+| `Ctrl+Q` / `Alt+X` | Exit |
+| `F5` | Refresh |
+| `Ctrl+F5` | Clear Cache & Refresh (global view action) |
+| `F6` | Show active torrents |
+| `F7` | Show complete torrents |
+| `F8` | Show all torrents |
+| `Ctrl+F1` | Sort torrents by ratio |
+| `Ctrl+Alt+F1` | Sort torrents by uploaded |
+| `Ctrl+F2` | Sort torrents by progress |
+| `Ctrl+Alt+F2` | Sort torrents by ETA |
+| `Ctrl+F3` | Sort torrents by name |
+| `Ctrl+Alt+F3` | Sort torrents by status |
+| `Ctrl+F5` | Sort torrents by total size (torrent list focus) |
+| `Ctrl+Alt+F5` | Sort torrents by size |
+| `Ctrl+F6` | Sort torrents by added date |
+| `Ctrl+Alt+F6` | Sort torrents by complete date |
+| `Ctrl+S` | Start selected |
+| `Ctrl+P` | Stop selected |
+| `Ctrl+M` | Force Start selected |
+| `Ctrl+R` | Recheck selected |
+| `Ctrl++` / `Ctrl+-` | Queue priority up / down |
+| `Ctrl+Shift++` / `Ctrl+Shift+-` | Queue priority top / minimum |
+| `Del` | Remove selected |
+| `Shift+Del` | Remove + Delete Data |
+| `Ctrl+Del` | Remove selected (no confirmation) |
+| `Ctrl+Shift+Del` | Remove + Delete Data (no confirmation) |
+| `Ctrl+Shift+P` | Pause Session (all) |
+| `Ctrl+Shift+S` | Resume Session (all) |
+| `Enter` / `Return` | Open local torrent directory / content file |
 
 ## Menu Reference
 
@@ -292,50 +440,14 @@ It combines:
 ### Help
 - `About`
 
-## Keyboard Shortcuts
-
-Torrent-table sort shortcuts apply when the torrent list has focus.
-
-| Shortcut | Action |
-|---|---|
-| `Ctrl+O` | Add Torrent |
-| `Ctrl+Shift+N` | New instance (current config) |
-| `Ctrl+Q` / `Alt+X` | Exit |
-| `F5` | Refresh |
-| `Ctrl+F5` | Clear Cache & Refresh (global view action) |
-| `F6` | Show active torrents |
-| `F7` | Show complete torrents |
-| `F8` | Show all torrents |
-| `Ctrl+F1` | Sort torrents by ratio |
-| `Ctrl+Alt+F1` | Sort torrents by uploaded |
-| `Ctrl+F2` | Sort torrents by progress |
-| `Ctrl+Alt+F2` | Sort torrents by ETA |
-| `Ctrl+F3` | Sort torrents by name |
-| `Ctrl+Alt+F3` | Sort torrents by status |
-| `Ctrl+F5` | Sort torrents by total size (torrent list focus) |
-| `Ctrl+Alt+F5` | Sort torrents by size |
-| `Ctrl+F6` | Sort torrents by added date |
-| `Ctrl+Alt+F6` | Sort torrents by complete date |
-| `Ctrl+S` | Start selected |
-| `Ctrl+P` | Stop selected |
-| `Ctrl+M` | Force Start selected |
-| `Ctrl+R` | Recheck selected |
-| `Ctrl++` / `Ctrl+-` | Queue priority up / down |
-| `Ctrl+Shift++` / `Ctrl+Shift+-` | Queue priority top / minimum |
-| `Del` | Remove selected |
-| `Shift+Del` | Remove + Delete Data |
-| `Ctrl+Del` | Remove selected (no confirmation) |
-| `Ctrl+Shift+Del` | Remove + Delete Data (no confirmation) |
-| `Ctrl+Shift+P` | Pause Session (all) |
-| `Ctrl+Shift+S` | Resume Session (all) |
-| `Enter` / `Return` | Open local torrent directory / content file |
-
 ## Project Structure
 
 ```text
 qbiremo-enhanced/
+|-- pyproject.toml
+|-- uv.lock
 |-- src/
-|   `-- qbiremo_enhanced/                # Package modules (controllers/dialogs/tasking/etc.)
+|   `-- qbiremo_enhanced/
 |       |-- __init__.py
 |       |-- __main__.py
 |       |-- main_window.py
@@ -356,193 +468,25 @@ qbiremo-enhanced/
 |       |-- constants.py
 |       `-- py.typed
 |-- scripts/
-|   `-- qb_temp_launch.py                # Helper: launch a temporary qBittorrent instance
-|-- docs/
-|   `-- architecture/
-|       `-- MEMORY_SPEC.md               # Architecture reference spec
-|-- requirements.lock                    # Runtime lockfile generated from pyproject.toml
-|-- requirements-dev.lock                # Dev lockfile generated from pyproject.toml
-|-- pyproject.toml                       # Central project/tool config (pytest/ruff/mypy)
-|-- scripts/
 |   |-- policy/
 |   |   `-- check_standard.py
 |   `-- windows/
-|       |-- run_app.py                   # Standard app launcher
-|       |-- run_app_gui.pyw               # Standard GUI launcher
-|       `-- run_tests.py                 # Standard test runner
-|-- README.md
-`-- tests/
-    |-- conftest.py                      # Shared fixtures and mocks
-    |-- unit/
-    |-- integration/
-    `-- gui/
+|       |-- setup_env.py                 # Create/verify .venv via uv sync
+|       |-- run_app.py                   # Launch app via hatch run
+|       |-- run_app_gui.pyw              # Launch GUI without console window
+|       |-- run_tests.py                 # Run tests via hatch run test
+|-- docs/
+|   `-- architecture/
+|       `-- MEMORY_SPEC.md               # Architecture reference spec
+|-- tests/
+|   |-- conftest.py                      # Shared fixtures and mocks
+|   |-- unit/
+|   |-- integration/
+|   `-- gui/
+`-- README.md
 ```
 
-## Installation
-
-### Requirements
-
-- **Python 3.11+**
-
-```bash
-python -m pip install -r requirements.lock
-python -m pip install . --no-deps
-```
-
-Runtime dependencies: `PySide6 >=6.6.0`, `qbittorrent-api >=2024.1.54`.
-
-### Dev/Test Requirements
-```bash
-python -m pip install hatch
-python -m pip install -r requirements-dev.lock
-python -m pip install -e . --no-deps
-```
-
-### Regenerate lock files
-```bash
-python -m pip install hatch
-hatch run lock
-```
-
-### Optional: Virtual Environment
-```bash
-python -m venv venv
-venv\Scripts\activate   # Windows
-# source venv/bin/activate  # Linux/Mac
-
-python -m pip install -r requirements-dev.lock
-python -m pip install -e . --no-deps
-```
-
-## Configuration
-
-Runtime config uses QSettings profile storage:
-
-- Store backend: `QSettings(IniFormat, UserScope, "qBiremo", "qBiremoEnhancedConfig")`
-- Profiles are stored under `profiles/<profile_id>/...`
-- Startup profile is selected with `--profile` (default: `default`)
-- Env secret overrides remain supported:
-  - `QBIREMO_PASSWORD`
-  - `QBIREMO_HTTP_BASIC_AUTH_PASSWORD`
-
-Validated key contract (`validate_and_normalize_config`):
-
-| Key | Type | Default if Missing/Invalid | Allowed Values / Validation Rules |
-|---|---|---|---|
-| `qb_host` | `str` | `"localhost"` | Non-empty string. Can be hostname/IP or full URL (`http[s]://host[:port][/path]`). If URL includes `user:pass@`, those are used for HTTP basic auth. |
-| `qb_port` | `int` | `8080` | Must be in range `1..65535`. |
-| `qb_username` | `str` | `"admin"` | qBittorrent API username (not reverse-proxy basic auth). |
-| `qb_password` | `str` | `""` | qBittorrent API password. |
-| `http_basic_auth_username` | `str` | `""` | Optional reverse-proxy basic-auth username. If `qb_host` has embedded username, embedded value wins. |
-| `http_basic_auth_password` | `str` | `""` | Optional reverse-proxy basic-auth password. If `qb_host` has embedded password, embedded value wins. |
-| `http_protocol_scheme` | `str` | Effective default: `"http"` | Allowed: `"http"`, `"https"`. Invalid value is normalized to `"http"`. |
-| `http_timeout` | `int` | `300` | Must be integer `> 0`. Used as qBittorrent API HTTP timeout in seconds. |
-| `log_file` | `str` | `"qbiremo_enhanced.log"` | Non-empty path string. Relative paths are resolved under the OS temp runtime folder (`<temp>/qbiremo-enhanced`). |
-| `title_bar_speed_format` | `str` | `"[D: {down_text}, U: {up_text}]"` | Must be non-empty and format successfully with `{down_text}` and `{up_text}` placeholders. |
-
-Behavior notes:
-- Unknown profile keys are ignored with warnings.
-- If `qb_host` includes a full URL with embedded userinfo, HTTP basic auth is extracted and sent via `Authorization` header.
-- Environment fallback for HTTP basic auth:
-  - `X_HTTP_USER`
-  - `X_HTTP_PASS`
-- Internal keys are runtime-managed and should not be set manually:
-  - `_profile_id`, `_log_file_path`, `_instance_id`, `_instance_counter`, `_instance_lock_file_path`
-
-## Usage
-
-From a cloned repository, install dev requirements first:
-```bash
-python -m pip install hatch
-python -m pip install -r requirements-dev.lock
-python -m pip install -e . --no-deps
-```
-
-### Run
-```bash
-python -m qbiremo_enhanced
-```
-
-### Run with specific profile
-```bash
-python -m qbiremo_enhanced --profile home
-```
-
-### Command-line options
-```text
--p, --profile        Runtime profile id (default: default)
---instance_counter   Positive per-server instance counter suffix (default: 1)
--h, --help           Show help
-```
-
-### Helper: Temporary qBittorrent Instance
-
-`scripts/qb_temp_launch.py` launches a qBittorrent process with an isolated profile directory (defaults to `C:\tmp\qbittest`).
-Useful for testing without affecting your main qBittorrent installation.
-
-```bash
-python scripts/qb_temp_launch.py
-```
-
-The script resolves the qBittorrent executable from (in order):
-1. `QBITTORRENT_EXE` environment variable,
-2. system `PATH`,
-3. common Windows install locations (`Program Files`).
-
-## Testing
-
-Run the test suite:
-```bash
-python -m pytest -q
-```
-
-## Quality Gates
-
-Run all standard sessions via Hatch:
-```bash
-hatch run lint
-hatch run format-check
-hatch run typecheck
-hatch run test
-hatch run build
-```
-
-Run Pyright as a non-blocking canary check:
-```bash
-hatch run pyright
-```
-
-### Quality Policy
-
-- `mypy` is the authoritative type-check gate in CI.
-- `pyright` runs as a non-blocking canary in scheduled/manual CI workflows.
-- `ruff format` is mandatory and enforced in CI and pre-commit.
-
-### Pre-commit Setup
-
-```bash
-python -m pip install hatch
-python -m pip install -r requirements-dev.lock
-python -m pip install -e . --no-deps
-pre-commit install
-pre-commit install --hook-type pre-push
-```
-
-Local hook stages:
-- `pre-commit`: `check-merge-conflict`, `end-of-file-fixer`, `trailing-whitespace`, `check-added-large-files`, `ruff`, `ruff-format`
-- `pre-push`: `mypy`, `pytest` (with coverage)
-- `manual`: `pyright-advisory` (run with `pre-commit run pyright-advisory --hook-stage manual`)
-
-Current tests cover:
-- filters and cache behavior,
-- menu wiring and shortcuts,
-- table/view persistence,
-- add-torrent payload construction,
-- config validation and startup failure behavior,
-- details/content actions,
-- taxonomy/speed/preferences/analytics dialogs.
-
-## Architecture Notes
+## Architecture
 
 - Package-based architecture with purpose-specific modules under `src/qbiremo_enhanced/`.
 - `MainWindow` is the composition root and delegates domain behavior to feature controllers.
@@ -570,11 +514,113 @@ Every qBittorrent server connection is fully isolated:
 - On startup, the app acquires an exclusive byte-range lock on the `.lck` file. If the lock is already held (another instance is running with the same counter), the counter auto-increments until a free slot is found.
 - Lock files are released and cleaned up on normal exit via `atexit`.
 
-## API Documentation References
+### Logging and Error Handling
+
+- File-based logging only (no floating log panel in current build).
+- Log file path can be configured and is instance-suffixed.
+- Startup fatal exceptions are logged and the log file is opened automatically.
+- Global exception hook logs unhandled exceptions and flushes file handler.
+- Background task failures surface to status bar and log.
+
+### API Documentation References
 
 - [qBittorrent WebUI API: Get Torrent List (`/api/v2/torrents/info`)](https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(qBittorrent-5.0)#get-torrent-list)
 - [qbittorrent-api: `TorrentsAPIMixIn.torrents_info`](https://qbittorrent-api.readthedocs.io/en/latest/apidoc/torrents.html#qbittorrentapi.torrents.TorrentsAPIMixIn.torrents_info)
 - [qbittorrent-api: Client API](https://qbittorrent-api.readthedocs.io/en/latest/apidoc/client.html)
+
+## Development
+
+### Windows Helpers
+
+| Script | Description |
+|---|---|
+| `python scripts\windows\setup_env.py` | Create/verify `.venv` via `uv sync --locked` |
+| `pyw scripts\windows\run_app_gui.pyw` | Launch GUI without console window (auto-bootstraps venv) |
+| `python scripts\windows\run_app.py` | Launch app via `hatch run` (requires hatch in PATH) |
+| `python scripts\windows\run_tests.py` | Run test suite via `hatch run test` |
+
+### Testing
+
+```bat
+hatch run test
+```
+
+### Quality Checks
+
+Run all standard sessions via Hatch:
+
+```bat
+hatch run lint:all
+hatch run test-cov
+```
+
+Individual checks:
+
+```bat
+hatch run lint:check
+hatch run lint:fmt
+hatch run lint:types
+hatch run lint:policy
+```
+
+Run Pyright as a non-blocking canary check:
+
+```bat
+hatch run lint:types
+```
+
+### Quality Policy
+
+- `basedpyright` is the authoritative type-check gate in CI.
+- `ruff format` is mandatory and enforced in CI and pre-commit.
+
+### Pre-commit Setup
+
+```bat
+pre-commit install
+pre-commit install --hook-type pre-push
+```
+
+Local hook stages:
+- `pre-commit`: `check-merge-conflict`, `end-of-file-fixer`, `trailing-whitespace`, `check-added-large-files`, `ruff`, `ruff-format`
+- `pre-push`: `basedpyright`, `pytest` (with coverage)
+
+Current tests cover:
+- filters and cache behavior,
+- menu wiring and shortcuts,
+- table/view persistence,
+- add-torrent payload construction,
+- config validation and startup failure behavior,
+- details/content actions,
+- taxonomy/speed/preferences/analytics dialogs.
+
+### Lockfile Workflow
+
+```bat
+uv lock
+uv lock --check
+```
+
+## Troubleshooting
+
+### qBittorrent connection errors
+
+- Verify the WebUI is enabled in qBittorrent (Tools > Options > Web UI)
+- Verify host, port, username, and password are correct
+- Check that the qBittorrent API is reachable from this machine
+- If behind a reverse proxy, configure `http_basic_auth_username` and `http_basic_auth_password`
+
+### Instance lock conflicts
+
+- If the app fails to start with a lock error, another instance may be running with the same profile and counter
+- Use `--instance_counter 2` (or higher) to run a second instance against the same server
+- Lock files are in `%TEMP%\qbiremo-enhanced\` and are cleaned up on normal exit
+
+### Config issues
+
+- Use *Tools > Edit .ini file* to manually inspect and edit the config
+- Unknown keys are silently ignored; check log file for validation warnings
+- To reset, delete the QSettings INI file and restart
 
 ## Credits
 
@@ -589,8 +635,6 @@ Original qBiremo concept extended with:
 - taxonomy/speed/preferences tooling,
 - tracker and timeline analytics,
 - stronger persistence and debugging workflow.
-
----
 
 ---
 
