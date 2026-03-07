@@ -849,6 +849,10 @@ class MainWindow(QMainWindow):
         action_new_instance_from_config.triggered.connect(self._launch_new_instance_from_config)
         file_menu.addAction(action_new_instance_from_config)
 
+        action_new_profile = QAction("New &profile...", self)
+        action_new_profile.triggered.connect(self._create_new_profile_from_current_config)
+        file_menu.addAction(action_new_profile)
+
         file_menu.addSeparator()
 
         exit_action = QAction("E&xit", self)

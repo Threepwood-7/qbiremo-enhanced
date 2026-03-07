@@ -616,10 +616,109 @@ def test_file_menu_contains_new_instance_actions(window):
     action_new_instance_from_config = _find_menu_action(
         window, "&File", "New instance from pro&file..."
     )
+    action_new_profile = _find_menu_action(window, "&File", "New &profile...")
 
     assert action_new_instance is not None
     assert _shortcut_text(action_new_instance) == "ctrl+shift+n"
     assert action_new_instance_from_config is not None
+    assert action_new_profile is not None
+
+
+def test_new_profile_action_runs_wizard_saves_and_launches(window, monkeypatch):
+    captured = {"wizard_profile": None, "wizard_initial": None, "saved": None}
+    launches = []
+
+    monkeypatch.setattr(actionsmod, "list_profile_ids", lambda: ["default", "work"])
+
+    def _fake_wizard(profile_id, initial, parent=None):
+        captured["wizard_profile"] = profile_id
+        captured["wizard_initial"] = dict(initial)
+        return ("lab", {"qb_host": "lab-host", "qb_port": 8081})
+
+    monkeypatch.setattr(actionsmod, "run_profile_setup_wizard", _fake_wizard)
+
+    def _fake_save(profile_id, payload):
+        captured["saved"] = (profile_id, dict(payload))
+        return profile_id
+
+    monkeypatch.setattr(actionsmod, "save_profile_config", _fake_save)
+    monkeypatch.setattr(
+        window,
+        "_launch_new_instance_with_profile",
+        lambda profile_id, instance_counter=None: launches.append((profile_id, instance_counter)),
+    )
+
+    window.config["_profile_id"] = "work"
+    window.config["qb_host"] = "current-host"
+    action_new_profile = _find_menu_action(window, "&File", "New &profile...")
+    assert action_new_profile is not None
+    action_new_profile.trigger()
+
+    assert captured["wizard_profile"] == "work-new"
+    assert captured["wizard_initial"]["_profile_id"] == "work"
+    assert captured["wizard_initial"]["qb_host"] == "current-host"
+    assert captured["saved"] == ("lab", {"qb_host": "lab-host", "qb_port": 8081})
+    assert launches == [("lab", 1)]
+
+
+def test_new_profile_action_blocks_duplicate_profile_ids(window, monkeypatch):
+    calls = {"saved": 0, "launches": 0, "warnings": 0}
+
+    monkeypatch.setattr(actionsmod, "list_profile_ids", lambda: ["default", "work", "lab"])
+    monkeypatch.setattr(
+        actionsmod,
+        "run_profile_setup_wizard",
+        lambda *_args, **_kwargs: ("lab", {"qb_host": "lab-host"}),
+    )
+    monkeypatch.setattr(
+        actionsmod.QMessageBox,
+        "warning",
+        lambda *_args, **_kwargs: calls.__setitem__("warnings", calls["warnings"] + 1),
+    )
+    monkeypatch.setattr(
+        actionsmod,
+        "save_profile_config",
+        lambda *_args, **_kwargs: calls.__setitem__("saved", calls["saved"] + 1),
+    )
+    monkeypatch.setattr(
+        window,
+        "_launch_new_instance_with_profile",
+        lambda *_args, **_kwargs: calls.__setitem__("launches", calls["launches"] + 1),
+    )
+
+    window.config["_profile_id"] = "work"
+    action_new_profile = _find_menu_action(window, "&File", "New &profile...")
+    assert action_new_profile is not None
+    action_new_profile.trigger()
+
+    assert calls["warnings"] == 1
+    assert calls["saved"] == 0
+    assert calls["launches"] == 0
+
+
+def test_new_profile_action_cancel_does_not_save_or_launch(window, monkeypatch):
+    calls = {"saved": 0, "launches": 0}
+
+    monkeypatch.setattr(actionsmod, "list_profile_ids", lambda: ["default", "work"])
+    monkeypatch.setattr(actionsmod, "run_profile_setup_wizard", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        actionsmod,
+        "save_profile_config",
+        lambda *_args, **_kwargs: calls.__setitem__("saved", calls["saved"] + 1),
+    )
+    monkeypatch.setattr(
+        window,
+        "_launch_new_instance_with_profile",
+        lambda *_args, **_kwargs: calls.__setitem__("launches", calls["launches"] + 1),
+    )
+
+    window.config["_profile_id"] = "work"
+    action_new_profile = _find_menu_action(window, "&File", "New &profile...")
+    assert action_new_profile is not None
+    action_new_profile.trigger()
+
+    assert calls["saved"] == 0
+    assert calls["launches"] == 0
 
 
 def test_new_instance_action_uses_current_config_and_counter(window, monkeypatch):

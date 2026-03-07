@@ -400,6 +400,7 @@ Torrent-table sort shortcuts apply when the torrent list has focus.
 - `Export Torrent...`
 - `New instance` (`Ctrl+Shift+N`) - launch another app instance with current config
 - `New instance from profile...` - choose a profile id and launch a new instance
+- `New profile...` - create a new profile from current config and launch a new instance with it
 - `Exit` (`Ctrl+Q`, `Alt+X`)
 
 ### Edit

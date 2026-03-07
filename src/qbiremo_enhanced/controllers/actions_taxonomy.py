@@ -33,7 +33,12 @@ from threep_commons.instance_lock import (
     resolve_instance_lock_file_path,
 )
 
-from ..config_runtime import DEFAULT_PROFILE_ID, list_profile_ids, normalize_profile_id
+from ..config_runtime import (
+    DEFAULT_PROFILE_ID,
+    list_profile_ids,
+    normalize_profile_id,
+    save_profile_config,
+)
 from ..constants import (
     APP_IDENTITY,
     DEFAULT_REFRESH_INTERVAL,
@@ -45,7 +50,7 @@ from ..dialogs import (
     SpeedLimitsDialog,
     TaxonomyManagerDialog,
 )
-from ..profile_wizard import prompt_profile_selection
+from ..profile_wizard import prompt_profile_selection, run_profile_setup_wizard
 from ..types import APITaskResult
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
 
@@ -113,6 +118,52 @@ class ActionsTaxonomyController(WindowControllerBase):
         if not selected_profile:
             return
         self._launch_new_instance_with_profile(selected_profile, 1)
+
+    @staticmethod
+    def _suggest_new_profile_id(current_profile: str, existing_profiles: set[str]) -> str:
+        """Return one non-conflicting profile id derived from the current profile id."""
+        base_profile = normalize_profile_id(f"{current_profile}-new")
+        candidate = base_profile
+        suffix = 2
+        while candidate in existing_profiles:
+            candidate = normalize_profile_id(f"{base_profile}-{suffix}")
+            suffix += 1
+        return candidate
+
+    def _create_new_profile_from_current_config(self) -> None:
+        """Create one new profile from current config and launch it in a new instance."""
+        current_profile = normalize_profile_id(
+            (self.config.get("_profile_id") if isinstance(self.config, dict) else DEFAULT_PROFILE_ID)
+            or DEFAULT_PROFILE_ID
+        )
+        existing_profiles = {normalize_profile_id(profile) for profile in list_profile_ids()}
+        suggested_profile = self._suggest_new_profile_id(current_profile, existing_profiles)
+        initial_config = dict(self.config) if isinstance(self.config, dict) else {}
+        wizard_result = run_profile_setup_wizard(
+            suggested_profile,
+            initial_config,
+            parent=self,
+        )
+        if wizard_result is None:
+            return
+
+        new_profile_id, payload = wizard_result
+        normalized_profile = normalize_profile_id(new_profile_id)
+        if normalized_profile in existing_profiles:
+            message = f"Profile '{normalized_profile}' already exists. Choose a unique profile ID."
+            QMessageBox.warning(self, "New Profile", message)
+            self._log("WARNING", message)
+            self._set_status(message)
+            return
+
+        try:
+            saved_profile = save_profile_config(normalized_profile, payload)
+            self._log("INFO", f"Created profile: {saved_profile}")
+            self._set_status(f"Created profile: {saved_profile}")
+            self._launch_new_instance_with_profile(saved_profile, 1)
+        except RECOVERABLE_CONTROLLER_EXCEPTIONS as exc:
+            self._log("ERROR", f"Failed to create profile: {exc}")
+            self._set_status(f"Failed to create profile: {exc}")
 
     def _show_add_torrent_dialog(self) -> None:
         """Show add torrent dialog."""
