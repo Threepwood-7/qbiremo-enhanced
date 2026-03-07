@@ -13,6 +13,9 @@ from urllib.parse import urlparse
 
 import qbittorrentapi
 from PySide6.QtCore import QTimer
+from threep_commons.instance_lock import (
+    normalize_http_protocol_scheme as _normalize_http_protocol_scheme,
+)
 
 from ..constants import (
     AUTO_REFRESH_INTERVAL_MAX,
@@ -20,6 +23,7 @@ from ..constants import (
     DEFAULT_HTTP_TIMEOUT_SECONDS,
     DEFAULT_REFRESH_INTERVAL,
 )
+from ..helpers import matches_wildcard
 from ..models.config import NormalizedConfig
 from ..models.torrent import (
     PeerRow,
@@ -30,10 +34,6 @@ from ..models.torrent import (
 )
 from ..tasking import _DebugAPIClientProxy
 from ..types import APITaskResult, api_task_result
-from ..utils import (
-    _normalize_http_protocol_scheme,
-    matches_wildcard,
-)
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase, logger
 
 

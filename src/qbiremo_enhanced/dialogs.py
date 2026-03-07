@@ -37,17 +37,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .dialogs_telemetry import SessionTimelineDialog, TimelineGraphWidget, TrackerHealthDialog
+from .dialogs_telemetry import (
+    SessionTimelineDialog,
+    TimelineGraphWidget,
+    TrackerHealthDialog,
+)
 
 __all__ = [
     "AddTorrentDialog",
-    "TaxonomyManagerDialog",
-    "SpeedLimitsDialog",
     "AppPreferencesDialog",
     "FriendlyAddPreferencesDialog",
-    "TrackerHealthDialog",
-    "TimelineGraphWidget",
     "SessionTimelineDialog",
+    "SpeedLimitsDialog",
+    "TaxonomyManagerDialog",
+    "TimelineGraphWidget",
+    "TrackerHealthDialog",
 ]
 
 

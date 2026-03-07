@@ -2,10 +2,12 @@ import logging
 from pathlib import Path
 
 import pytest
+import threep_commons.instance_lock as shared_instance_lock
+from threep_commons.paths import resolve_app_data_dir
 
+import qbiremo_enhanced.config_runtime as config_runtime
 import qbiremo_enhanced.main_window as appmod
-import qbiremo_enhanced.utils.core as apputils_core
-from qbiremo_enhanced.runtime_paths import resolve_app_data_dir
+from qbiremo_enhanced.constants import APP_IDENTITY
 
 
 def test_compute_instance_id_uses_length_8_and_default_counter_suffix():
@@ -30,17 +32,21 @@ def test_compute_instance_id_from_config_uses_instance_counter_suffix():
 
 def test_acquire_instance_lock_increments_counter_when_lock_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        apputils_core,
+        shared_instance_lock,
         "resolve_instance_lock_file_path",
-        lambda _instance_id, counter: tmp_path / f"instance_{int(counter)}.lck",
+        lambda _identity, _instance_id, counter, **_kwargs: tmp_path / f"instance_{int(counter)}.lck",
     )
     cfg = {"qb_host": "127.0.0.1", "qb_port": 8080}
-    first_counter, first_instance_id, first_lock_path = appmod.acquire_instance_lock(cfg, 1)
+    first_counter, first_instance_id, first_lock_path = appmod.acquire_instance_lock(
+        APP_IDENTITY,
+        cfg,
+        1,
+    )
     assert first_counter == 1
     assert first_lock_path == tmp_path / "instance_1.lck"
     assert str(first_instance_id).endswith("_1")
 
-    counter, instance_id, lock_path = appmod.acquire_instance_lock(cfg, 1)
+    counter, instance_id, lock_path = appmod.acquire_instance_lock(APP_IDENTITY, cfg, 1)
 
     assert counter == 2
     assert lock_path == tmp_path / "instance_2.lck"
@@ -172,7 +178,7 @@ def test_main_opens_log_file_on_startup_crash(monkeypatch, tmp_path):
     monkeypatch.setattr(
         appmod,
         "acquire_instance_lock",
-        lambda cfg, start_counter: (
+        lambda _identity, cfg, start_counter: (
             int(start_counter),
             appmod.compute_instance_id_from_config(
                 {**cfg, "_instance_counter": int(start_counter)}
@@ -233,7 +239,7 @@ def test_main_accepts_instance_counter_cli_argument(monkeypatch):
     monkeypatch.setattr(
         appmod,
         "acquire_instance_lock",
-        lambda cfg, start_counter: (
+        lambda _identity, cfg, start_counter: (
             int(start_counter),
             appmod.compute_instance_id_from_config(
                 {**cfg, "_instance_counter": int(start_counter)}
@@ -303,7 +309,11 @@ def test_main_uses_incremented_instance_counter_when_lock_exists(monkeypatch):
     monkeypatch.setattr(
         appmod,
         "acquire_instance_lock",
-        lambda _cfg, _start_counter: (6, "deadbeef_6", appmod.Path("dummy_instance_6.lck")),
+        lambda _identity, _cfg, _start_counter: (
+            6,
+            "deadbeef_6",
+            appmod.Path("dummy_instance_6.lck"),
+        ),
     )
     monkeypatch.setattr(appmod.atexit, "register", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(appmod, "_setup_logging", lambda _config: DummyHandler())
@@ -353,21 +363,26 @@ def test_setup_logging_falls_back_to_default_file_when_primary_path_fails(monkey
     }
     created_paths = []
 
-    class FakeFileHandler(logging.Handler):
-        def __init__(self, filename, encoding="utf-8"):
-            super().__init__()
-            _ = encoding
-            created_paths.append(str(filename))
-            if len(created_paths) == 1:
-                raise OSError("primary log path denied")
-
+    class FakeHandler(logging.Handler):
         def emit(self, _record):
             return None
 
     original_handlers = list(appmod.logger.handlers)
     original_level = appmod.logger.level
     appmod.logger.handlers.clear()
-    monkeypatch.setattr(appmod.logging, "FileHandler", FakeFileHandler)
+    call_state = {"calls": 0}
+
+    def fake_setup_logger_to_file(*_args, **kwargs):
+        call_state["calls"] += 1
+        if "log_path" in kwargs:
+            created_paths.append(str(kwargs["log_path"]))
+        else:
+            created_paths.append(str(_args[1]))
+        if call_state["calls"] == 1:
+            raise OSError("primary log path denied")
+        return FakeHandler()
+
+    monkeypatch.setattr(config_runtime, "setup_logger_to_file", fake_setup_logger_to_file)
     monkeypatch.setenv("DATA_DIR", str(Path.cwd() / ".tmp_test_data"))
 
     try:
@@ -378,12 +393,12 @@ def test_setup_logging_falls_back_to_default_file_when_primary_path_fails(monkey
             appmod.logger.addHandler(old_handler)
         appmod.logger.setLevel(original_level)
 
-    assert isinstance(handler, FakeFileHandler)
+    assert isinstance(handler, FakeHandler)
     assert len(created_paths) == 2
     assert created_paths[0].endswith("custom_deadbeef_1.log")
     assert created_paths[1].endswith("qbiremo_enhanced_deadbeef_1.log")
     assert str(config["_log_file_path"]).endswith("qbiremo_enhanced_deadbeef_1.log")
-    data_root = Path(resolve_app_data_dir()).resolve()
+    data_root = Path(resolve_app_data_dir(APP_IDENTITY)).resolve()
     assert Path(created_paths[0]).resolve().is_relative_to(data_root)
     assert Path(created_paths[1]).resolve().is_relative_to(data_root)
     assert Path(str(config["_log_file_path"])).resolve().is_relative_to(data_root)
@@ -404,7 +419,7 @@ def test_main_logs_load_issues_and_starts_with_defaults(monkeypatch, caplog):
     monkeypatch.setattr(
         appmod,
         "acquire_instance_lock",
-        lambda cfg, start_counter: (
+        lambda _identity, cfg, start_counter: (
             int(start_counter),
             appmod.compute_instance_id_from_config(
                 {**cfg, "_instance_counter": int(start_counter)}

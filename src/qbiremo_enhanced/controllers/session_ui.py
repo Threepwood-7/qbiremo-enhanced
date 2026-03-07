@@ -13,6 +13,10 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
 )
+from threep_commons.formatters import (
+    format_size_mode,
+    format_speed_mode,
+)
 
 from ..constants import (
     DEFAULT_REFRESH_INTERVAL,
@@ -24,10 +28,6 @@ from ..dialogs import (
 )
 from ..models.torrent import (
     SessionTimelineSample,
-)
-from ..utils import (
-    format_size_mode,
-    format_speed_mode,
 )
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase, logger
 

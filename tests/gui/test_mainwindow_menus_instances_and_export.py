@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-import qbiremo_enhanced.main_window as appmod
 import qbiremo_enhanced.controllers.actions_taxonomy as actionsmod
+import qbiremo_enhanced.main_window as appmod
 
 
 def _top_level_names(tree_widget):

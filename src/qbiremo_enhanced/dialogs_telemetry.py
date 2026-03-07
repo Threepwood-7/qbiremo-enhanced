@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPaintEvent, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from .utils import format_speed_mode
+from threep_commons.formatters import format_speed_mode
 
 if TYPE_CHECKING:
     from .models.torrent import SessionTimelineSample, TrackerHealthRow

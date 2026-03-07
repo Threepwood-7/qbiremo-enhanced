@@ -2,33 +2,49 @@
 
 from __future__ import annotations
 
-import atexit
 import logging
-import os
-import re
-import sys
-from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QSettings
+from threep_commons.files import open_file_in_default_app
+from threep_commons.instance_lock import (
+    compute_instance_id_from_mapping,
+    normalize_http_protocol_scheme,
+)
+from threep_commons.logging import (
+    install_exception_hooks as _install_exception_hooks_shared,
+)
+from threep_commons.logging import (
+    resolve_log_path,
+    setup_logger_to_file,
+)
+from threep_commons.profiles import (
+    delete_profile_config as _delete_profile_config_shared,
+)
+from threep_commons.profiles import (
+    list_profile_ids as _list_profile_ids_shared,
+)
+from threep_commons.profiles import (
+    load_profile_config_with_issues as _load_profile_config_with_issues_shared,
+)
+from threep_commons.profiles import (
+    normalize_profile_id as _normalize_profile_id_shared,
+)
+from threep_commons.profiles import (
+    profile_store_file_path as _profile_store_file_path_shared,
+)
+from threep_commons.profiles import (
+    save_profile_config as _save_profile_config_shared,
+)
 
 from .constants import (
+    APP_IDENTITY,
     DEFAULT_HTTP_TIMEOUT_SECONDS,
     DEFAULT_TITLE_BAR_SPEED_FORMAT,
     G_APP_NAME,
-    G_ORG_NAME,
-)
-from .runtime_paths import configure_qsettings, resolve_app_data_dir
-from .utils import (
-    _append_instance_id_to_filename,
-    _normalize_http_protocol_scheme,
-    compute_instance_id_from_config,
 )
 
 if TYPE_CHECKING:
-    from types import TracebackType
-
     from .models.config import NormalizedConfig
 
 logger = logging.getLogger(G_APP_NAME)
@@ -121,147 +137,66 @@ PROFILE_SCHEMA: tuple[tuple[str, type, Any], ...] = (
 )
 
 
-def _new_profile_settings() -> QSettings:
-    configure_qsettings()
-    return QSettings(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        G_ORG_NAME,
-        CONFIG_SETTINGS_APP_NAME,
+def compute_instance_id_from_config(config: NormalizedConfig) -> str:
+    """Compute one deterministic instance id from a normalized config mapping."""
+
+    return compute_instance_id_from_mapping(
+        dict(config),
+        host_keys=("qb_host", "host"),
+        port_keys=("qb_port", "port"),
+        counter_key="_instance_counter",
     )
 
 
 def normalize_profile_id(value: object) -> str:
-    raw = str(value or "").strip().lower()
-    if not raw:
-        return DEFAULT_PROFILE_ID
-    cleaned = re.sub(r"[^a-z0-9_-]+", "-", raw).strip("-_")
-    return cleaned or DEFAULT_PROFILE_ID
+    return _normalize_profile_id_shared(value, DEFAULT_PROFILE_ID)
 
 
 def list_profile_ids() -> list[str]:
-    settings = _new_profile_settings()
-    settings.beginGroup(_PROFILE_ROOT)
-    profiles = [normalize_profile_id(group) for group in settings.childGroups()]
-    settings.endGroup()
-    deduped = sorted({profile for profile in profiles if profile})
-    if DEFAULT_PROFILE_ID not in deduped:
-        deduped.insert(0, DEFAULT_PROFILE_ID)
-    return deduped
+    return _list_profile_ids_shared(
+        APP_IDENTITY,
+        profile_root=_PROFILE_ROOT,
+        default_profile_id=DEFAULT_PROFILE_ID,
+    )
 
 
 def profile_store_file_path() -> str:
-    settings = _new_profile_settings()
-    settings.sync()
-    return str(settings.fileName() or "").strip()
-
-
-def _profile_base_key(profile_id: str) -> str:
-    return f"{_PROFILE_ROOT}/{normalize_profile_id(profile_id)}"
-
-
-def _runtime_log_dir() -> Path:
-    """Resolve runtime log directory under app data storage."""
-    return resolve_app_data_dir() / "logs"
+    return _profile_store_file_path_shared(APP_IDENTITY)
 
 
 def _resolve_log_file_path(raw_log_file: str, instance_id: str) -> Path:
-    """Resolve one log file path, anchoring relative paths under temp dir."""
-    path_obj = Path(str(raw_log_file).strip()).expanduser()
-    if not path_obj.is_absolute():
-        path_obj = _runtime_log_dir() / path_obj
-    return Path(_append_instance_id_to_filename(str(path_obj), instance_id))
+    """Resolve one log file path from app identity and optional instance suffix."""
+
+    return resolve_log_path(APP_IDENTITY, raw_log_file, instance_id=instance_id)
 
 
 def _default_instance_log_file_path(instance_id: str) -> str:
-    """Build default per-instance log path under the temp runtime directory."""
+    """Build one default per-instance log path under app runtime storage."""
+
     return str(_resolve_log_file_path(DEFAULT_LOG_FILE_NAME, instance_id))
-
-
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if token in {"1", "true", "yes", "on"}:
-            return True
-        if token in {"0", "false", "no", "off"}:
-            return False
-    return bool(default)
-
-
-def _coerce_value(value: Any, expected_type: type, default: Any) -> Any:
-    if expected_type is bool:
-        return _coerce_bool(value, bool(default))
-    if expected_type is int:
-        try:
-            return int(value)
-        except (TypeError, ValueError, OverflowError):
-            return int(default)
-    if expected_type is float:
-        try:
-            return float(value)
-        except (TypeError, ValueError, OverflowError):
-            return float(default)
-    if value is None:
-        return default
-    return str(value)
 
 
 def save_profile_config(profile_id: str, config: dict[str, Any]) -> str:
     """Persist one profile into QSettings and return normalized profile id."""
-    normalized_profile = normalize_profile_id(profile_id)
-    merged = dict(DEFAULT_PROFILE_CONFIG)
-    if isinstance(config, dict):
-        merged.update(config)
 
-    settings = _new_profile_settings()
-    base_key = _profile_base_key(normalized_profile)
-    for key, expected_type, default in PROFILE_SCHEMA:
-        settings.setValue(
-            f"{base_key}/{key}",
-            _coerce_value(merged.get(key, default), expected_type, default),
-        )
-    settings.sync()
-    return normalized_profile
+    return _save_profile_config_shared(
+        APP_IDENTITY,
+        profile_id,
+        config,
+        PROFILE_SCHEMA,
+        DEFAULT_PROFILE_CONFIG,
+        profile_root=_PROFILE_ROOT,
+        default_profile_id=DEFAULT_PROFILE_ID,
+    )
 
 
 def delete_profile_config(profile_id: str) -> None:
-    normalized_profile = normalize_profile_id(profile_id)
-    settings = _new_profile_settings()
-    settings.remove(_profile_base_key(normalized_profile))
-    settings.sync()
-
-
-def _apply_secret_env_overrides(config: dict[str, Any]) -> None:
-    for env_name, key_path in SECRET_ENV_TO_KEYS:
-        env_value = os.environ.get(env_name, "")
-        if env_value:
-            config[key_path[0]] = env_value
-
-
-def _load_profile_settings(profile_id: str, issues: list[str]) -> dict[str, Any]:
-    normalized_profile = normalize_profile_id(profile_id)
-    settings = _new_profile_settings()
-    base_key = _profile_base_key(normalized_profile)
-
-    profile_exists = any(
-        settings.contains(f"{base_key}/{key}") for key, _expected_type, _default in PROFILE_SCHEMA
+    _delete_profile_config_shared(
+        APP_IDENTITY,
+        profile_id,
+        profile_root=_PROFILE_ROOT,
+        default_profile_id=DEFAULT_PROFILE_ID,
     )
-    if not profile_exists:
-        issues.append(
-            f"Profile '{normalized_profile}' not found in QSettings; seeding defaults."
-        )
-        save_profile_config(normalized_profile, DEFAULT_PROFILE_CONFIG)
-
-    loaded: dict[str, Any] = dict(DEFAULT_PROFILE_CONFIG)
-    for key, expected_type, default in PROFILE_SCHEMA:
-        raw = settings.value(f"{base_key}/{key}", default)
-        loaded[key] = _coerce_value(raw, expected_type, default)
-    loaded["_profile_id"] = normalized_profile
-    return loaded
 
 
 def load_config(profile_id: str | None) -> NormalizedConfig:
@@ -272,10 +207,16 @@ def load_config(profile_id: str | None) -> NormalizedConfig:
 
 def load_config_with_issues(profile_id: str | None) -> tuple[NormalizedConfig, list[str]]:
     """Load one profile-backed configuration and collect non-fatal issues."""
-    issues: list[str] = []
-    normalized_profile = normalize_profile_id(profile_id)
-    loaded = _load_profile_settings(normalized_profile, issues)
-    _apply_secret_env_overrides(loaded)
+    loaded, issues = _load_profile_config_with_issues_shared(
+        APP_IDENTITY,
+        profile_id,
+        PROFILE_SCHEMA,
+        DEFAULT_PROFILE_CONFIG,
+        profile_root=_PROFILE_ROOT,
+        default_profile_id=DEFAULT_PROFILE_ID,
+        normalized_profile_key="_profile_id",
+        secret_env_to_keys=SECRET_ENV_TO_KEYS,
+    )
     return cast("NormalizedConfig", loaded), issues
 
 
@@ -354,7 +295,7 @@ def _normalize_http_protocol_scheme_value(normalized: dict[str, object]) -> None
     if "http_protocol_scheme" not in normalized:
         return
     raw_scheme = normalized.get("http_protocol_scheme")
-    normalized_scheme = _normalize_http_protocol_scheme(raw_scheme)
+    normalized_scheme = normalize_http_protocol_scheme(raw_scheme)
     raw_scheme_text = str(raw_scheme).strip().lower() if isinstance(raw_scheme, str) else ""
     if raw_scheme_text not in ("http", "https"):
         _config_validation_warn(f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'.")
@@ -489,60 +430,25 @@ def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
     log_file_path = _resolve_log_file_path(log_file, instance_id)
     config["_log_file_path"] = str(log_file_path)
 
-    with suppress(OSError):
-        log_file_path.parent.mkdir(parents=True, exist_ok=True)
-
     try:
-        file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    except OSError:
+        file_handler = setup_logger_to_file(logger, log_file_path)
+    except (OSError, RuntimeError):
         fallback_log_file = Path(_default_instance_log_file_path(instance_id))
-        fallback_log_file.parent.mkdir(parents=True, exist_ok=True)
         config["_log_file_path"] = str(fallback_log_file)
-        file_handler = logging.FileHandler(fallback_log_file, encoding="utf-8")
-
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    )
-    logger.handlers.clear()
-    logger.addHandler(file_handler)
-    logger.setLevel(logging.DEBUG)
+        file_handler = setup_logger_to_file(logger, fallback_log_file)
     return file_handler
 
 
 def _open_file_in_default_app(path: str) -> bool:
     """Open one path in the platform default application."""
-    if not path:
-        return False
 
-    import subprocess
-
-    try:
-        if sys.platform == "win32":
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
-        else:
-            subprocess.Popen(["xdg-open", path])
-        return True
-    except (AttributeError, OSError, subprocess.SubprocessError):
-        logger.exception("Failed to open file in default app: %s", path)
-        return False
+    opened = open_file_in_default_app(path)
+    if not opened:
+        logger.error("Failed to open file in default app: %s", path)
+    return opened
 
 
 def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
     """Install global exception hooks that flush and persist fatal errors."""
 
-    def _excepthook(
-        exc_type: type[BaseException],
-        exc_value: BaseException,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        """Log one unhandled exception and flush the log handler."""
-        if issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
-            sys.__excepthook__(exc_type, exc_value, exc_tb)
-            return
-        logger.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_tb))
-        file_handler.flush()
-
-    sys.excepthook = _excepthook
-    atexit.register(file_handler.flush)
+    _install_exception_hooks_shared(logger, file_handler)

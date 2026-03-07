@@ -1,14 +1,30 @@
 """Application constants and static schemas."""
 
-# Baseline scaffold compatibility constants.
+from __future__ import annotations
+
+from threep_commons.app_identity import AppIdentity
+
+SETTINGS_ORG_NAME = "ThreepSoftwz"
+SETTINGS_APP_NAME = "qbiremo_enhanced"
 APP_DISPLAY_NAME = "qbiremo-enhanced"
 APP_VERSION = "0.1.0"
 DEFAULT_LOG_FILENAME = "qbiremo_enhanced.log"
 DEFAULT_LOG_MAX_BYTES = 1_048_576
 DEFAULT_LOG_BACKUP_COUNT = 3
 
-G_ORG_NAME = "ThreepSoftwz"
-G_APP_NAME = "qbiremo_enhanced"
+APP_IDENTITY = AppIdentity(
+    org_name=SETTINGS_ORG_NAME,
+    app_name=SETTINGS_APP_NAME,
+    display_name=APP_DISPLAY_NAME,
+    default_log_filename=DEFAULT_LOG_FILENAME,
+    default_log_max_bytes=DEFAULT_LOG_MAX_BYTES,
+    default_log_backup_count=DEFAULT_LOG_BACKUP_COUNT,
+)
+
+# Compatibility aliases used across app modules.
+G_ORG_NAME = SETTINGS_ORG_NAME
+G_APP_NAME = SETTINGS_APP_NAME
+
 DEFAULT_REFRESH_INTERVAL = 30
 DEFAULT_AUTO_REFRESH = True
 AUTO_REFRESH_INTERVAL_MAX = 600

@@ -18,6 +18,9 @@ classifiers = [
 ]
 dependencies = [
 
+  "threep-commons @ git+https://github.com/Threepwood-7/threep-commons@v0.1.0",
+
+
   "PySide6>=6.10.2",
 
   "qbittorrent-api>=2025.11.1",
@@ -32,6 +35,9 @@ Issues = "https://github.com/Threepwood-7/qbiremo-enhanced/issues"
 [tool.hatch.env]
 installer = "uv"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/qbiremo_enhanced"]
 
@@ -39,9 +45,10 @@ packages = ["src/qbiremo_enhanced"]
 dependencies = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
+
   "pytest-qt>=4.4",
   "PySide6>=6.10.2",
-  "qbittorrent-api>=2025.11.1",
+
 ]
 
 [tool.hatch.envs.default.scripts]
@@ -76,9 +83,10 @@ all = [
 dependencies = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
+
   "pytest-qt>=4.4",
   "PySide6>=6.10.2",
-  "qbittorrent-api>=2025.11.1",
+
 ]
 
 [[tool.hatch.envs.test.matrix]]
@@ -163,7 +171,9 @@ addopts = ["-ra", "--strict-markers", "--import-mode=importlib"]
 xfail_strict = true
 markers = [
   "integration: integration tests",
+
   "gui: GUI/Qt tests",
+
   "slow: slow tests",
 ]
 

@@ -26,9 +26,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from threep_commons.instance_lock import (
+    normalize_instance_counter as _normalize_instance_counter,
+)
+from threep_commons.instance_lock import (
+    resolve_instance_lock_file_path,
+)
 
 from ..config_runtime import DEFAULT_PROFILE_ID, list_profile_ids, normalize_profile_id
 from ..constants import (
+    APP_IDENTITY,
     DEFAULT_REFRESH_INTERVAL,
 )
 from ..dialogs import (
@@ -40,10 +47,6 @@ from ..dialogs import (
 )
 from ..profile_wizard import prompt_profile_selection
 from ..types import APITaskResult
-from ..utils import (
-    _normalize_instance_counter,
-    resolve_instance_lock_file_path,
-)
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
 
 
@@ -1712,7 +1715,13 @@ class ActionsTaxonomyController(WindowControllerBase):
             else ""
         ).strip()
         if not lock_path:
-            lock_path = str(resolve_instance_lock_file_path(instance_text, instance_counter))
+            lock_path = str(
+                resolve_instance_lock_file_path(
+                    APP_IDENTITY,
+                    instance_text,
+                    instance_counter,
+                )
+            )
 
         return (
             "qBiremo Enhanced v2.0\n\n"

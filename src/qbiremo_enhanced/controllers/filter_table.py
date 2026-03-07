@@ -17,6 +17,14 @@ from PySide6.QtWidgets import (
     QMenu,
     QTreeWidgetItem,
 )
+from threep_commons.formatters import (
+    format_datetime,
+    format_eta,
+    format_float,
+    format_int,
+    format_size_mode,
+    format_speed_mode,
+)
 
 from ..constants import (
     BASIC_TORRENT_VIEW_KEYS,
@@ -24,14 +32,8 @@ from ..constants import (
     SIZE_BUCKET_COUNT,
     STATUS_FILTERS,
 )
-from ..utils import (
+from ..helpers import (
     calculate_size_buckets,
-    format_datetime,
-    format_eta,
-    format_float,
-    format_int,
-    format_size_mode,
-    format_speed_mode,
     matches_wildcard,
     normalize_filter_pattern,
     parse_tags,

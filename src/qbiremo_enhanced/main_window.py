@@ -55,6 +55,28 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from threep_commons.files import (
+    build_instance_app_name,
+    resolve_cache_file_path,
+)
+from threep_commons.formatters import (
+    normalize_display_mode as _normalize_display_mode,
+)
+from threep_commons.instance_lock import (
+    acquire_instance_lock,
+    compute_instance_id,
+    release_instance_lock,
+)
+from threep_commons.instance_lock import (
+    normalize_http_protocol_scheme as _normalize_http_protocol_scheme,
+)
+from threep_commons.instance_lock import (
+    normalize_instance_counter as _normalize_instance_counter,
+)
+from threep_commons.instance_lock import (
+    normalize_instance_port as _normalize_instance_port,
+)
+from threep_commons.paths import configure_qsettings
 
 from .config_runtime import (
     DEFAULT_PROFILE_ID,
@@ -62,6 +84,7 @@ from .config_runtime import (
     _install_exception_hooks,
     _open_file_in_default_app,
     _setup_logging,
+    compute_instance_id_from_config,
     get_missing_required_config,
     load_config_with_issues,
     normalize_profile_id,
@@ -69,6 +92,7 @@ from .config_runtime import (
     validate_and_normalize_config,
 )
 from .constants import (
+    APP_IDENTITY,
     BASIC_TORRENT_VIEW_KEYS,
     CACHE_FILE_NAME,
     CLIPBOARD_SEEN_LIMIT,
@@ -104,24 +128,11 @@ from .dialogs import (
     TaxonomyManagerDialog,
     TrackerHealthDialog,
 )
+from .helpers import load_app_icon
 from .models.config import NormalizedConfig
 from .models.torrent import SessionTimelineSample, TorrentCacheEntry, TorrentFileEntry
 from .profile_wizard import run_profile_setup_wizard
-from .runtime_paths import configure_qsettings
 from .tasking import APITaskQueue, Worker
-from .utils import (
-    _normalize_display_mode,
-    _normalize_http_protocol_scheme,
-    _normalize_instance_counter,
-    _normalize_instance_port,
-    acquire_instance_lock,
-    compute_instance_id,
-    compute_instance_id_from_config,
-    load_app_icon,
-    release_instance_lock,
-    resolve_cache_file_path,
-    settings_app_name_for_instance,
-)
 
 logger = logging.getLogger(G_APP_NAME)
 
@@ -218,7 +229,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config: NormalizedConfig) -> None:
         """Initialize UI, runtime state, queues, settings, and startup refresh."""
         super().__init__()
-        configure_qsettings()
+        configure_qsettings(APP_IDENTITY)
         self._initialize_controllers()
 
         normalized_config: NormalizedConfig = config if isinstance(config, dict) else {}
@@ -301,7 +312,11 @@ class MainWindow(QMainWindow):
         self._last_global_upload_limit = 0
 
         # Persistent per-torrent content cache (JSON file)
-        self.cache_file_path = resolve_cache_file_path(CACHE_FILE_NAME, self.instance_id)
+        self.cache_file_path = resolve_cache_file_path(
+            APP_IDENTITY,
+            CACHE_FILE_NAME,
+            instance_id=self.instance_id,
+        )
         self.content_cache: dict[str, TorrentCacheEntry] = {}
         self._remove_expired_cache_file()
         self._load_content_cache()
@@ -1191,7 +1206,7 @@ class MainWindow(QMainWindow):
 
     def _settings_app_name(self) -> str:
         """Return per-instance QSettings app name."""
-        return settings_app_name_for_instance(self.instance_id)
+        return build_instance_app_name(G_APP_NAME, self.instance_id)
 
     def _new_settings(self) -> QSettings:
         """Create QSettings configured to use INI backend."""
@@ -1651,7 +1666,7 @@ def main() -> None:
         os.environ["CONFIG_DIR"] = str(Path(args.config_dir).expanduser())
     if args.data_dir:
         os.environ["DATA_DIR"] = str(Path(args.data_dir).expanduser())
-    configure_qsettings()
+    configure_qsettings(APP_IDENTITY)
     selected_profile = normalize_profile_id(args.profile)
 
     try:
@@ -1682,6 +1697,7 @@ def main() -> None:
         requested_counter = int(args.instance_counter)
         config["_instance_counter"] = requested_counter
         claimed_counter, claimed_instance_id, lock_path = acquire_instance_lock(
+            APP_IDENTITY,
             config,
             requested_counter,
         )

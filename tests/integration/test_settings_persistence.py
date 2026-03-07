@@ -11,7 +11,7 @@ def _default_instance_id() -> str:
 
 
 def _default_settings_app_name() -> str:
-    return appmod.settings_app_name_for_instance(_default_instance_id())
+    return appmod.build_instance_app_name(appmod.G_APP_NAME, _default_instance_id())
 
 
 def _make_window(qtbot, monkeypatch, tmp_path):
@@ -142,7 +142,11 @@ def test_default_cache_path_uses_data_dir(qtbot, monkeypatch, tmp_path):
     )
     qtbot.addWidget(win)
 
-    expected = appmod.resolve_cache_file_path("qbiremo_enhanced.cache", _default_instance_id())
+    expected = appmod.resolve_cache_file_path(
+        appmod.APP_IDENTITY,
+        "qbiremo_enhanced.cache",
+        instance_id=_default_instance_id(),
+    )
     assert win.cache_file_path == expected
 
     win.content_cache = {"h1": {"state": "downloading", "files": []}}
@@ -152,8 +156,9 @@ def test_default_cache_path_uses_data_dir(qtbot, monkeypatch, tmp_path):
 
 def test_startup_deletes_cache_file_older_than_three_days(qtbot, monkeypatch, tmp_path):
     cache_path = appmod.resolve_cache_file_path(
+        appmod.APP_IDENTITY,
         str(tmp_path / "qbiremo_enhanced.cache"),
-        _default_instance_id(),
+        instance_id=_default_instance_id(),
     )
     cache_path.write_text('{"h1":{"state":"downloading","files":[]}}', encoding="utf-8")
     old_mtime = time.time() - ((3 * 24 * 60 * 60) + 60)
@@ -167,8 +172,9 @@ def test_startup_deletes_cache_file_older_than_three_days(qtbot, monkeypatch, tm
 
 def test_startup_keeps_recent_cache_file(qtbot, monkeypatch, tmp_path):
     cache_path = appmod.resolve_cache_file_path(
+        appmod.APP_IDENTITY,
         str(tmp_path / "qbiremo_enhanced.cache"),
-        _default_instance_id(),
+        instance_id=_default_instance_id(),
     )
     cache_path.write_text('{"h1":{"state":"downloading","files":[]}}', encoding="utf-8")
     recent_mtime = time.time() - (2 * 24 * 60 * 60)

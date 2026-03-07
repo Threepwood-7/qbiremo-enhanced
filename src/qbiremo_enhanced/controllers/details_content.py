@@ -22,18 +22,20 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QVBoxLayout,
 )
-
-from ..models.torrent import (
-    TorrentFileEntry,
-)
-from ..utils import (
+from threep_commons.formatters import (
     format_datetime,
     format_eta,
     format_size_mode,
     format_speed_mode,
+)
+
+from ..helpers import (
     matches_wildcard,
     normalize_filter_pattern,
     parse_tags,
+)
+from ..models.torrent import (
+    TorrentFileEntry,
 )
 from ..widgets import NumericTableWidgetItem
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
