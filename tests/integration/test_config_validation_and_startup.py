@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import qbiremo_enhanced.main_window as appmod
-import qbiremo_enhanced.utils as apputils
+import qbiremo_enhanced.utils.core as apputils_core
 from qbiremo_enhanced.runtime_paths import resolve_app_data_dir
 
 
@@ -30,7 +30,7 @@ def test_compute_instance_id_from_config_uses_instance_counter_suffix():
 
 def test_acquire_instance_lock_increments_counter_when_lock_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        apputils,
+        apputils_core,
         "resolve_instance_lock_file_path",
         lambda _instance_id, counter: tmp_path / f"instance_{int(counter)}.lck",
     )
