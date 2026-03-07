@@ -130,7 +130,7 @@ class AddTorrentDialog(QDialog):
 
         self.cmb_category = QComboBox()
         self.cmb_category.setEditable(True)
-        self.cmb_category.addItems([""] + categories)
+        self.cmb_category.addItems(["", *categories])
         form.addRow("Category:", self.cmb_category)
 
         self.lst_tags = QListWidget()
@@ -1025,14 +1025,14 @@ class AppPreferencesDialog(QDialog):
         if isinstance(value, dict) and value:
             item.setText(1, self._container_summary(value))
             for child_key in sorted(value.keys(), key=lambda v: str(v)):
-                child_path = path + (child_key,)
+                child_path = (*path, child_key)
                 self._add_pref_item(item, child_path, str(child_key), value.get(child_key))
             return
 
         if isinstance(value, list) and value:
             item.setText(1, self._container_summary(value))
             for index, child_value in enumerate(value):
-                child_path = path + (index,)
+                child_path = (*path, index)
                 self._add_pref_item(item, child_path, f"[{index}]", child_value)
             return
 
@@ -1050,7 +1050,7 @@ class AppPreferencesDialog(QDialog):
             return path_data
         if isinstance(path_data, list):
             return tuple(path_data)
-        return tuple()
+        return ()
 
     @staticmethod
     def _path_label(path: tuple[object, ...]) -> str:

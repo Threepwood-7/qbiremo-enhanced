@@ -11,7 +11,7 @@ import sys
 import tempfile
 from collections import deque
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlparse
 
 import qbittorrentapi
@@ -130,9 +130,15 @@ from .dialogs import (
 )
 from .helpers import load_app_icon
 from .models.config import NormalizedConfig
-from .models.torrent import SessionTimelineSample, TorrentCacheEntry, TorrentFileEntry
 from .profile_wizard import run_profile_setup_wizard
 from .tasking import APITaskQueue, Worker
+
+if TYPE_CHECKING:
+    from .models.torrent import (
+        SessionTimelineSample,
+        TorrentCacheEntry,
+        TorrentFileEntry,
+    )
 
 logger = logging.getLogger(G_APP_NAME)
 

@@ -1794,7 +1794,7 @@ class NetworkApiController(WindowControllerBase):
         if elapsed <= float(current_interval):
             return
 
-        scaled_interval = int(math.ceil(elapsed * 4.0))
+        scaled_interval = math.ceil(elapsed * 4.0)
         clamped_interval = min(AUTO_REFRESH_INTERVAL_MAX, max(1, scaled_interval))
         new_interval = max(current_interval, clamped_interval)
         if new_interval <= current_interval:

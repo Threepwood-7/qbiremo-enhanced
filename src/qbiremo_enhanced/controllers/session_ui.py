@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import (
@@ -26,10 +26,12 @@ from ..dialogs import (
     SessionTimelineDialog,
     TrackerHealthDialog,
 )
-from ..models.torrent import (
-    SessionTimelineSample,
-)
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase, logger
+
+if TYPE_CHECKING:
+    from ..models.torrent import (
+        SessionTimelineSample,
+    )
 
 
 class SessionUiController(WindowControllerBase):

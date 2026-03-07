@@ -2,10 +2,9 @@
 
 import html
 import json
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -39,6 +38,9 @@ from ..models.torrent import (
 )
 from ..widgets import NumericTableWidgetItem
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
+
+if TYPE_CHECKING:
+    from PySide6.QtGui import QAction
 
 
 class DetailsContentController(WindowControllerBase):
@@ -418,7 +420,7 @@ class DetailsContentController(WindowControllerBase):
         self.chk_torrent_edit_auto_tmm.setCheckState(Qt.CheckState.PartiallyChecked)
         self.cmb_torrent_edit_category.blockSignals(True)
         self.cmb_torrent_edit_category.clear()
-        self.cmb_torrent_edit_category.addItems([""] + self.categories)
+        self.cmb_torrent_edit_category.addItems(["", *self.categories])
         self.cmb_torrent_edit_category.blockSignals(False)
         self.txt_torrent_edit_tags.clear()
         self.spn_torrent_edit_download_limit.setValue(0)
@@ -434,7 +436,7 @@ class DetailsContentController(WindowControllerBase):
         ).strip()
         self.cmb_torrent_edit_category.blockSignals(True)
         self.cmb_torrent_edit_category.clear()
-        self.cmb_torrent_edit_category.addItems([""] + self.categories)
+        self.cmb_torrent_edit_category.addItems(["", *self.categories])
         idx = self.cmb_torrent_edit_category.findText(current_text)
         if idx >= 0:
             self.cmb_torrent_edit_category.setCurrentIndex(idx)
@@ -641,7 +643,7 @@ class DetailsContentController(WindowControllerBase):
         """Build ordered column list with preferred first, then remaining keys."""
         key_set = set()
         for row in rows:
-            key_set.update(str(k) for k in row.keys())
+            key_set.update(str(k) for k in row)
 
         ordered = [k for k in preferred if k in key_set]
         remainder = sorted(k for k in key_set if k not in ordered)

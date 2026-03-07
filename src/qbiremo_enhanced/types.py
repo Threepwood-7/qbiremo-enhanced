@@ -1,7 +1,7 @@
 """Shared typing models and call signatures."""
 
 from collections.abc import Callable
-from typing import Generic, NotRequired, TypedDict, TypeVar, cast
+from typing import NotRequired, TypedDict, TypeVar, cast
 
 T = TypeVar("T")
 
@@ -9,7 +9,7 @@ TaskCallable = Callable[..., object]
 TaskCallback = Callable[[object], None]
 
 
-class APITaskResult(TypedDict, Generic[T]):
+class APITaskResult[T](TypedDict):
     """Describe the standard API task payload envelope."""
 
     data: T
@@ -18,7 +18,7 @@ class APITaskResult(TypedDict, Generic[T]):
     error: NotRequired[str]
 
 
-def api_task_result(
+def api_task_result[T](
     *,
     data: T,
     elapsed: float,
