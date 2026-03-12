@@ -21,7 +21,7 @@ APP_IDENTITY = AppIdentity(
     default_log_backup_count=DEFAULT_LOG_BACKUP_COUNT,
 )
 
-# Compatibility aliases used across app modules.
+# Short aliases used across app modules.
 G_ORG_NAME = SETTINGS_ORG_NAME
 G_APP_NAME = SETTINGS_APP_NAME
 
