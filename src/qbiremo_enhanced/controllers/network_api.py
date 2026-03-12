@@ -999,7 +999,7 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_apply_selected_torrent_edits(
+    def _api_apply_selected_torrent_edits(  # noqa: C901 - bulk edit payload assembly
         self,
         torrent_hash: str,
         updates: dict[str, object],

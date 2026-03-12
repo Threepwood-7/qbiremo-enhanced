@@ -1129,7 +1129,9 @@ class AppPreferencesDialog(QDialog):
         raise ValueError("expected boolean (true/false)")
 
     @staticmethod
-    def _parse_value_by_example(text: str, example: object) -> object:
+    def _parse_value_by_example(  # noqa: C901 - example-driven settings parser
+        text: str, example: object
+    ) -> object:
         """Parse editor text using original value type as parsing guide."""
         raw = str(text or "")
         stripped = raw.strip()

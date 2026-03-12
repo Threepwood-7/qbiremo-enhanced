@@ -972,7 +972,7 @@ class FilterTableController(WindowControllerBase):
         except ValueError:
             return text
 
-    def _format_torrent_table_cell(
+    def _format_torrent_table_cell(  # noqa: C901 - cell formatting spans all column variants
         self,
         torrent: object,
         column_key: str,
