@@ -154,7 +154,7 @@ indent-style = "space"
 docstring-code-format = true
 
 [tool.deptry]
-known_first_party = ["qbiremo_enhanced"]
+known_first_party = ["qbiremo_enhanced", "_common"]
 
 [tool.basedpyright]
 pythonVersion = "3.13"
