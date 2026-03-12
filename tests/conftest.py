@@ -28,7 +28,7 @@ class _ClipboardStub:
         self._text = ""
         self.dataChanged = _SignalStub()
 
-    def setText(self, text: str) -> None:  # noqa: N802
+    def setText(self, text: str) -> None:
         self._text = str(text)
         self.dataChanged.emit()
 
