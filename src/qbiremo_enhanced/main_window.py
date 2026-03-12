@@ -1194,7 +1194,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _to_bool(value: object, default: bool = False) -> bool:
-        """Convert QSettings-like values to bool."""
+        """Convert settings-store values to bool."""
         if value is None:
             return default
         if isinstance(value, bool):
@@ -1213,14 +1213,14 @@ class MainWindow(QMainWindow):
         return build_instance_app_name(SETTINGS_APP_NAME, self.instance_id)
 
     def _new_settings(self) -> QSettingsValueStore:
-        """Create QSettings configured to use INI backend."""
+        """Create the per-instance shared settings store."""
         return QSettingsValueStore.from_identity(
             APP_IDENTITY,
             app_name=self._settings_app_name(),
         )
 
     def _settings_ini_path(self) -> Path:
-        """Return the current INI file path used by QSettings."""
+        """Return the current INI file path backing the settings store."""
         settings = self._new_settings()
         settings.sync()
         file_name = settings.file_name()
@@ -1340,7 +1340,7 @@ class MainWindow(QMainWindow):
             self._on_clipboard_changed()
 
     def _edit_settings_ini_file(self) -> None:
-        """Open QSettings INI file in system default editor."""
+        """Open the settings INI file in the system default editor."""
         try:
             ini_path = self._settings_ini_path()
             ini_path.parent.mkdir(parents=True, exist_ok=True)

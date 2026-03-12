@@ -189,7 +189,7 @@ def delete_profile_config(profile_id: str) -> None:
 
 
 def load_config(profile_id: str | None) -> NormalizedConfig:
-    """Load one profile-backed configuration from QSettings."""
+    """Load one profile-backed configuration from the shared profile store."""
     config, _issues = load_config_with_issues(profile_id)
     return config
 

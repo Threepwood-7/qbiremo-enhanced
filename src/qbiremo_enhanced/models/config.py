@@ -4,7 +4,7 @@ from typing import TypedDict
 
 
 class NormalizedConfig(TypedDict, total=False):
-    """Normalized application config loaded from QSettings profiles and defaults."""
+    """Normalized application config loaded from stored profiles and defaults."""
 
     qb_host: str
     qb_port: int

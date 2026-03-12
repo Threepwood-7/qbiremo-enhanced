@@ -276,7 +276,7 @@ class FilterTableController(WindowControllerBase):
         }
 
     def _saved_torrent_views(self) -> dict[str, dict[str, object]]:
-        """Load named torrent-table views from QSettings."""
+        """Load named torrent-table views from the settings store."""
         settings = self._new_settings()
         raw_json = settings.value("torrentColumnNamedViewsJson", "")
         if isinstance(raw_json, (bytes, bytearray)):
@@ -329,7 +329,7 @@ class FilterTableController(WindowControllerBase):
         return cleaned
 
     def _store_saved_torrent_views(self, views: dict[str, dict[str, object]]) -> None:
-        """Store named torrent-table views into QSettings."""
+        """Store named torrent-table views into the settings store."""
         settings = self._new_settings()
         payload = views if isinstance(views, dict) else {}
         settings.set_value(
@@ -339,7 +339,7 @@ class FilterTableController(WindowControllerBase):
         settings.sync()
 
     def _refresh_saved_torrent_views_menu(self) -> None:
-        """Rebuild the Saved Views submenu from QSettings."""
+        """Rebuild the Saved Views submenu from the settings store."""
         menu = getattr(self, "saved_torrent_views_menu", None)
         if menu is None:
             return
