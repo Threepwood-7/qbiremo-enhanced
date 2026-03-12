@@ -2,6 +2,7 @@ import logging
 
 from PySide6.QtCore import Qt
 
+import qbiremo_enhanced.controllers.actions_taxonomy as actionsmod
 import qbiremo_enhanced.main_window as appmod
 from qbiremo_enhanced.widgets import NumericTableWidgetItem
 
@@ -205,7 +206,7 @@ def test_qsettings_are_forced_to_ini_backend(window):
 def test_edit_ini_file_action_opens_settings_file(window, monkeypatch, tmp_path):
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod, "_open_file_in_default_app", lambda p: opened.__setitem__("path", p)
+        appmod, "open_path_in_default_app", lambda p: opened.__setitem__("path", p) or True
     )
     monkeypatch.setattr(window, "_settings_ini_path", lambda: tmp_path / "qBiremoEnhanced.ini")
 
@@ -757,8 +758,8 @@ def test_enter_opens_selected_torrent_local_directory(window, monkeypatch, make_
 
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: opened.__setitem__("path", p),
     )
 
@@ -783,8 +784,8 @@ def test_enter_with_missing_local_directory_does_not_open(
 
     opened = {"count": 0}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda _p: opened.__setitem__("count", opened["count"] + 1),
     )
 
@@ -809,8 +810,8 @@ def test_double_click_in_torrent_table_opens_local_directory(
 
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: opened.__setitem__("path", p),
     )
 
@@ -843,8 +844,8 @@ def test_enter_in_content_tree_opens_selected_local_file(
 
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: opened.__setitem__("path", p),
     )
 
@@ -874,8 +875,8 @@ def test_enter_in_content_tree_with_missing_file_does_not_open(
 
     opened = {"count": 0}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda _p: opened.__setitem__("count", opened["count"] + 1),
     )
 
@@ -902,8 +903,8 @@ def test_enter_on_torrent_expands_env_var_directory_path(
 
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: opened.__setitem__("path", p),
     )
 
@@ -934,8 +935,8 @@ def test_enter_in_content_tree_expands_env_var_path(window, monkeypatch, make_to
 
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: opened.__setitem__("path", p),
     )
 
@@ -965,8 +966,8 @@ def test_content_tree_item_activated_opens_local_file(window, monkeypatch, make_
 
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: opened.__setitem__("path", p),
     )
 
@@ -998,8 +999,8 @@ def test_content_tree_event_filter_handles_enter_and_opens_file(
 
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: opened.__setitem__("path", p),
     )
 
@@ -1139,17 +1140,18 @@ def test_install_controller_methods_skips_eventfilter_and_closeevent(window):
     assert window.closeEvent.__func__ is close_event_before.__func__
 
 
-def test_mainwindow_open_file_helper_delegates_to_runtime_helper(window, monkeypatch):
+def test_mainwindow_module_uses_shared_open_helper(window, monkeypatch):
     captured = {"path": None}
 
     monkeypatch.setattr(
         appmod,
-        "_open_file_in_default_app",
+        "open_path_in_default_app",
         lambda p: captured.__setitem__("path", p) or True,
     )
+    monkeypatch.setattr(window, "_settings_ini_path", lambda: appmod.Path("C:/tmp/sample.txt"))
 
-    assert window._open_file_in_default_app("C:/tmp/sample.txt") is True
-    assert captured["path"] == "C:/tmp/sample.txt"
+    window._edit_settings_ini_file()
+    assert captured["path"] == str(appmod.Path("C:/tmp/sample.txt"))
 
 
 def test_open_log_file_uses_open_helper_with_absolute_path(window, monkeypatch, tmp_path):
@@ -1158,8 +1160,8 @@ def test_open_log_file_uses_open_helper_with_absolute_path(window, monkeypatch, 
 
     captured = {"path": None}
     monkeypatch.setattr(
-        window,
-        "_open_file_in_default_app",
+        actionsmod,
+        "open_path_in_default_app",
         lambda p: captured.__setitem__("path", p) or True,
     )
 
@@ -1173,7 +1175,7 @@ def test_open_log_file_reports_failure_when_helper_returns_false(window, monkeyp
     window.log_file_path = str(log_path)
 
     logged = {"message": ""}
-    monkeypatch.setattr(window, "_open_file_in_default_app", lambda _p: False)
+    monkeypatch.setattr(actionsmod, "open_path_in_default_app", lambda _p: False)
     monkeypatch.setattr(
         window,
         "_log",

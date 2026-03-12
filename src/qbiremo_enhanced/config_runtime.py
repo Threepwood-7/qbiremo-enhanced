@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from threep_commons.files import open_file_in_default_app
 from threep_commons.instance_lock import (
     compute_instance_id_from_mapping,
     normalize_http_protocol_scheme,
@@ -437,15 +436,6 @@ def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
         config["_log_file_path"] = str(fallback_log_file)
         file_handler = setup_logger_to_file(logger, fallback_log_file)
     return file_handler
-
-
-def _open_file_in_default_app(path: str) -> bool:
-    """Open one path in the platform default application."""
-
-    opened = open_file_in_default_app(path)
-    if not opened:
-        logger.error("Failed to open file in default app: %s", path)
-    return opened
 
 
 def _install_exception_hooks(file_handler: logging.FileHandler) -> None:

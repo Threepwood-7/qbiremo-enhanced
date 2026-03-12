@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from threep_commons.desktop import open_path_in_default_app
 from threep_commons.instance_lock import (
     normalize_instance_counter as _normalize_instance_counter,
 )
@@ -381,7 +382,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._set_status("No local directory found for selected torrent")
             return
 
-        self._open_file_in_default_app(str(local_dir))
+        open_path_in_default_app(str(local_dir))
         self._set_status(f"Opened local directory: {local_dir}")
 
     def _on_torrent_table_item_double_clicked(self, item: QTableWidgetItem) -> None:
@@ -463,7 +464,7 @@ class ActionsTaxonomyController(WindowControllerBase):
                 self._set_status("Selected directory does not exist locally")
                 return
 
-        self._open_file_in_default_app(str(candidate))
+        open_path_in_default_app(str(candidate))
         target_type = "file" if is_file else "directory"
         self._set_status(f"Opened local {target_type}: {candidate}")
 
@@ -1656,7 +1657,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         """Open the log file in the OS default application."""
         log_path = os.path.abspath(self.log_file_path)
         try:
-            if not self._open_file_in_default_app(log_path):
+            if not open_path_in_default_app(log_path):
                 raise RuntimeError("OS failed to open log file")
         except (RuntimeError, OSError, ValueError) as e:
             self._log("ERROR", f"Failed to open log file: {e}")

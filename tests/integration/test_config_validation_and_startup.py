@@ -191,7 +191,7 @@ def test_main_opens_log_file_on_startup_crash(monkeypatch, tmp_path):
     monkeypatch.setattr(appmod, "_install_exception_hooks", lambda _handler: None)
     monkeypatch.setattr(
         appmod,
-        "_open_file_in_default_app",
+        "open_path_in_default_app",
         lambda path: opened.__setitem__("path", path),
     )
 

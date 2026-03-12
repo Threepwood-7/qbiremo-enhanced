@@ -493,8 +493,8 @@ def test_open_web_ui_action_opens_expected_url(window, monkeypatch):
     opened = {"url": None}
     monkeypatch.setattr(
         appmod,
-        "_open_file_in_default_app",
-        lambda path: opened.__setitem__("url", path),
+        "open_path_in_default_app",
+        lambda path: opened.__setitem__("url", path) or True,
     )
 
     window.qb_conn_info["username"] = "alice"
@@ -512,8 +512,8 @@ def test_open_web_ui_action_uses_configured_http_protocol_scheme(window, monkeyp
     opened = {"url": None}
     monkeypatch.setattr(
         appmod,
-        "_open_file_in_default_app",
-        lambda path: opened.__setitem__("url", path),
+        "open_path_in_default_app",
+        lambda path: opened.__setitem__("url", path) or True,
     )
 
     window.qb_conn_info["username"] = "alice"

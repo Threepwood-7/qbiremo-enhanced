@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from threep_commons.desktop import open_path_in_default_app
 from threep_commons.files import (
     build_instance_app_name,
     resolve_cache_file_path,
@@ -82,7 +83,6 @@ from .config_runtime import (
     DEFAULT_PROFILE_ID,
     _default_instance_log_file_path,
     _install_exception_hooks,
-    _open_file_in_default_app,
     _setup_logging,
     compute_instance_id_from_config,
     get_missing_required_config,
@@ -219,10 +219,6 @@ class MainWindow(QMainWindow):
         )
         for controller_cls in self._controller_classes:
             self._install_controller_methods(controller_cls)
-
-    def _open_file_in_default_app(self, path: str) -> bool:
-        """Open one local path in the platform default app."""
-        return _open_file_in_default_app(path)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Delegate custom event-filter handling to session controller logic."""
@@ -1354,7 +1350,8 @@ class MainWindow(QMainWindow):
             ini_path.parent.mkdir(parents=True, exist_ok=True)
             if not ini_path.exists():
                 ini_path.touch()
-            _open_file_in_default_app(str(ini_path))
+            if not open_path_in_default_app(str(ini_path)):
+                raise RuntimeError(f"Failed to open path: {ini_path}")
             self._log("INFO", f"Opened settings INI file: {ini_path}")
             self._set_status(f"Opened INI: {ini_path}")
         except (OSError, RuntimeError, ValueError) as e:
@@ -1422,7 +1419,8 @@ class MainWindow(QMainWindow):
         """Open qBittorrent Web UI URL in default browser."""
         try:
             url = self._web_ui_browser_url()
-            _open_file_in_default_app(url)
+            if not open_path_in_default_app(url):
+                raise RuntimeError(f"Failed to open path: {url}")
             self._log("INFO", f"Opened qBittorrent Web UI: {url}")
             self._set_status(f"Opened Web UI: {url}")
         except (OSError, RuntimeError, ValueError) as e:
@@ -1745,7 +1743,10 @@ def main() -> None:
         logger.critical("Fatal error during startup", exc_info=True)
         if "file_handler" in locals():
             file_handler.flush()
-        _open_file_in_default_app(
-            config.get("_log_file_path", _default_instance_log_file_path(str(config.get("_instance_id", "") or "")))
+        open_path_in_default_app(
+            config.get(
+                "_log_file_path",
+                _default_instance_log_file_path(str(config.get("_instance_id", "") or "")),
+            )
         )
         raise
