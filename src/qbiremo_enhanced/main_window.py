@@ -75,6 +75,7 @@ from threep_commons.instance_lock import (
     normalize_instance_port as _normalize_instance_port,
 )
 from threep_commons.paths import configure_qsettings
+from threep_commons.settings import QSettingsValueStore
 
 from .config_runtime import (
     DEFAULT_PROFILE_ID,
@@ -1211,28 +1212,26 @@ class MainWindow(QMainWindow):
         """Return per-instance QSettings app name."""
         return build_instance_app_name(SETTINGS_APP_NAME, self.instance_id)
 
-    def _new_settings(self) -> QSettings:
+    def _new_settings(self) -> QSettingsValueStore:
         """Create QSettings configured to use INI backend."""
-        return QSettings(
-            QSettings.Format.IniFormat,
-            QSettings.Scope.UserScope,
-            SETTINGS_ORG_NAME,
-            self._settings_app_name(),
+        return QSettingsValueStore.from_identity(
+            APP_IDENTITY,
+            app_name=self._settings_app_name(),
         )
 
     def _settings_ini_path(self) -> Path:
         """Return the current INI file path used by QSettings."""
         settings = self._new_settings()
         settings.sync()
-        file_name = str(settings.fileName() or "").strip()
+        file_name = settings.file_name()
         fallback_name = f"{self._settings_app_name()}.ini"
         return Path(file_name) if file_name else Path(fallback_name).resolve()
 
     def _save_refresh_settings(self) -> None:
         """Persist only auto-refresh runtime settings."""
         settings = self._new_settings()
-        settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
-        settings.setValue(
+        settings.set_value("autoRefreshEnabled", bool(self.auto_refresh_enabled))
+        settings.set_value(
             "refreshIntervalSec",
             int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)),
         )
@@ -1436,7 +1435,7 @@ class MainWindow(QMainWindow):
         self._load_clipboard_monitor_settings(settings)
         self._load_debug_logging_settings(settings)
 
-    def _load_window_geometry_settings(self, settings: QSettings) -> None:
+    def _load_window_geometry_settings(self, settings: QSettingsValueStore) -> None:
         """Load and apply persisted window geometry/state."""
         geometry = settings.value("geometry")
         if geometry:
@@ -1452,7 +1451,7 @@ class MainWindow(QMainWindow):
         if state:
             self.restoreState(state)
 
-    def _load_splitter_settings(self, settings: QSettings) -> None:
+    def _load_splitter_settings(self, settings: QSettingsValueStore) -> None:
         """Load and apply persisted splitter positions."""
         main_sizes = settings.value("mainSplitter")
         if main_sizes:
@@ -1463,7 +1462,7 @@ class MainWindow(QMainWindow):
         if right_sizes:
             self.right_splitter.restoreState(right_sizes)
 
-    def _load_torrent_table_settings(self, settings: QSettings) -> None:
+    def _load_torrent_table_settings(self, settings: QSettingsValueStore) -> None:
         """Load persisted torrent table header and hidden column selection."""
         header_state = settings.value("torrentTableHeader")
         if header_state:
@@ -1485,14 +1484,14 @@ class MainWindow(QMainWindow):
             ]
             self._apply_hidden_columns_by_keys(hidden_default)
 
-    def _load_filter_selection_settings(self, settings: QSettings) -> None:
+    def _load_filter_selection_settings(self, settings: QSettingsValueStore) -> None:
         """Load persisted filter tree status selection."""
         status = settings.value("filterStatus")
         if status and status in STATUS_FILTERS:
             self.current_status_filter = status
         self._refresh_filter_tree_highlights()
 
-    def _load_auto_refresh_settings(self, settings: QSettings) -> None:
+    def _load_auto_refresh_settings(self, settings: QSettingsValueStore) -> None:
         """Load persisted auto-refresh toggle and interval settings."""
         self.auto_refresh_enabled = self._to_bool(
             settings.value("autoRefreshEnabled"), self.auto_refresh_enabled
@@ -1506,7 +1505,7 @@ class MainWindow(QMainWindow):
             self._update_auto_refresh_action_text()
         self._sync_auto_refresh_timer_state()
 
-    def _load_display_mode_settings(self, settings: QSettings) -> None:
+    def _load_display_mode_settings(self, settings: QSettingsValueStore) -> None:
         """Load persisted size/speed display mode settings."""
         display_human = settings.value("displayHumanReadable")
         if display_human is not None:
@@ -1523,7 +1522,7 @@ class MainWindow(QMainWindow):
             self.action_human_readable.setChecked(hr_checked)
             self.action_human_readable.blockSignals(action_signals)
 
-    def _load_clipboard_monitor_settings(self, settings: QSettings) -> None:
+    def _load_clipboard_monitor_settings(self, settings: QSettingsValueStore) -> None:
         """Load clipboard monitor enablement and trigger initial poll."""
         self.clipboard_monitor_enabled = self._to_bool(
             settings.value("clipboardMonitorEnabled"), self.clipboard_monitor_enabled
@@ -1533,7 +1532,7 @@ class MainWindow(QMainWindow):
         if self.clipboard_monitor_enabled:
             QTimer.singleShot(0, self._on_clipboard_changed)
 
-    def _load_debug_logging_settings(self, settings: QSettings) -> None:
+    def _load_debug_logging_settings(self, settings: QSettingsValueStore) -> None:
         """Load debug logging toggle state."""
         self.debug_logging_enabled = self._to_bool(
             settings.value("debugLoggingEnabled"),
@@ -1547,38 +1546,38 @@ class MainWindow(QMainWindow):
         settings = self._new_settings()
 
         # Window geometry
-        settings.setValue("geometry", self.saveGeometry())
-        settings.setValue("windowState", self.saveState())
+        settings.set_value("geometry", self.saveGeometry())
+        settings.set_value("windowState", self.saveState())
 
         # Splitter sizes
-        settings.setValue("mainSplitter", self.main_splitter.saveState())
-        settings.setValue("rightSplitter", self.right_splitter.saveState())
+        settings.set_value("mainSplitter", self.main_splitter.saveState())
+        settings.set_value("rightSplitter", self.right_splitter.saveState())
 
         # Torrent table header (column widths, order, sort)
-        settings.setValue("torrentTableHeader", self.tbl_torrents.horizontalHeader().saveState())
+        settings.set_value("torrentTableHeader", self.tbl_torrents.horizontalHeader().saveState())
         hidden_columns = [
             col["key"]
             for idx, col in enumerate(self.torrent_columns)
             if self.tbl_torrents.isColumnHidden(idx)
         ]
-        settings.setValue("torrentTableHiddenColumns", hidden_columns)
+        settings.set_value("torrentTableHiddenColumns", hidden_columns)
 
         # Filter selection
-        settings.setValue("filterStatus", self.current_status_filter)
-        settings.setValue("autoRefreshEnabled", bool(self.auto_refresh_enabled))
-        settings.setValue(
+        settings.set_value("filterStatus", self.current_status_filter)
+        settings.set_value("autoRefreshEnabled", bool(self.auto_refresh_enabled))
+        settings.set_value(
             "refreshIntervalSec",
             int(self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)),
         )
-        settings.setValue(
+        settings.set_value(
             "displayHumanReadable",
             bool(
                 self.display_size_mode == "human_readable"
                 and self.display_speed_mode == "human_readable"
             ),
         )
-        settings.setValue("clipboardMonitorEnabled", bool(self.clipboard_monitor_enabled))
-        settings.setValue("debugLoggingEnabled", bool(self.debug_logging_enabled))
+        settings.set_value("clipboardMonitorEnabled", bool(self.clipboard_monitor_enabled))
+        settings.set_value("debugLoggingEnabled", bool(self.debug_logging_enabled))
 
     def _initial_load(self) -> None:
         """Initial data load on startup."""

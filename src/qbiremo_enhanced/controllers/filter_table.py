@@ -332,7 +332,7 @@ class FilterTableController(WindowControllerBase):
         """Store named torrent-table views into QSettings."""
         settings = self._new_settings()
         payload = views if isinstance(views, dict) else {}
-        settings.setValue(
+        settings.set_value(
             "torrentColumnNamedViewsJson",
             json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
         )

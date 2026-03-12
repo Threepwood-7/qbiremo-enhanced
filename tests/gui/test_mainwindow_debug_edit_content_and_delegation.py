@@ -199,8 +199,8 @@ def test_debug_logging_does_not_truncate_api_responses(window, monkeypatch, capl
 def test_qsettings_are_forced_to_ini_backend(window):
     appmod.QSettings.setDefaultFormat(appmod.QSettings.Format.NativeFormat)
     settings = window._new_settings()
-    assert settings.format() == appmod.QSettings.Format.IniFormat
-    assert settings.fileName().lower().endswith(".ini")
+    assert settings.qsettings.format() == appmod.QSettings.Format.IniFormat
+    assert settings.file_name().lower().endswith(".ini")
 
 
 def test_edit_ini_file_action_opens_settings_file(window, monkeypatch, tmp_path):

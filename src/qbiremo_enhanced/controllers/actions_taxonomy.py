@@ -1182,7 +1182,7 @@ class ActionsTaxonomyController(WindowControllerBase):
 
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
         try:
-            settings.setValue("contentRenameDialogGeometry", dialog.saveGeometry())
+            settings.set_value("contentRenameDialogGeometry", dialog.saveGeometry())
             settings.sync()
         except (TypeError, RuntimeError):
             pass

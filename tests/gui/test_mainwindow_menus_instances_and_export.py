@@ -418,7 +418,7 @@ def test_save_current_view_persists_only_visible_columns_and_widths(window, monk
         str(tmp_path / "qsettings"),
     )
     settings = window._new_settings()
-    settings.clear()
+    settings.clear_all()
     settings.sync()
 
     window._set_torrent_column_visible("tracker", False)
