@@ -148,7 +148,7 @@ def test_debug_logging_logs_api_calls_and_responses(window, monkeypatch, caplog)
 
     monkeypatch.setattr(appmod.qbittorrentapi, "Client", FakeClient)
     window.debug_logging_enabled = True
-    caplog.set_level(logging.DEBUG, logger=appmod.G_APP_NAME)
+    caplog.set_level(logging.DEBUG, logger=appmod.SETTINGS_APP_NAME)
 
     with window._create_client() as qb:
         result = qb.torrents_info(status_filter="all")
@@ -182,7 +182,7 @@ def test_debug_logging_does_not_truncate_api_responses(window, monkeypatch, capl
 
     monkeypatch.setattr(appmod.qbittorrentapi, "Client", FakeClient)
     window.debug_logging_enabled = True
-    caplog.set_level(logging.DEBUG, logger=appmod.G_APP_NAME)
+    caplog.set_level(logging.DEBUG, logger=appmod.SETTINGS_APP_NAME)
 
     with window._create_client() as qb:
         result = qb.torrents_info()

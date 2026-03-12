@@ -40,17 +40,16 @@ from .constants import (
     APP_IDENTITY,
     DEFAULT_HTTP_TIMEOUT_SECONDS,
     DEFAULT_TITLE_BAR_SPEED_FORMAT,
-    G_APP_NAME,
+    SETTINGS_APP_NAME,
 )
 
 if TYPE_CHECKING:
     from .models.config import NormalizedConfig
 
-logger = logging.getLogger(G_APP_NAME)
+logger = logging.getLogger(SETTINGS_APP_NAME)
 
 APP_SLUG = "qbiremo-enhanced"
 DEFAULT_LOG_FILE_NAME = "qbiremo_enhanced.log"
-CONFIG_SETTINGS_APP_NAME = G_APP_NAME
 DEFAULT_PROFILE_ID = "default"
 _PROFILE_ROOT = "profiles"
 

@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 import qbittorrentapi
 
-from ..constants import G_APP_NAME
+from ..constants import SETTINGS_APP_NAME
 
 if TYPE_CHECKING:
     from ..main_window import MainWindow
 
 
-logger = logging.getLogger(G_APP_NAME)
+logger = logging.getLogger(SETTINGS_APP_NAME)
 
 RECOVERABLE_CONTROLLER_EXCEPTIONS = (
     AttributeError,

@@ -11,7 +11,7 @@ def _default_instance_id() -> str:
 
 
 def _default_settings_app_name() -> str:
-    return appmod.build_instance_app_name(appmod.G_APP_NAME, _default_instance_id())
+    return appmod.build_instance_app_name(appmod.SETTINGS_APP_NAME, _default_instance_id())
 
 
 def _make_window(qtbot, monkeypatch, tmp_path):
@@ -43,7 +43,7 @@ def test_auto_refresh_toggle_and_interval_are_persisted(qtbot, monkeypatch, tmp_
     settings = QSettings(
         QSettings.Format.IniFormat,
         QSettings.Scope.UserScope,
-        appmod.G_ORG_NAME,
+        appmod.SETTINGS_ORG_NAME,
         _default_settings_app_name(),
     )
     settings.clear()
@@ -76,7 +76,7 @@ def test_hidden_torrent_columns_are_persisted(qtbot, monkeypatch, tmp_path):
     settings = QSettings(
         QSettings.Format.IniFormat,
         QSettings.Scope.UserScope,
-        appmod.G_ORG_NAME,
+        appmod.SETTINGS_ORG_NAME,
         _default_settings_app_name(),
     )
     settings.clear()
@@ -104,7 +104,7 @@ def test_display_mode_toggle_is_persisted_via_qsettings(qtbot, monkeypatch, tmp_
     settings = QSettings(
         QSettings.Format.IniFormat,
         QSettings.Scope.UserScope,
-        appmod.G_ORG_NAME,
+        appmod.SETTINGS_ORG_NAME,
         _default_settings_app_name(),
     )
     settings.clear()
@@ -133,7 +133,7 @@ def test_old_display_mode_keys_are_ignored_on_load(qtbot, monkeypatch, tmp_path)
     settings = QSettings(
         QSettings.Format.IniFormat,
         QSettings.Scope.UserScope,
-        appmod.G_ORG_NAME,
+        appmod.SETTINGS_ORG_NAME,
         _default_settings_app_name(),
     )
     settings.clear()

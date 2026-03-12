@@ -9,10 +9,10 @@ from typing import Protocol, cast
 import qbittorrentapi
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
-from .constants import G_APP_NAME
+from .constants import SETTINGS_APP_NAME
 from .types import TaskCallable, TaskCallback
 
-logger = logging.getLogger(G_APP_NAME)
+logger = logging.getLogger(SETTINGS_APP_NAME)
 
 RECOVERABLE_TASK_QUEUE_EXCEPTIONS = (
     OSError,

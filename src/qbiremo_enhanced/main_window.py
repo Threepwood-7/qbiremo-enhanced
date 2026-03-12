@@ -103,9 +103,9 @@ from .constants import (
     DEFAULT_TITLE_BAR_SPEED_FORMAT,
     DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH,
-    G_APP_NAME,
-    G_ORG_NAME,
     MEDIUM_TORRENT_VIEW_KEYS,
+    SETTINGS_APP_NAME,
+    SETTINGS_ORG_NAME,
     STATUS_FILTERS,
     TORRENT_COLUMNS,
 )
@@ -137,7 +137,7 @@ if TYPE_CHECKING:
         TorrentFileEntry,
     )
 
-logger = logging.getLogger(G_APP_NAME)
+logger = logging.getLogger(SETTINGS_APP_NAME)
 
 __all__ = [
     "BASIC_TORRENT_VIEW_KEYS",
@@ -1209,14 +1209,14 @@ class MainWindow(QMainWindow):
 
     def _settings_app_name(self) -> str:
         """Return per-instance QSettings app name."""
-        return build_instance_app_name(G_APP_NAME, self.instance_id)
+        return build_instance_app_name(SETTINGS_APP_NAME, self.instance_id)
 
     def _new_settings(self) -> QSettings:
         """Create QSettings configured to use INI backend."""
         return QSettings(
             QSettings.Format.IniFormat,
             QSettings.Scope.UserScope,
-            G_ORG_NAME,
+            SETTINGS_ORG_NAME,
             self._settings_app_name(),
         )
 
@@ -1665,8 +1665,8 @@ def main() -> None:
 
     try:
         app = QApplication(sys.argv)
-        app.setOrganizationName(G_ORG_NAME)
-        app.setApplicationName(G_APP_NAME)
+        app.setOrganizationName(SETTINGS_ORG_NAME)
+        app.setApplicationName(SETTINGS_APP_NAME)
         app.setApplicationDisplayName("qBiremo Enhanced")
         if hasattr(app, "setWindowIcon"):
             app_icon = load_app_icon()

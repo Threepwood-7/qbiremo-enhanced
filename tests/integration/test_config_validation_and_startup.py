@@ -59,7 +59,7 @@ def test_acquire_instance_lock_increments_counter_when_lock_exists(tmp_path, mon
 
 
 def test_validate_and_normalize_config_logs_invalid_values(caplog):
-    caplog.set_level(logging.WARNING, logger=appmod.G_APP_NAME)
+    caplog.set_level(logging.WARNING, logger=appmod.SETTINGS_APP_NAME)
     cfg = {
         "qb_host": "",
         "qb_port": "99999",
@@ -112,7 +112,7 @@ def test_validate_and_normalize_config_logs_invalid_values(caplog):
 
 
 def test_validate_and_normalize_config_ignores_old_legacy_keys(caplog):
-    caplog.set_level(logging.WARNING, logger=appmod.G_APP_NAME)
+    caplog.set_level(logging.WARNING, logger=appmod.SETTINGS_APP_NAME)
     cfg = {
         "host": "10.0.0.2",
         "port": "12345",
@@ -459,7 +459,7 @@ def test_main_logs_load_issues_and_starts_with_defaults(monkeypatch, caplog):
     monkeypatch.setattr(appmod, "QApplication", FakeApplication)
     monkeypatch.setattr(appmod, "MainWindow", FakeWindow)
     monkeypatch.setattr(appmod.sys, "argv", ["qbiremo_enhanced.py"])
-    caplog.set_level(logging.WARNING, logger=appmod.G_APP_NAME)
+    caplog.set_level(logging.WARNING, logger=appmod.SETTINGS_APP_NAME)
 
     with pytest.raises(SystemExit) as exc:
         appmod.main()
