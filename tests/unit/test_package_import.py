@@ -1,4 +1,4 @@
-"""Import-level smoke tests for the package."""
+"""Tests for qbiremo_enhanced."""
 
 import importlib
 
