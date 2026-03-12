@@ -11,7 +11,9 @@ def _default_instance_id() -> str:
 
 
 def _default_settings_app_name() -> str:
-    return appmod.build_instance_app_name(appmod.SETTINGS_APP_NAME, _default_instance_id())
+    return appmod.build_instance_app_name(
+        appmod.SETTINGS_APP_NAME, _default_instance_id()
+    )
 
 
 def _make_window(qtbot, monkeypatch, tmp_path):
@@ -37,7 +39,9 @@ def test_auto_refresh_toggle_and_interval_are_persisted(qtbot, monkeypatch, tmp_
     settings_root = tmp_path / "qsettings"
     settings_root.mkdir(parents=True, exist_ok=True)
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root))
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root)
+    )
 
     # Start with clean app settings.
     settings = QSettings(
@@ -71,7 +75,9 @@ def test_hidden_torrent_columns_are_persisted(qtbot, monkeypatch, tmp_path):
     settings_root = tmp_path / "qsettings"
     settings_root.mkdir(parents=True, exist_ok=True)
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root))
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root)
+    )
 
     settings = QSettings(
         QSettings.Format.IniFormat,
@@ -99,7 +105,9 @@ def test_display_mode_toggle_is_persisted_via_qsettings(qtbot, monkeypatch, tmp_
     settings_root = tmp_path / "qsettings"
     settings_root.mkdir(parents=True, exist_ok=True)
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root))
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root)
+    )
 
     settings = QSettings(
         QSettings.Format.IniFormat,
@@ -128,7 +136,9 @@ def test_old_display_mode_keys_are_ignored_on_load(qtbot, monkeypatch, tmp_path)
     settings_root = tmp_path / "qsettings"
     settings_root.mkdir(parents=True, exist_ok=True)
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root))
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root)
+    )
 
     settings = QSettings(
         QSettings.Format.IniFormat,

@@ -115,7 +115,9 @@ def _default_instance_id() -> str:
 
 
 @pytest.fixture
-def window(qtbot: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> appmod.MainWindow:
+def window(
+    qtbot: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> appmod.MainWindow:
     monkeypatch.setenv("CONFIG_DIR", str(tmp_path / "qsettings"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(appmod.MainWindow, "_initial_load", lambda self: None)
@@ -127,7 +129,9 @@ def window(qtbot: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ap
         }
     )
     clipboard = _ClipboardStub()
-    monkeypatch.setattr(appmod.QApplication, "clipboard", staticmethod(lambda: clipboard))
+    monkeypatch.setattr(
+        appmod.QApplication, "clipboard", staticmethod(lambda: clipboard)
+    )
     widget._clipboard = clipboard
     widget.display_size_mode = "human"
     widget.display_speed_mode = "human"

@@ -8,7 +8,10 @@ import qbiremo_enhanced.main_window as appmod
 
 
 def _top_level_names(tree_widget):
-    return [tree_widget.topLevelItem(i).text(0) for i in range(tree_widget.topLevelItemCount())]
+    return [
+        tree_widget.topLevelItem(i).text(0)
+        for i in range(tree_widget.topLevelItemCount())
+    ]
 
 
 def _find_filter_item(tree_widget, kind, value):
@@ -117,7 +120,9 @@ def test_torrent_table_sort_shortcuts_are_registered(window):
         "ctrl+f6",
         "ctrl+alt+f6",
     }
-    actual = {_shortcut_key_text(shortcut) for shortcut in window._torrent_sort_shortcuts}
+    actual = {
+        _shortcut_key_text(shortcut) for shortcut in window._torrent_sort_shortcuts
+    }
     assert actual == expected
     assert all(
         shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -134,7 +139,8 @@ def test_torrent_table_sort_shortcuts_trigger_expected_columns(window, monkeypat
         lambda column_key, default_order: captured.append((column_key, default_order)),
     )
     shortcuts_by_key = {
-        _shortcut_key_text(shortcut): shortcut for shortcut in window._torrent_sort_shortcuts
+        _shortcut_key_text(shortcut): shortcut
+        for shortcut in window._torrent_sort_shortcuts
     }
     expected = {
         "ctrl+f1": ("ratio", Qt.SortOrder.DescendingOrder),
@@ -236,7 +242,9 @@ def test_status_shortcut_actions_clear_non_status_filters(window, monkeypatch):
 def test_fit_columns_action_triggers_fit_method(window, monkeypatch):
     calls = {"count": 0}
     monkeypatch.setattr(
-        window, "_fit_torrent_columns", lambda: calls.__setitem__("count", calls["count"] + 1)
+        window,
+        "_fit_torrent_columns",
+        lambda: calls.__setitem__("count", calls["count"] + 1),
     )
 
     action = _find_menu_action(window, "&View", "&Fit Columns")
@@ -337,7 +345,9 @@ def test_view_menu_column_toggles_hide_and_show_columns(window):
     tracker_index = window.torrent_column_index["tracker"]
     assert not window.tbl_torrents.isColumnHidden(tracker_index)
 
-    tracker_action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "Tracker")
+    tracker_action = _find_submenu_action(
+        window, "&View", "Torrent Colu&mns", "Tracker"
+    )
     assert tracker_action is not None
     assert tracker_action.isCheckable()
     assert tracker_action.isChecked() is True
@@ -351,7 +361,9 @@ def test_view_menu_column_toggles_hide_and_show_columns(window):
 
 def test_torrent_columns_menu_stays_open_when_toggling_column(window, qtbot):
     columns_menu = _find_submenu(window, "&View", "Torrent Colu&mns")
-    tracker_action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "Tracker")
+    tracker_action = _find_submenu_action(
+        window, "&View", "Torrent Colu&mns", "Tracker"
+    )
 
     assert columns_menu is not None
     assert tracker_action is not None
@@ -374,12 +386,23 @@ def test_torrent_columns_menu_stays_open_when_toggling_column(window, qtbot):
 
 
 def test_torrent_columns_menu_contains_view_management_actions(window):
-    assert _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Basic View") is not None
-    assert _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Medium View") is not None
     assert (
-        _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Save Current View..") is not None
+        _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Basic View")
+        is not None
     )
-    saved_views_action = _find_submenu_action(window, "&View", "Torrent Colu&mns", "Sa&ved Views")
+    assert (
+        _find_submenu_action(window, "&View", "Torrent Colu&mns", "&Medium View")
+        is not None
+    )
+    assert (
+        _find_submenu_action(
+            window, "&View", "Torrent Colu&mns", "&Save Current View.."
+        )
+        is not None
+    )
+    saved_views_action = _find_submenu_action(
+        window, "&View", "Torrent Colu&mns", "Sa&ved Views"
+    )
     assert saved_views_action is not None
     assert saved_views_action.menu() is not None
 
@@ -410,7 +433,9 @@ def test_medium_view_action_applies_expected_columns(window):
     assert visible == set(appmod.MEDIUM_TORRENT_VIEW_KEYS)
 
 
-def test_save_current_view_persists_only_visible_columns_and_widths(window, monkeypatch, tmp_path):
+def test_save_current_view_persists_only_visible_columns_and_widths(
+    window, monkeypatch, tmp_path
+):
     appmod.QSettings.setDefaultFormat(appmod.QSettings.Format.IniFormat)
     appmod.QSettings.setPath(
         appmod.QSettings.Format.IniFormat,
@@ -424,7 +449,9 @@ def test_save_current_view_persists_only_visible_columns_and_widths(window, monk
     window._set_torrent_column_visible("tracker", False)
     name_idx = window.torrent_column_index["name"]
     window.tbl_torrents.setColumnWidth(name_idx, 333)
-    monkeypatch.setattr(appmod.QInputDialog, "getText", lambda *args, **kwargs: ("My View", True))
+    monkeypatch.setattr(
+        appmod.QInputDialog, "getText", lambda *args, **kwargs: ("My View", True)
+    )
 
     window._save_current_torrent_view()
 
@@ -444,7 +471,10 @@ def test_save_current_view_persists_only_visible_columns_and_widths(window, monk
     assert window.tbl_torrents.columnWidth(name_idx) == 333
 
     assert window.saved_torrent_views_menu is not None
-    assert any(action.text() == "My View" for action in window.saved_torrent_views_menu.actions())
+    assert any(
+        action.text() == "My View"
+        for action in window.saved_torrent_views_menu.actions()
+    )
 
 
 def test_torrent_table_allows_multi_selection(window):
@@ -455,26 +485,40 @@ def test_torrent_table_allows_multi_selection(window):
 
 
 def test_torrent_table_has_no_custom_context_menu(window):
-    assert window.tbl_torrents.contextMenuPolicy() == appmod.Qt.ContextMenuPolicy.DefaultContextMenu
+    assert (
+        window.tbl_torrents.contextMenuPolicy()
+        == appmod.Qt.ContextMenuPolicy.DefaultContextMenu
+    )
 
 
 def test_torrent_table_cells_are_not_editable(window):
-    assert window.tbl_torrents.editTriggers() == appmod.QAbstractItemView.EditTrigger.NoEditTriggers
+    assert (
+        window.tbl_torrents.editTriggers()
+        == appmod.QAbstractItemView.EditTrigger.NoEditTriggers
+    )
 
 
 def test_tools_menu_contains_clipboard_monitor_toggle(window):
     action_clipboard = _find_menu_action(window, "&Tools", "Enable &Clipboard Monitor")
     action_debug_logging = _find_menu_action(window, "&Tools", "Enable &Debug Logging")
     action_edit_ini = _find_menu_action(window, "&Tools", "Edit &.ini File")
-    action_edit_app_preferences = _find_menu_action(window, "&Tools", "Edit &App Preferences")
+    action_edit_app_preferences = _find_menu_action(
+        window, "&Tools", "Edit &App Preferences"
+    )
     action_edit_add_preferences_friendly = _find_menu_action(
         window, "&Tools", "Edit Add Preferences (&Friendly)"
     )
     action_open_web_ui = _find_menu_action(window, "&Tools", "&Open Web UI in Browser")
     action_speed_limits = _find_menu_action(window, "&Tools", "Manage &Speed Limits...")
-    action_manage_taxonomy = _find_menu_action(window, "&Tools", "Manage &Tags and Categories")
-    action_tracker_health = _find_menu_action(window, "&Tools", "Tracker &Health Dashboard...")
-    action_session_timeline = _find_menu_action(window, "&Tools", "Session Time&line...")
+    action_manage_taxonomy = _find_menu_action(
+        window, "&Tools", "Manage &Tags and Categories"
+    )
+    action_tracker_health = _find_menu_action(
+        window, "&Tools", "Tracker &Health Dashboard..."
+    )
+    action_session_timeline = _find_menu_action(
+        window, "&Tools", "Session Time&line..."
+    )
     assert action_clipboard is not None
     assert action_clipboard.isCheckable()
     assert action_debug_logging is not None
@@ -542,7 +586,9 @@ def test_web_ui_browser_url_encodes_username_and_brackets_ipv6_host(window):
 def test_file_menu_exit_action_supports_alt_x_shortcut(window):
     action_exit = _find_menu_action(window, "&File", "E&xit")
     assert action_exit is not None
-    shortcuts = {seq.toString().lower().replace(" ", "") for seq in action_exit.shortcuts()}
+    shortcuts = {
+        seq.toString().lower().replace(" ", "") for seq in action_exit.shortcuts()
+    }
     assert "ctrl+q" in shortcuts
     assert "alt+x" in shortcuts
 
@@ -600,7 +646,9 @@ def test_add_torrent_dialog_accept_queues_api_task(window, monkeypatch, qtbot):
     window._show_add_torrent_dialog()
     dialog = window._add_torrent_dialog
     assert dialog is not None
-    monkeypatch.setattr(dialog, "get_torrent_data", lambda: {"urls": ["magnet:?xt=urn:btih:aaa"]})
+    monkeypatch.setattr(
+        dialog, "get_torrent_data", lambda: {"urls": ["magnet:?xt=urn:btih:aaa"]}
+    )
 
     dialog.accept()
 
@@ -645,7 +693,9 @@ def test_new_profile_action_runs_wizard_saves_and_launches(window, monkeypatch):
     monkeypatch.setattr(
         window,
         "_launch_new_instance_with_profile",
-        lambda profile_id, instance_counter=None: launches.append((profile_id, instance_counter)),
+        lambda profile_id, instance_counter=None: launches.append(
+            (profile_id, instance_counter)
+        ),
     )
 
     window.config["_profile_id"] = "work"
@@ -664,7 +714,9 @@ def test_new_profile_action_runs_wizard_saves_and_launches(window, monkeypatch):
 def test_new_profile_action_blocks_duplicate_profile_ids(window, monkeypatch):
     calls = {"saved": 0, "launches": 0, "warnings": 0}
 
-    monkeypatch.setattr(actionsmod, "list_profile_ids", lambda: ["default", "work", "lab"])
+    monkeypatch.setattr(
+        actionsmod, "list_profile_ids", lambda: ["default", "work", "lab"]
+    )
     monkeypatch.setattr(
         actionsmod,
         "run_profile_setup_wizard",
@@ -700,7 +752,9 @@ def test_new_profile_action_cancel_does_not_save_or_launch(window, monkeypatch):
     calls = {"saved": 0, "launches": 0}
 
     monkeypatch.setattr(actionsmod, "list_profile_ids", lambda: ["default", "work"])
-    monkeypatch.setattr(actionsmod, "run_profile_setup_wizard", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        actionsmod, "run_profile_setup_wizard", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         actionsmod,
         "save_profile_config",
@@ -726,7 +780,9 @@ def test_new_instance_action_uses_current_config_and_counter(window, monkeypatch
     monkeypatch.setattr(
         window,
         "_launch_new_instance_with_profile",
-        lambda profile_id, instance_counter=None: calls.append((profile_id, instance_counter)),
+        lambda profile_id, instance_counter=None: calls.append(
+            (profile_id, instance_counter)
+        ),
     )
     window.config["_profile_id"] = "work"
     window.config["_instance_counter"] = 4
@@ -738,7 +794,9 @@ def test_new_instance_action_uses_current_config_and_counter(window, monkeypatch
     assert calls == [("work", 4)]
 
 
-def test_new_instance_from_config_action_prompts_and_launches(window, monkeypatch, tmp_path):
+def test_new_instance_from_config_action_prompts_and_launches(
+    window, monkeypatch, tmp_path
+):
     calls = []
 
     monkeypatch.setattr(
@@ -749,7 +807,9 @@ def test_new_instance_from_config_action_prompts_and_launches(window, monkeypatc
     monkeypatch.setattr(
         window,
         "_launch_new_instance_with_profile",
-        lambda profile_id, instance_counter=None: calls.append((profile_id, instance_counter)),
+        lambda profile_id, instance_counter=None: calls.append(
+            (profile_id, instance_counter)
+        ),
     )
 
     action_new_instance_from_config = _find_menu_action(
@@ -761,7 +821,9 @@ def test_new_instance_from_config_action_prompts_and_launches(window, monkeypatc
     assert calls == [("lab", 1)]
 
 
-def test_launch_new_instance_with_config_path_spawns_process(window, monkeypatch, tmp_path):
+def test_launch_new_instance_with_config_path_spawns_process(
+    window, monkeypatch, tmp_path
+):
     captured = {"cmd": None}
 
     monkeypatch.setattr(
@@ -811,7 +873,9 @@ def test_export_selected_torrents_queues_api_task(window, monkeypatch, tmp_path)
     assert captured["args"][2] == {"h1": "Ubuntu ISO", "h2": "Arch Linux"}
 
 
-def test_api_export_torrents_writes_selected_torrent_files(window, monkeypatch, tmp_path):
+def test_api_export_torrents_writes_selected_torrent_files(
+    window, monkeypatch, tmp_path
+):
     class FakeClient:
         def __init__(self):
             self.exported_hashes = []
@@ -849,7 +913,9 @@ def test_api_export_torrents_writes_selected_torrent_files(window, monkeypatch, 
         assert path_obj.read_bytes().startswith(b"payload-")
 
 
-def test_add_torrent_api_supports_urls_and_multiple_file_sources(window, monkeypatch, tmp_path):
+def test_add_torrent_api_supports_urls_and_multiple_file_sources(
+    window, monkeypatch, tmp_path
+):
     file_one = tmp_path / "a.torrent"
     file_two = tmp_path / "b.torrent"
     file_one.write_bytes(b"one")
@@ -889,12 +955,18 @@ def test_add_torrent_api_supports_urls_and_multiple_file_sources(window, monkeyp
     assert len(fake_client.calls) == 3
 
     url_call = fake_client.calls[0]
-    assert url_call["urls"] == ["magnet:?xt=urn:btih:aaa", "https://example.org/file.torrent"]
+    assert url_call["urls"] == [
+        "magnet:?xt=urn:btih:aaa",
+        "https://example.org/file.torrent",
+    ]
     assert url_call["save_path"] == str(tmp_path)
     assert "torrent_files" not in url_call
 
     file_calls = fake_client.calls[1:]
-    assert [call["torrent_files"] for call in file_calls] == [str(file_one), str(file_two)]
+    assert [call["torrent_files"] for call in file_calls] == [
+        str(file_one),
+        str(file_two),
+    ]
     assert all(call["save_path"] == str(tmp_path) for call in file_calls)
     assert all("urls" not in call for call in file_calls)
 

@@ -25,30 +25,44 @@ from .config_runtime import DEFAULT_PROFILE_ID, normalize_profile_id
 
 
 class ProfileSetupDialog(QDialog):
-    def __init__(self, profile_id: str, initial: dict[str, Any], parent: QWidget | None = None) -> None:
+    def __init__(
+        self, profile_id: str, initial: dict[str, Any], parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("qBiremo Profile Setup")
         self.resize(680, 420)
 
         root = QVBoxLayout(self)
         root.addWidget(
-            QLabel("Configure one qBiremo profile. Values are stored in the shared profile settings store.")
+            QLabel(
+                "Configure one qBiremo profile. Values are stored in the shared profile settings store."
+            )
         )
 
         form = QFormLayout()
         self.txt_profile_id = QLineEdit(profile_id)
-        self.txt_qb_host = QLineEdit(str(initial.get("qb_host", "127.0.0.1") or "127.0.0.1"))
+        self.txt_qb_host = QLineEdit(
+            str(initial.get("qb_host", "127.0.0.1") or "127.0.0.1")
+        )
         self.spn_qb_port = QSpinBox()
         self.spn_qb_port.setRange(1, 65535)
         self.spn_qb_port.setValue(int(initial.get("qb_port", 8080) or 8080))
-        self.txt_qb_username = QLineEdit(str(initial.get("qb_username", "admin") or "admin"))
+        self.txt_qb_username = QLineEdit(
+            str(initial.get("qb_username", "admin") or "admin")
+        )
         self.txt_qb_password = QLineEdit(str(initial.get("qb_password", "") or ""))
         self.txt_qb_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.txt_http_user = QLineEdit(str(initial.get("http_basic_auth_username", "") or ""))
-        self.txt_http_password = QLineEdit(str(initial.get("http_basic_auth_password", "") or ""))
+        self.txt_http_user = QLineEdit(
+            str(initial.get("http_basic_auth_username", "") or "")
+        )
+        self.txt_http_password = QLineEdit(
+            str(initial.get("http_basic_auth_password", "") or "")
+        )
         self.txt_http_password.setEchoMode(QLineEdit.EchoMode.Password)
 
-        self.txt_scheme = QLineEdit(str(initial.get("http_protocol_scheme", "http") or "http"))
+        self.txt_scheme = QLineEdit(
+            str(initial.get("http_protocol_scheme", "http") or "http")
+        )
         self.spn_timeout = QSpinBox()
         self.spn_timeout.setRange(1, 3600)
         self.spn_timeout.setValue(int(initial.get("http_timeout", 300) or 300))
@@ -66,7 +80,10 @@ class ProfileSetupDialog(QDialog):
 
         btn_test_connection = QPushButton("Test Connection")
         btn_test_connection.clicked.connect(self._on_test_connection)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         row = QHBoxLayout()
@@ -96,7 +113,9 @@ class ProfileSetupDialog(QDialog):
             QMessageBox.warning(self, "Validation", "Set a real qB password.")
             return
         if scheme not in {"http", "https"}:
-            QMessageBox.warning(self, "Validation", "HTTP scheme must be 'http' or 'https'.")
+            QMessageBox.warning(
+                self, "Validation", "HTTP scheme must be 'http' or 'https'."
+            )
             return
         self.accept()
 
@@ -120,7 +139,9 @@ class ProfileSetupDialog(QDialog):
             QMessageBox.warning(self, "Connection Test", "Set a real qB password.")
             return
         if scheme not in {"http", "https"}:
-            QMessageBox.warning(self, "Connection Test", "HTTP scheme must be 'http' or 'https'.")
+            QMessageBox.warning(
+                self, "Connection Test", "HTTP scheme must be 'http' or 'https'."
+            )
             return
 
         host_with_scheme = host if "://" in host else f"{scheme}://{host}"
@@ -135,7 +156,9 @@ class ProfileSetupDialog(QDialog):
             "REQUESTS_ARGS": {"timeout": timeout},
         }
         if http_user:
-            credentials = base64.b64encode(f"{http_user}:{http_password}".encode()).decode()
+            credentials = base64.b64encode(
+                f"{http_user}:{http_password}".encode()
+            ).decode()
             client_args["EXTRA_HEADERS"] = {"Authorization": f"Basic {credentials}"}
 
         try:
@@ -155,15 +178,21 @@ class ProfileSetupDialog(QDialog):
             )
 
     def to_profile_payload(self) -> tuple[str, dict[str, Any]]:
-        profile_id = normalize_profile_id(self.txt_profile_id.text() or DEFAULT_PROFILE_ID)
+        profile_id = normalize_profile_id(
+            self.txt_profile_id.text() or DEFAULT_PROFILE_ID
+        )
         payload: dict[str, Any] = {
             "qb_host": str(self.txt_qb_host.text() or "").strip(),
             "qb_port": int(self.spn_qb_port.value()),
             "qb_username": str(self.txt_qb_username.text() or "").strip(),
             "qb_password": str(self.txt_qb_password.text() or "").strip(),
             "http_basic_auth_username": str(self.txt_http_user.text() or "").strip(),
-            "http_basic_auth_password": str(self.txt_http_password.text() or "").strip(),
-            "http_protocol_scheme": str(self.txt_scheme.text() or "http").strip().lower(),
+            "http_basic_auth_password": str(
+                self.txt_http_password.text() or ""
+            ).strip(),
+            "http_protocol_scheme": str(self.txt_scheme.text() or "http")
+            .strip()
+            .lower(),
             "http_timeout": int(self.spn_timeout.value()),
         }
         return profile_id, payload
@@ -189,7 +218,9 @@ def prompt_profile_selection(
     if not ordered:
         ordered = [DEFAULT_PROFILE_ID]
     normalized_current = normalize_profile_id(current_profile)
-    default_index = ordered.index(normalized_current) if normalized_current in ordered else 0
+    default_index = (
+        ordered.index(normalized_current) if normalized_current in ordered else 0
+    )
     selected, ok = QInputDialog.getItem(
         parent,
         "Select Profile",

@@ -30,11 +30,15 @@ def test_compute_instance_id_from_config_uses_instance_counter_suffix():
     assert suffix == "3"
 
 
-def test_acquire_instance_lock_increments_counter_when_lock_exists(tmp_path, monkeypatch):
+def test_acquire_instance_lock_increments_counter_when_lock_exists(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(
         shared_instance_lock,
         "resolve_instance_lock_file_path",
-        lambda _identity, _instance_id, counter, **_kwargs: tmp_path / f"instance_{int(counter)}.lck",
+        lambda _identity, _instance_id, counter, **_kwargs: (
+            tmp_path / f"instance_{int(counter)}.lck"
+        ),
     )
     cfg = {"qb_host": "127.0.0.1", "qb_port": 8080}
     first_counter, first_instance_id, first_lock_path = appmod.acquire_instance_lock(
@@ -178,7 +182,10 @@ def test_main_opens_log_file_on_startup_crash(monkeypatch, tmp_path):
     monkeypatch.setattr(
         appmod,
         "load_config_with_issues",
-        lambda _path: ({"_log_file_path": str(log_path), "log_file": str(log_path)}, []),
+        lambda _path: (
+            {"_log_file_path": str(log_path), "log_file": str(log_path)},
+            [],
+        ),
     )
     monkeypatch.setattr(
         appmod,
@@ -387,7 +394,9 @@ def test_setup_logging_falls_back_to_default_file_when_primary_path_fails(monkey
             raise OSError("primary log path denied")
         return FakeHandler()
 
-    monkeypatch.setattr(config_runtime, "setup_logger_to_file", fake_setup_logger_to_file)
+    monkeypatch.setattr(
+        config_runtime, "setup_logger_to_file", fake_setup_logger_to_file
+    )
     monkeypatch.setenv("DATA_DIR", str(Path.cwd() / ".tmp_test_data"))
 
     try:
@@ -419,7 +428,10 @@ def test_main_logs_load_issues_and_starts_with_defaults(monkeypatch, caplog):
     monkeypatch.setattr(
         appmod,
         "load_config_with_issues",
-        lambda _path: ({}, ["Failed to parse config file broken.toml: boom. Using defaults."]),
+        lambda _path: (
+            {},
+            ["Failed to parse config file broken.toml: boom. Using defaults."],
+        ),
     )
     monkeypatch.setattr(
         appmod,

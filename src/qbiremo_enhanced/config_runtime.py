@@ -194,7 +194,9 @@ def load_config(profile_id: str | None) -> NormalizedConfig:
     return config
 
 
-def load_config_with_issues(profile_id: str | None) -> tuple[NormalizedConfig, list[str]]:
+def load_config_with_issues(
+    profile_id: str | None,
+) -> tuple[NormalizedConfig, list[str]]:
     """Load one profile-backed configuration and collect non-fatal issues."""
     loaded, issues = _load_profile_config_with_issues_shared(
         APP_IDENTITY,
@@ -245,7 +247,9 @@ def _remove_settings_managed_config_keys(normalized: dict[str, object]) -> None:
     """Drop config keys that are intentionally managed by QSettings."""
     for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
         if key in normalized:
-            _config_validation_warn(f"'{key}' is ignored in runtime profile config; managed via UI settings.")
+            _config_validation_warn(
+                f"'{key}' is ignored in runtime profile config; managed via UI settings."
+            )
             normalized.pop(key, None)
 
 
@@ -275,9 +279,13 @@ def _normalize_http_protocol_scheme_value(normalized: dict[str, object]) -> None
         return
     raw_scheme = normalized.get("http_protocol_scheme")
     normalized_scheme = normalize_http_protocol_scheme(raw_scheme)
-    raw_scheme_text = str(raw_scheme).strip().lower() if isinstance(raw_scheme, str) else ""
+    raw_scheme_text = (
+        str(raw_scheme).strip().lower() if isinstance(raw_scheme, str) else ""
+    )
     if raw_scheme_text not in ("http", "https"):
-        _config_validation_warn(f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'.")
+        _config_validation_warn(
+            f"'http_protocol_scheme' invalid ({raw_scheme!r}); using 'http'."
+        )
     normalized["http_protocol_scheme"] = normalized_scheme
 
 
@@ -361,9 +369,7 @@ def _normalize_title_bar_speed_format_value(normalized: dict[str, object]) -> No
 def _warn_unknown_config_keys(normalized: dict[str, object]) -> None:
     """Warn for unknown config keys."""
     unknown_keys = sorted(
-        key
-        for key in normalized
-        if key not in CONFIG_VALIDATION_KNOWN_KEYS
+        key for key in normalized if key not in CONFIG_VALIDATION_KNOWN_KEYS
     )
     for key in unknown_keys:
         _config_validation_warn(f"Unknown config key '{key}' will be ignored.")

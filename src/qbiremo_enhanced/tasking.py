@@ -47,9 +47,13 @@ class _DebugLogOwner(Protocol):
         self, method_name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> None: ...
 
-    def _debug_log_api_error(self, method_name: str, error: Exception, elapsed: float) -> None: ...
+    def _debug_log_api_error(
+        self, method_name: str, error: Exception, elapsed: float
+    ) -> None: ...
 
-    def _debug_log_api_response(self, method_name: str, result: object, elapsed: float) -> None: ...
+    def _debug_log_api_response(
+        self, method_name: str, result: object, elapsed: float
+    ) -> None: ...
 
 
 class _EmittableSignal(Protocol):
@@ -94,7 +98,9 @@ class Worker(QRunnable):
         try:
             signal.emit(*args)
         except RuntimeError:
-            logger.debug("Skipped worker signal emit because signal source was deleted.")
+            logger.debug(
+                "Skipped worker signal emit because signal source was deleted."
+            )
 
     @Slot()
     def run(self) -> None:
@@ -114,7 +120,9 @@ class Worker(QRunnable):
                 was_cancelled = True
             else:
                 exctype, value = sys.exc_info()[:2]
-                self._safe_emit(self.signals.error, (exctype, value, traceback.format_exc()))
+                self._safe_emit(
+                    self.signals.error, (exctype, value, traceback.format_exc())
+                )
         finally:
             if was_cancelled:
                 self._safe_emit(self.signals.cancelled)
@@ -136,7 +144,13 @@ class APITaskQueue(QObject):
         self.threadpool = QThreadPool()
         self.current_task_name: str | None = None
         self.pending_task: (
-            tuple[str, TaskCallable, TaskCallback | None, tuple[object, ...], dict[str, object]]
+            tuple[
+                str,
+                TaskCallable,
+                TaskCallback | None,
+                tuple[object, ...],
+                dict[str, object],
+            ]
             | None
         ) = None
 
@@ -173,7 +187,9 @@ class APITaskQueue(QObject):
         worker.signals.cancelled.connect(
             lambda _worker=worker: self._on_task_cancelled(_worker, task_name)
         )
-        worker.signals.finished.connect(lambda _worker=worker: self._on_worker_finished(_worker))
+        worker.signals.finished.connect(
+            lambda _worker=worker: self._on_worker_finished(_worker)
+        )
         self.threadpool.start(worker)
 
     def add_task(
@@ -287,7 +303,9 @@ class _DebugAPIClientProxy:
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         """Delegate context-manager exit to wrapped client."""
-        return bool(cast("_ContextManagedClient", self._client).__exit__(exc_type, exc, tb))
+        return bool(
+            cast("_ContextManagedClient", self._client).__exit__(exc_type, exc, tb)
+        )
 
     def __getattr__(self, name: str) -> object:
         """Intercept callable attributes to add debug call/response/error logs."""

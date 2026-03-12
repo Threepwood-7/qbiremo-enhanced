@@ -7,7 +7,10 @@ import qbiremo_enhanced.main_window as appmod
 
 
 def _top_level_names(tree_widget):
-    return [tree_widget.topLevelItem(i).text(0) for i in range(tree_widget.topLevelItemCount())]
+    return [
+        tree_widget.topLevelItem(i).text(0)
+        for i in range(tree_widget.topLevelItemCount())
+    ]
 
 
 def _find_filter_item(tree_widget, kind, value):
@@ -72,7 +75,9 @@ def _table_first_cell(table):
     return item.text() if item else ""
 
 
-def test_cache_refresh_candidates_only_include_state_changes_without_pruning(window, make_torrent):
+def test_cache_refresh_candidates_only_include_state_changes_without_pruning(
+    window, make_torrent
+):
     window.all_torrents = [
         make_torrent(hash="h1", state="downloading"),
         make_torrent(hash="h2", state="seeding"),
@@ -110,7 +115,9 @@ def test_refresh_content_cache_uses_mocked_client(window, monkeypatch):
     fake_client = FakeClient()
     monkeypatch.setattr(window, "_create_client", lambda: fake_client)
 
-    result = window._refresh_content_cache_for_torrents({"h1": "downloading", "h2": "seeding"})
+    result = window._refresh_content_cache_for_torrents(
+        {"h1": "downloading", "h2": "seeding"}
+    )
     assert result["success"] is True
     assert set(result["data"].keys()) == {"h1", "h2"}
     assert result["data"]["h1"]["state"] == "downloading"
@@ -126,7 +133,11 @@ def test_status_category_tag_filters_still_trigger_api_refresh(window, monkeypat
 
     monkeypatch.setattr(window, "_refresh_torrents", _fake_refresh)
 
-    for kind, value in [("status", "downloading"), ("category", "movies"), ("tag", "tag1")]:
+    for kind, value in [
+        ("status", "downloading"),
+        ("category", "movies"),
+        ("tag", "tag1"),
+    ]:
         item = QTreeWidgetItem([value])
         item.setData(0, Qt.ItemDataRole.UserRole, (kind, value))
         window._on_filter_tree_clicked(item, 0)
@@ -178,7 +189,9 @@ def test_fetch_torrents_uses_sync_maindata_and_updates_rid(window, monkeypatch):
     assert [t.hash for t in result["data"]] == ["h2", "h1"]
 
 
-def test_fetch_torrents_passes_selected_status_category_and_tag_filters(window, monkeypatch):
+def test_fetch_torrents_passes_selected_status_category_and_tag_filters(
+    window, monkeypatch
+):
     class FakeClient:
         def __init__(self):
             self.kwargs = None
@@ -200,8 +213,12 @@ def test_fetch_torrents_passes_selected_status_category_and_tag_filters(window, 
         def torrents_info(self, **kwargs):
             self.kwargs = kwargs
             return [
-                SimpleNamespace(hash="h1", name="One", added_on=10, state="downloading"),
-                SimpleNamespace(hash="h2", name="Two", added_on=20, state="downloading"),
+                SimpleNamespace(
+                    hash="h1", name="One", added_on=10, state="downloading"
+                ),
+                SimpleNamespace(
+                    hash="h2", name="Two", added_on=20, state="downloading"
+                ),
             ]
 
         def transfer_speed_limits_mode(self):
@@ -225,7 +242,9 @@ def test_fetch_torrents_passes_selected_status_category_and_tag_filters(window, 
     assert [t.hash for t in result["data"]] == ["h2", "h1"]
 
 
-def test_fetch_torrents_passes_empty_category_and_tag_when_selected(window, monkeypatch):
+def test_fetch_torrents_passes_empty_category_and_tag_when_selected(
+    window, monkeypatch
+):
     class FakeClient:
         def __init__(self):
             self.kwargs = None
@@ -240,11 +259,15 @@ def test_fetch_torrents_passes_empty_category_and_tag_when_selected(window, monk
             return False
 
         def sync_maindata(self, rid=0):
-            raise AssertionError("sync_maindata should not be used when category/tag are selected")
+            raise AssertionError(
+                "sync_maindata should not be used when category/tag are selected"
+            )
 
         def torrents_info(self, **kwargs):
             self.kwargs = kwargs
-            return [SimpleNamespace(hash="h1", name="One", added_on=10, state="stalledDL")]
+            return [
+                SimpleNamespace(hash="h1", name="One", added_on=10, state="stalledDL")
+            ]
 
         def transfer_speed_limits_mode(self):
             return 0
@@ -281,13 +304,19 @@ def test_fetch_torrents_passes_private_true_filter(window, monkeypatch):
             return False
 
         def sync_maindata(self, rid=0):
-            raise AssertionError("sync_maindata should not be used when private filter is selected")
+            raise AssertionError(
+                "sync_maindata should not be used when private filter is selected"
+            )
 
         def torrents_info(self, **kwargs):
             self.kwargs = kwargs
             return [
                 SimpleNamespace(
-                    hash="h1", name="One", added_on=10, state="downloading", private=True
+                    hash="h1",
+                    name="One",
+                    added_on=10,
+                    state="downloading",
+                    private=True,
                 )
             ]
 
@@ -323,13 +352,19 @@ def test_fetch_torrents_passes_private_false_filter(window, monkeypatch):
             return False
 
         def sync_maindata(self, rid=0):
-            raise AssertionError("sync_maindata should not be used when private filter is selected")
+            raise AssertionError(
+                "sync_maindata should not be used when private filter is selected"
+            )
 
         def torrents_info(self, **kwargs):
             self.kwargs = kwargs
             return [
                 SimpleNamespace(
-                    hash="h2", name="Two", added_on=20, state="downloading", private=False
+                    hash="h2",
+                    name="Two",
+                    added_on=20,
+                    state="downloading",
+                    private=False,
                 )
             ]
 
@@ -388,7 +423,12 @@ def test_fetch_tracker_health_data_aggregates_by_tracker(window, monkeypatch):
                 "msg": "timed out",
                 "next_announce": 10,
             },
-            {"url": "udp://tracker.two:6969/announce", "status": 2, "msg": "", "next_announce": 20},
+            {
+                "url": "udp://tracker.two:6969/announce",
+                "status": 2,
+                "msg": "",
+                "next_announce": 20,
+            },
         ],
         "h2": [
             {
@@ -469,9 +509,15 @@ def test_apply_filters_skips_local_remote_equivalent_filters_when_remote_filtere
         make_torrent(hash="h1", state="stalleddl", category="movies", tags="tag1"),
     ]
 
-    monkeypatch.setattr(window, "_torrent_matches_status_filter", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(window, "_torrent_matches_category_filter", lambda *_args, **_kwargs: False)
-    monkeypatch.setattr(window, "_torrent_matches_tag_filter", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        window, "_torrent_matches_status_filter", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(
+        window, "_torrent_matches_category_filter", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(
+        window, "_torrent_matches_tag_filter", lambda *_args, **_kwargs: False
+    )
 
     window._apply_filters()
     assert [t.hash for t in window.filtered_torrents] == ["h1"]
@@ -481,7 +527,9 @@ def test_apply_filters_skips_local_remote_equivalent_filters_when_remote_filtere
     assert [t.hash for t in window.filtered_torrents] == []
 
 
-def test_on_torrents_loaded_tracks_remote_filtered_flag(window, monkeypatch, make_torrent):
+def test_on_torrents_loaded_tracks_remote_filtered_flag(
+    window, monkeypatch, make_torrent
+):
     monkeypatch.setattr(window, "_get_cache_refresh_candidates", lambda **_kwargs: {})
     monkeypatch.setattr(
         window, "_load_selected_torrent_network_details", lambda *_args, **_kwargs: None
@@ -641,7 +689,9 @@ def test_window_title_uses_custom_speed_format(window, make_torrent):
     assert window.windowTitle() == "U:2,500 D:3,500"
 
 
-def test_about_dialog_shows_computed_instance_id_and_paths(window, monkeypatch, tmp_path):
+def test_about_dialog_shows_computed_instance_id_and_paths(
+    window, monkeypatch, tmp_path
+):
     captured = {}
 
     def _fake_exec(dialog):
@@ -654,7 +704,9 @@ def test_about_dialog_shows_computed_instance_id_and_paths(window, monkeypatch, 
             if text_widgets
             else appmod.QTextEdit.LineWrapMode.WidgetWidth
         )
-        captured["font_family"] = text_widgets[0].font().family() if text_widgets else ""
+        captured["font_family"] = (
+            text_widgets[0].font().family() if text_widgets else ""
+        )
         return appmod.QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(appmod.QDialog, "exec", _fake_exec)
@@ -677,11 +729,15 @@ def test_about_dialog_shows_computed_instance_id_and_paths(window, monkeypatch, 
     assert captured["wrap"] == appmod.QTextEdit.LineWrapMode.NoWrap
     assert (
         captured["font_family"]
-        == appmod.QFontDatabase.systemFont(appmod.QFontDatabase.SystemFont.FixedFont).family()
+        == appmod.QFontDatabase.systemFont(
+            appmod.QFontDatabase.SystemFont.FixedFont
+        ).family()
     )
 
 
-def test_statusbar_transfer_summary_shows_speeds_limits_and_session_totals(window, make_torrent):
+def test_statusbar_transfer_summary_shows_speeds_limits_and_session_totals(
+    window, make_torrent
+):
     window.all_torrents = [
         make_torrent(
             hash="h1",
@@ -763,11 +819,17 @@ def test_filter_tree_highlights_all_active_filters(window):
     window._update_tracker_tree()
     window._refresh_filter_tree_highlights()
 
-    assert _find_filter_item(window.tree_filters, "status", "downloading").font(0).bold()
+    assert (
+        _find_filter_item(window.tree_filters, "status", "downloading").font(0).bold()
+    )
     assert _find_filter_item(window.tree_filters, "category", "movies").font(0).bold()
     assert _find_filter_item(window.tree_filters, "tag", "tag1").font(0).bold()
     assert _find_filter_item(window.tree_filters, "size", (100, 200)).font(0).bold()
-    assert _find_filter_item(window.tree_filters, "tracker", "tracker.example").font(0).bold()
+    assert (
+        _find_filter_item(window.tree_filters, "tracker", "tracker.example")
+        .font(0)
+        .bold()
+    )
 
     # Non-active status should not be highlighted.
     assert not _find_filter_item(window.tree_filters, "status", "all").font(0).bold()
@@ -809,11 +871,23 @@ def test_filter_tree_status_category_tag_labels_include_latest_snapshot_counts(
     window._update_filter_tree_count_labels()
 
     assert _find_filter_item(window.tree_filters, "status", "all").text(0) == "All (3)"
-    assert _find_filter_item(window.tree_filters, "status", "active").text(0) == "Active (2)"
-    assert _find_filter_item(window.tree_filters, "status", "paused").text(0) == "Paused (1)"
+    assert (
+        _find_filter_item(window.tree_filters, "status", "active").text(0)
+        == "Active (2)"
+    )
+    assert (
+        _find_filter_item(window.tree_filters, "status", "paused").text(0)
+        == "Paused (1)"
+    )
     assert _find_filter_item(window.tree_filters, "category", None).text(0) == "All (3)"
-    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (2)"
-    assert _find_filter_item(window.tree_filters, "category", "").text(0) == "Uncategorized (1)"
+    assert (
+        _find_filter_item(window.tree_filters, "category", "movies").text(0)
+        == "movies (2)"
+    )
+    assert (
+        _find_filter_item(window.tree_filters, "category", "").text(0)
+        == "Uncategorized (1)"
+    )
     assert _find_filter_item(window.tree_filters, "tag", None).text(0) == "All (3)"
     assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (1)"
     assert _find_filter_item(window.tree_filters, "tag", "").text(0) == "Untagged (1)"
@@ -825,7 +899,9 @@ def test_filter_tree_count_labels_do_not_invoke_api(window, make_torrent, monkey
     window._update_category_tree()
     window._update_tag_tree()
     window.all_torrents = [
-        make_torrent(hash="h1", state="downloading", dlspeed=100, category="movies", tags="tag1")
+        make_torrent(
+            hash="h1", state="downloading", dlspeed=100, category="movies", tags="tag1"
+        )
     ]
 
     def _forbidden_client_call():
@@ -835,24 +911,39 @@ def test_filter_tree_count_labels_do_not_invoke_api(window, make_torrent, monkey
     window._update_filter_tree_count_labels()
 
     assert _find_filter_item(window.tree_filters, "status", "all").text(0) == "All (1)"
-    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (1)"
+    assert (
+        _find_filter_item(window.tree_filters, "category", "movies").text(0)
+        == "movies (1)"
+    )
     assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (1)"
 
 
-def test_filter_tree_count_cache_updates_when_torrent_snapshot_is_replaced(window, make_torrent):
+def test_filter_tree_count_cache_updates_when_torrent_snapshot_is_replaced(
+    window, make_torrent
+):
     window.categories = ["movies"]
     window.tags = ["tag1"]
     window._update_category_tree()
     window._update_tag_tree()
 
     window.all_torrents = [
-        make_torrent(hash="h1", state="downloading", dlspeed=100, category="movies", tags="tag1")
+        make_torrent(
+            hash="h1", state="downloading", dlspeed=100, category="movies", tags="tag1"
+        )
     ]
     window._update_filter_tree_count_labels()
-    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (1)"
+    assert (
+        _find_filter_item(window.tree_filters, "category", "movies").text(0)
+        == "movies (1)"
+    )
     assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (1)"
 
-    window.all_torrents = [make_torrent(hash="h2", state="pausedDL", category="", tags="")]
+    window.all_torrents = [
+        make_torrent(hash="h2", state="pausedDL", category="", tags="")
+    ]
     window._update_filter_tree_count_labels()
-    assert _find_filter_item(window.tree_filters, "category", "movies").text(0) == "movies (0)"
+    assert (
+        _find_filter_item(window.tree_filters, "category", "movies").text(0)
+        == "movies (0)"
+    )
     assert _find_filter_item(window.tree_filters, "tag", "tag1").text(0) == "tag1 (0)"

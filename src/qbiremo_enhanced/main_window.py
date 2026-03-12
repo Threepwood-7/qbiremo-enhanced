@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlparse
 
 import qbittorrentapi
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -220,7 +220,9 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Delegate custom event-filter handling to session controller logic."""
-        return SessionUiController.eventFilter(cast("SessionUiController", self), watched, event)
+        return SessionUiController.eventFilter(
+            cast("SessionUiController", self), watched, event
+        )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Delegate close-event cleanup to session controller logic."""
@@ -301,7 +303,9 @@ class MainWindow(QMainWindow):
         self._taxonomy_dialog: TaxonomyManagerDialog | None = None
         self._speed_limits_dialog: SpeedLimitsDialog | None = None
         self._app_preferences_dialog: AppPreferencesDialog | None = None
-        self._friendly_add_preferences_dialog: FriendlyAddPreferencesDialog | None = None
+        self._friendly_add_preferences_dialog: FriendlyAddPreferencesDialog | None = (
+            None
+        )
         self._tracker_health_dialog: TrackerHealthDialog | None = None
         self._session_timeline_dialog: SessionTimelineDialog | None = None
         self._add_torrent_dialog: AddTorrentDialog | None = None
@@ -370,7 +374,8 @@ class MainWindow(QMainWindow):
         self._update_window_title_speeds()
         # Force startup as maximized regardless of previously persisted geometry.
         self.setWindowState(
-            (self.windowState() & ~Qt.WindowState.WindowMinimized) | Qt.WindowState.WindowMaximized
+            (self.windowState() & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowMaximized
         )
         self.show()
         QTimer.singleShot(500, self._bring_to_front_startup)
@@ -447,7 +452,9 @@ class MainWindow(QMainWindow):
         self.txt_general_details.setReadOnly(True)
         self.txt_general_details.setAcceptRichText(True)
         self.txt_general_details.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-        self.txt_general_details.setPlaceholderText("Select one torrent to see its details.")
+        self.txt_general_details.setPlaceholderText(
+            "Select one torrent to see its details."
+        )
         self.txt_general_details.document().setDefaultStyleSheet(
             "body { margin: 0; font-size: 12px; }"
             "h3 { margin: 10px 0 4px; font-size: 12px; font-weight: 700; }"
@@ -467,7 +474,9 @@ class MainWindow(QMainWindow):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive
+        )
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
@@ -509,19 +518,29 @@ class MainWindow(QMainWindow):
 
         content_actions_layout = QHBoxLayout()
         self.btn_content_skip = QPushButton("Skip")
-        self.btn_content_skip.clicked.connect(lambda: self._set_selected_content_priority(0))
+        self.btn_content_skip.clicked.connect(
+            lambda: self._set_selected_content_priority(0)
+        )
         content_actions_layout.addWidget(self.btn_content_skip)
         self.btn_content_normal = QPushButton("Normal Priority")
-        self.btn_content_normal.clicked.connect(lambda: self._set_selected_content_priority(1))
+        self.btn_content_normal.clicked.connect(
+            lambda: self._set_selected_content_priority(1)
+        )
         content_actions_layout.addWidget(self.btn_content_normal)
         self.btn_content_high = QPushButton("High Priority")
-        self.btn_content_high.clicked.connect(lambda: self._set_selected_content_priority(6))
+        self.btn_content_high.clicked.connect(
+            lambda: self._set_selected_content_priority(6)
+        )
         content_actions_layout.addWidget(self.btn_content_high)
         self.btn_content_max = QPushButton("Maximum Priority")
-        self.btn_content_max.clicked.connect(lambda: self._set_selected_content_priority(7))
+        self.btn_content_max.clicked.connect(
+            lambda: self._set_selected_content_priority(7)
+        )
         content_actions_layout.addWidget(self.btn_content_max)
         self.btn_content_rename = QPushButton("Rename...")
-        self.btn_content_rename.clicked.connect(lambda: self._rename_selected_content_item())
+        self.btn_content_rename.clicked.connect(
+            lambda: self._rename_selected_content_item()
+        )
         content_actions_layout.addWidget(self.btn_content_rename)
         content_actions_layout.addStretch(1)
         content_layout.addLayout(content_actions_layout)
@@ -595,7 +614,9 @@ class MainWindow(QMainWindow):
         self.spn_torrent_edit_upload_limit.setRange(0, 10_000_000)
         self.spn_torrent_edit_upload_limit.setSpecialValueText("Unlimited")
         self.spn_torrent_edit_upload_limit.setSuffix(" KiB/s")
-        self.spn_torrent_edit_upload_limit.setToolTip("Per-torrent upload limit (0 = unlimited)")
+        self.spn_torrent_edit_upload_limit.setToolTip(
+            "Per-torrent upload limit (0 = unlimited)"
+        )
         edit_form.addRow("Upload Speed Limit:", self.spn_torrent_edit_upload_limit)
 
         self.txt_torrent_edit_save_path = QLineEdit()
@@ -614,7 +635,9 @@ class MainWindow(QMainWindow):
         incomplete_path_row = QHBoxLayout()
         incomplete_path_row.addWidget(self.txt_torrent_edit_incomplete_path)
         btn_browse_incomplete_path = QPushButton("Browse")
-        btn_browse_incomplete_path.clicked.connect(self._browse_torrent_edit_incomplete_path)
+        btn_browse_incomplete_path.clicked.connect(
+            self._browse_torrent_edit_incomplete_path
+        )
         incomplete_path_row.addWidget(btn_browse_incomplete_path)
         edit_form.addRow("Incomplete Path:", incomplete_path_row)
         self.btn_torrent_edit_browse_incomplete_path = btn_browse_incomplete_path
@@ -678,7 +701,9 @@ class MainWindow(QMainWindow):
 
         # -- Status section --
         self._section_status = QTreeWidgetItem(["Status"])
-        self._section_status.setFlags(self._section_status.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        self._section_status.setFlags(
+            self._section_status.flags() & ~Qt.ItemFlag.ItemIsSelectable
+        )
         font = self._section_status.font(0)
         font.setBold(True)
         self._section_status.setFont(0, font)
@@ -702,7 +727,9 @@ class MainWindow(QMainWindow):
 
         # -- Tags section --
         self._section_tag = QTreeWidgetItem(["Tags"])
-        self._section_tag.setFlags(self._section_tag.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        self._section_tag.setFlags(
+            self._section_tag.flags() & ~Qt.ItemFlag.ItemIsSelectable
+        )
         font = self._section_tag.font(0)
         font.setBold(True)
         self._section_tag.setFont(0, font)
@@ -710,7 +737,9 @@ class MainWindow(QMainWindow):
 
         # -- Size Groups section --
         self._section_size = QTreeWidgetItem(["Size Groups"])
-        self._section_size.setFlags(self._section_size.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        self._section_size.setFlags(
+            self._section_size.flags() & ~Qt.ItemFlag.ItemIsSelectable
+        )
         font = self._section_size.font(0)
         font.setBold(True)
         self._section_size.setFont(0, font)
@@ -785,8 +814,8 @@ class MainWindow(QMainWindow):
             shortcut = QShortcut(QKeySequence(key_name), table)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             shortcut.activated.connect(
-                lambda ck=column_key, so=default_order: self._sort_torrents_by_column_shortcut(
-                    ck, so
+                lambda ck=column_key, so=default_order: (
+                    self._sort_torrents_by_column_shortcut(ck, so)
                 )
             )
             self._torrent_sort_shortcuts.append(shortcut)
@@ -840,11 +869,15 @@ class MainWindow(QMainWindow):
         file_menu.addAction(action_new_instance)
 
         action_new_instance_from_config = QAction("New instance from pro&file...", self)
-        action_new_instance_from_config.triggered.connect(self._launch_new_instance_from_config)
+        action_new_instance_from_config.triggered.connect(
+            self._launch_new_instance_from_config
+        )
         file_menu.addAction(action_new_instance_from_config)
 
         action_new_profile = QAction("New &profile...", self)
-        action_new_profile.triggered.connect(self._create_new_profile_from_current_config)
+        action_new_profile.triggered.connect(
+            self._create_new_profile_from_current_config
+        )
         file_menu.addAction(action_new_profile)
 
         file_menu.addSeparator()
@@ -915,7 +948,9 @@ class MainWindow(QMainWindow):
         action_remove_no_confirm.triggered.connect(self._remove_torrent_no_confirmation)
         edit_menu.addAction(action_remove_no_confirm)
 
-        action_remove_delete_no_confirm = QAction("Remove and Delete Data (no confirmation)", self)
+        action_remove_delete_no_confirm = QAction(
+            "Remove and Delete Data (no confirmation)", self
+        )
         action_remove_delete_no_confirm.setShortcut("Ctrl+Shift+Del")
         action_remove_delete_no_confirm.triggered.connect(
             self._remove_torrent_and_delete_data_no_confirmation
@@ -1022,7 +1057,9 @@ class MainWindow(QMainWindow):
         action_edit_app_preferences.triggered.connect(self._show_app_preferences_editor)
         tools_menu.addAction(action_edit_app_preferences)
 
-        action_edit_add_preferences_friendly = QAction("Edit Add Preferences (&Friendly)", self)
+        action_edit_add_preferences_friendly = QAction(
+            "Edit Add Preferences (&Friendly)", self
+        )
         action_edit_add_preferences_friendly.triggered.connect(
             self._show_friendly_add_preferences_editor
         )
@@ -1100,7 +1137,9 @@ class MainWindow(QMainWindow):
         """Build left-most status bar identity text for current connection/instance."""
         user = (
             str(
-                self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
+                self.qb_conn_info.get(
+                    "username", self.config.get("qb_username", "admin")
+                )
                 if isinstance(self.config, dict)
                 else self.qb_conn_info.get("username", "admin")
             ).strip()
@@ -1127,7 +1166,9 @@ class MainWindow(QMainWindow):
             else self.qb_conn_info.get("port", 8080)
         )
         counter = _normalize_instance_counter(
-            self.config.get("_instance_counter", 1) if isinstance(self.config, dict) else 1
+            self.config.get("_instance_counter", 1)
+            if isinstance(self.config, dict)
+            else 1
         )
         return f"{user}@{host}:{port} [{counter}]"
 
@@ -1135,7 +1176,9 @@ class MainWindow(QMainWindow):
         """Capture baseline splitter/header states for Reset View."""
         self._default_main_splitter_state = self.main_splitter.saveState()
         self._default_right_splitter_state = self.right_splitter.saveState()
-        self._default_torrent_header_state = self.tbl_torrents.horizontalHeader().saveState()
+        self._default_torrent_header_state = (
+            self.tbl_torrents.horizontalHeader().saveState()
+        )
 
     def _apply_default_main_splitter_width(self) -> None:
         """Apply default left-panel width in pixels on current splitter geometry."""
@@ -1160,8 +1203,12 @@ class MainWindow(QMainWindow):
                 header.moveSection(visual, logical)
 
         for idx, column in enumerate(self.torrent_columns):
-            self.tbl_torrents.setColumnWidth(idx, self._coerce_int(column.get("width", 100), 100))
-            self.tbl_torrents.setColumnHidden(idx, not bool(column.get("default_visible", True)))
+            self.tbl_torrents.setColumnWidth(
+                idx, self._coerce_int(column.get("width", 100), 100)
+            )
+            self.tbl_torrents.setColumnHidden(
+                idx, not bool(column.get("default_visible", True))
+            )
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self._sync_torrent_column_actions()
 
@@ -1258,7 +1305,9 @@ class MainWindow(QMainWindow):
         """Extract first torrent hash (hex/base32 BTIH forms) from text."""
         if not text:
             return ""
-        match = re.search(r"\b([A-Fa-f0-9]{40}|[A-Fa-f0-9]{64}|[A-Za-z2-7]{32})\b", text)
+        match = re.search(
+            r"\b([A-Fa-f0-9]{40}|[A-Fa-f0-9]{64}|[A-Za-z2-7]{32})\b", text
+        )
         return match.group(1).strip() if match else ""
 
     @staticmethod
@@ -1358,7 +1407,9 @@ class MainWindow(QMainWindow):
         """Build Web UI URL for the current qBittorrent connection."""
         user = (
             str(
-                self.qb_conn_info.get("username", self.config.get("qb_username", "admin"))
+                self.qb_conn_info.get(
+                    "username", self.config.get("qb_username", "admin")
+                )
                 if isinstance(self.config, dict)
                 else self.qb_conn_info.get("username", "admin")
             ).strip()
@@ -1389,7 +1440,9 @@ class MainWindow(QMainWindow):
                 parsed = urlparse(raw_host)
                 host = str(parsed.hostname or raw_host).strip() or "localhost"
                 parsed_scheme = _normalize_http_protocol_scheme(parsed.scheme or "http")
-                scheme = configured_scheme if explicit_scheme_override else parsed_scheme
+                scheme = (
+                    configured_scheme if explicit_scheme_override else parsed_scheme
+                )
                 host_port_from_url = parsed.port
             except ValueError:
                 host = raw_host
@@ -1480,7 +1533,9 @@ class MainWindow(QMainWindow):
         else:
             medium_keys = set(MEDIUM_TORRENT_VIEW_KEYS)
             hidden_default = [
-                col["key"] for col in self.torrent_columns if col["key"] not in medium_keys
+                col["key"]
+                for col in self.torrent_columns
+                if col["key"] not in medium_keys
             ]
             self._apply_hidden_columns_by_keys(hidden_default)
 
@@ -1554,7 +1609,9 @@ class MainWindow(QMainWindow):
         settings.set_value("rightSplitter", self.right_splitter.saveState())
 
         # Torrent table header (column widths, order, sort)
-        settings.set_value("torrentTableHeader", self.tbl_torrents.horizontalHeader().saveState())
+        settings.set_value(
+            "torrentTableHeader", self.tbl_torrents.horizontalHeader().saveState()
+        )
         hidden_columns = [
             col["key"]
             for idx, col in enumerate(self.torrent_columns)
@@ -1576,7 +1633,9 @@ class MainWindow(QMainWindow):
                 and self.display_speed_mode == "human_readable"
             ),
         )
-        settings.set_value("clipboardMonitorEnabled", bool(self.clipboard_monitor_enabled))
+        settings.set_value(
+            "clipboardMonitorEnabled", bool(self.clipboard_monitor_enabled)
+        )
         settings.set_value("debugLoggingEnabled", bool(self.debug_logging_enabled))
 
     def _initial_load(self) -> None:
@@ -1731,7 +1790,9 @@ def main() -> None:
         open_path_in_default_app(
             config.get(
                 "_log_file_path",
-                _default_instance_log_file_path(str(config.get("_instance_id", "") or "")),
+                _default_instance_log_file_path(
+                    str(config.get("_instance_id", "") or "")
+                ),
             )
         )
         raise

@@ -80,7 +80,9 @@ class FilterTableController(WindowControllerBase):
     def _ensure_filter_count_cache(self) -> None:
         """Build cached status/category/tag counts for the current torrent snapshot."""
         signature = self._filter_count_snapshot_signature()
-        if signature == getattr(self, "_filter_count_snapshot_signature_cached", (-1, -1)):
+        if signature == getattr(
+            self, "_filter_count_snapshot_signature_cached", (-1, -1)
+        ):
             return
 
         torrents = self.all_torrents if isinstance(self.all_torrents, list) else []
@@ -355,7 +357,9 @@ class FilterTableController(WindowControllerBase):
         for view_name in sorted(views.keys(), key=lambda name: name.lower()):
             action = QAction(view_name, self)
             action.triggered.connect(
-                lambda _checked=False, name=view_name: self._apply_saved_torrent_view(name)
+                lambda _checked=False, name=view_name: self._apply_saved_torrent_view(
+                    name
+                )
             )
             menu.addAction(action)
 
@@ -366,12 +370,16 @@ class FilterTableController(WindowControllerBase):
             return
         views = self._saved_torrent_views()
         payload = views.get(name, {})
-        visible_columns = payload.get("visible_columns", []) if isinstance(payload, dict) else []
+        visible_columns = (
+            payload.get("visible_columns", []) if isinstance(payload, dict) else []
+        )
         widths = payload.get("widths", {}) if isinstance(payload, dict) else {}
         if not isinstance(visible_columns, list):
             self._set_status(f"Saved view is invalid: {name}")
             return
-        self._apply_torrent_view(visible_columns, widths=widths if isinstance(widths, dict) else {})
+        self._apply_torrent_view(
+            visible_columns, widths=widths if isinstance(widths, dict) else {}
+        )
         self._set_status(f"Applied view: {name}")
 
     def _save_current_torrent_view(self) -> None:
@@ -417,7 +425,9 @@ class FilterTableController(WindowControllerBase):
         """Count torrents matching one status filter using current in-memory torrent list."""
         self._ensure_filter_count_cache()
         status = str(status_filter or "all").strip().lower()
-        return self._safe_int(getattr(self, "_status_filter_counts", {}).get(status, 0), 0)
+        return self._safe_int(
+            getattr(self, "_status_filter_counts", {}).get(status, 0), 0
+        )
 
     def _count_category_filter_matches(self, category_filter: object) -> int:
         """Count torrents matching one category filter using current in-memory torrent list."""
@@ -430,7 +440,9 @@ class FilterTableController(WindowControllerBase):
     def _count_tag_filter_matches(self, tag_filter: object) -> int:
         """Count torrents matching one tag filter using current in-memory torrent list."""
         self._ensure_filter_count_cache()
-        return self._safe_int(getattr(self, "_tag_filter_counts", {}).get(tag_filter, 0), 0)
+        return self._safe_int(
+            getattr(self, "_tag_filter_counts", {}).get(tag_filter, 0), 0
+        )
 
     def _status_filter_item_text(self, status_filter: str) -> str:
         """Build display text for one status filter row with live torrent count."""
@@ -478,7 +490,9 @@ class FilterTableController(WindowControllerBase):
                         continue
                     kind, value = data
                     if kind == "status":
-                        item.setText(0, self._status_filter_item_text(str(value or "all")))
+                        item.setText(
+                            0, self._status_filter_item_text(str(value or "all"))
+                        )
                     elif kind == "category":
                         item.setText(0, self._category_filter_item_text(value))
                     elif kind == "tag":
@@ -542,14 +556,20 @@ class FilterTableController(WindowControllerBase):
                 self.size_buckets = []
                 return
 
-            sizes = [getattr(t, "size", 0) for t in self.all_torrents if getattr(t, "size", 0) > 0]
+            sizes = [
+                getattr(t, "size", 0)
+                for t in self.all_torrents
+                if getattr(t, "size", 0) > 0
+            ]
             if not sizes:
                 self.size_buckets = []
                 return
 
             min_size = min(sizes)
             max_size = max(sizes)
-            self.size_buckets = calculate_size_buckets(min_size, max_size, SIZE_BUCKET_COUNT)
+            self.size_buckets = calculate_size_buckets(
+                min_size, max_size, SIZE_BUCKET_COUNT
+            )
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error calculating size buckets: {e}")
             self.size_buckets = []
@@ -641,13 +661,17 @@ class FilterTableController(WindowControllerBase):
             filtered = [
                 torrent
                 for torrent in filtered
-                if self._torrent_matches_status_filter(torrent, self.current_status_filter)
+                if self._torrent_matches_status_filter(
+                    torrent, self.current_status_filter
+                )
             ]
         if self.current_category_filter is not None:
             filtered = [
                 torrent
                 for torrent in filtered
-                if self._torrent_matches_category_filter(torrent, self.current_category_filter)
+                if self._torrent_matches_category_filter(
+                    torrent, self.current_category_filter
+                )
             ]
         if self.current_tag_filter is not None:
             filtered = [
@@ -665,7 +689,9 @@ class FilterTableController(WindowControllerBase):
             return [
                 torrent
                 for torrent in torrents
-                if matches_wildcard(getattr(torrent, "name", ""), self.current_text_filter)
+                if matches_wildcard(
+                    getattr(torrent, "name", ""), self.current_text_filter
+                )
             ]
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error applying text filter: {e}")
@@ -679,7 +705,8 @@ class FilterTableController(WindowControllerBase):
             return [
                 torrent
                 for torrent in torrents
-                if bool(getattr(torrent, "private", False)) == self.current_private_filter
+                if bool(getattr(torrent, "private", False))
+                == self.current_private_filter
             ]
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error applying private filter: {e}")
@@ -705,7 +732,11 @@ class FilterTableController(WindowControllerBase):
             return torrents
         try:
             start, end = self.current_size_bucket
-            return [torrent for torrent in torrents if start <= getattr(torrent, "size", 0) <= end]
+            return [
+                torrent
+                for torrent in torrents
+                if start <= getattr(torrent, "size", 0) <= end
+            ]
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error applying size filter: {e}")
             return torrents
@@ -717,7 +748,9 @@ class FilterTableController(WindowControllerBase):
         return [
             torrent
             for torrent in torrents
-            if self._matches_file_filter(getattr(torrent, "hash", ""), self.current_file_filter)
+            if self._matches_file_filter(
+                getattr(torrent, "hash", ""), self.current_file_filter
+            )
         ]
 
     def _apply_filters(self) -> None:
@@ -726,7 +759,9 @@ class FilterTableController(WindowControllerBase):
             self._on_filter_changed()
             filtered = self.all_torrents[:]
 
-            if self._sync_torrent_map and not bool(self._latest_torrent_fetch_remote_filtered):
+            if self._sync_torrent_map and not bool(
+                self._latest_torrent_fetch_remote_filtered
+            ):
                 filtered = self._apply_sync_local_filters(filtered)
             filtered = self._apply_text_filter_to_torrents(filtered)
             filtered = self._apply_private_filter_to_torrents(filtered)
@@ -736,13 +771,17 @@ class FilterTableController(WindowControllerBase):
 
             self.filtered_torrents = filtered
             self._update_torrents_table()
-            self._log("INFO", f"Filters applied: {len(self.filtered_torrents)} torrents match")
+            self._log(
+                "INFO", f"Filters applied: {len(self.filtered_torrents)} torrents match"
+            )
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error applying filters: {e}")
             self.filtered_torrents = []
             self._update_torrents_table()
 
-    def _torrent_matches_status_filter(self, torrent: object, status_filter: str) -> bool:
+    def _torrent_matches_status_filter(
+        self, torrent: object, status_filter: str
+    ) -> bool:
         """Approximate qBittorrent status filters from torrent state/speeds."""
         state = str(getattr(torrent, "state", "") or "").strip().lower()
         status = str(status_filter or "").strip().lower()
@@ -768,7 +807,13 @@ class FilterTableController(WindowControllerBase):
                 "allocating",
             }
         if status == "seeding":
-            return state in {"uploading", "stalledup", "queuedup", "checkingup", "forcedup"}
+            return state in {
+                "uploading",
+                "stalledup",
+                "queuedup",
+                "checkingup",
+                "forcedup",
+            }
         if status == "completed":
             return is_complete
         if status in {"paused", "stopped"}:
@@ -794,7 +839,9 @@ class FilterTableController(WindowControllerBase):
         return True
 
     @staticmethod
-    def _torrent_matches_category_filter(torrent: object, category_filter: object) -> bool:
+    def _torrent_matches_category_filter(
+        torrent: object, category_filter: object
+    ) -> bool:
         """Match one torrent against selected category filter."""
         torrent_category = str(getattr(torrent, "category", "") or "")
         return torrent_category == str(category_filter or "")
@@ -975,13 +1022,21 @@ class FilterTableController(WindowControllerBase):
             "uploaded_session",
         }:
             raw = self._safe_int(_raw_value(column_key, 0), 0)
-            return format_size_mode(raw, self.display_size_mode), align_right, float(raw)
+            return (
+                format_size_mode(raw, self.display_size_mode),
+                align_right,
+                float(raw),
+            )
         if column_key == "progress":
             raw = self._safe_float(_raw_value("progress", 0), 0.0)
             return f"{raw * 100:.1f}%", align_right, float(raw)
         if column_key in {"dlspeed", "upspeed", "dl_limit", "up_limit"}:
             raw = self._safe_int(_raw_value(column_key, 0), 0)
-            return format_speed_mode(raw, self.display_speed_mode), align_right, float(raw)
+            return (
+                format_speed_mode(raw, self.display_speed_mode),
+                align_right,
+                float(raw),
+            )
         if column_key in {"ratio", "availability", "max_ratio", "ratio_limit"}:
             raw = self._safe_float(_raw_value(column_key, 0), 0.0)
             return format_float(raw), align_right, float(raw)
@@ -1003,14 +1058,21 @@ class FilterTableController(WindowControllerBase):
             if raw < 0:
                 return "Unlimited", align_right, float(raw)
             return format_eta(raw), align_right, float(raw)
-        if column_key in {"added_on", "completion_on", "last_activity", "seen_complete"}:
+        if column_key in {
+            "added_on",
+            "completion_on",
+            "last_activity",
+            "seen_complete",
+        }:
             raw = self._safe_int(_raw_value(column_key, 0), 0)
             return format_datetime(raw), align_left, float(raw)
         if column_key == "tags":
             tags_text = ", ".join(parse_tags(_raw_value("tags", None)))
             return tags_text, align_left, None
         if column_key == "tracker":
-            tracker_text = self._tracker_display_text(str(_raw_value("tracker", "") or ""))
+            tracker_text = self._tracker_display_text(
+                str(_raw_value("tracker", "") or "")
+            )
             return tracker_text, align_left, None
         if column_key in {
             "auto_tmm",
@@ -1050,7 +1112,9 @@ class FilterTableController(WindowControllerBase):
                         text, align, sort_value = self._format_torrent_table_cell(
                             torrent, column["key"]
                         )
-                        self._set_table_item(row, col_idx, text, align=align, sort_value=sort_value)
+                        self._set_table_item(
+                            row, col_idx, text, align=align, sort_value=sort_value
+                        )
                 except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
                     self._log("ERROR", f"Error updating row {row}: {e}")
                     continue

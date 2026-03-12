@@ -46,7 +46,9 @@ class SessionUiController(WindowControllerBase):
             and not self._is_torrent_edit_tab_active()
             and not bool(self._refresh_torrents_in_progress)
         )
-        interval_seconds = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
+        interval_seconds = max(
+            1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)
+        )
         if should_run:
             self.refresh_timer.start(interval_seconds * 1000)
         else:
@@ -64,7 +66,9 @@ class SessionUiController(WindowControllerBase):
         """Refresh auto-refresh menu label to include current interval."""
         if not hasattr(self, "action_auto_refresh"):
             return
-        interval_seconds = max(1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL))
+        interval_seconds = max(
+            1, self._safe_int(self.refresh_interval, DEFAULT_REFRESH_INTERVAL)
+        )
         self.action_auto_refresh.setText(f"Enable A&uto-Refresh ({interval_seconds})")
 
     def _record_session_timeline_sample(self, alt_enabled: bool | None = None) -> None:
@@ -80,7 +84,9 @@ class SessionUiController(WindowControllerBase):
             if down > 0 or up > 0:
                 active_count += 1
 
-        alt_mode = self._last_alt_speed_mode if alt_enabled is None else bool(alt_enabled)
+        alt_mode = (
+            self._last_alt_speed_mode if alt_enabled is None else bool(alt_enabled)
+        )
         sample: SessionTimelineSample = {
             "ts": time.time(),
             "down_bps": int(total_down),
@@ -96,10 +102,15 @@ class SessionUiController(WindowControllerBase):
 
     def _show_session_timeline(self) -> None:
         """Open session timeline dialog."""
-        if self._session_timeline_dialog is not None and self._session_timeline_dialog.isVisible():
+        if (
+            self._session_timeline_dialog is not None
+            and self._session_timeline_dialog.isVisible()
+        ):
             self._session_timeline_dialog.raise_()
             self._session_timeline_dialog.activateWindow()
-            self._session_timeline_dialog.set_samples(list(self.session_timeline_history))
+            self._session_timeline_dialog.set_samples(
+                list(self.session_timeline_history)
+            )
             return
 
         dialog = SessionTimelineDialog(cast("QWidget | None", self))
@@ -123,7 +134,10 @@ class SessionUiController(WindowControllerBase):
 
     def _show_tracker_health_dashboard(self) -> None:
         """Open tracker health dashboard dialog."""
-        if self._tracker_health_dialog is not None and self._tracker_health_dialog.isVisible():
+        if (
+            self._tracker_health_dialog is not None
+            and self._tracker_health_dialog.isVisible()
+        ):
             self._tracker_health_dialog.raise_()
             self._tracker_health_dialog.activateWindow()
             self._request_tracker_health_refresh()
@@ -211,11 +225,19 @@ class SessionUiController(WindowControllerBase):
         for torrent in self.all_torrents:
             total_down_speed += self._safe_int(getattr(torrent, "dlspeed", 0), 0)
             total_up_speed += self._safe_int(getattr(torrent, "upspeed", 0), 0)
-            total_session_download += self._safe_int(getattr(torrent, "downloaded_session", 0), 0)
-            total_session_upload += self._safe_int(getattr(torrent, "uploaded_session", 0), 0)
+            total_session_download += self._safe_int(
+                getattr(torrent, "downloaded_session", 0), 0
+            )
+            total_session_upload += self._safe_int(
+                getattr(torrent, "uploaded_session", 0), 0
+            )
 
-        down_speed_text = format_speed_mode(total_down_speed, self.display_speed_mode) or "0"
-        up_speed_text = format_speed_mode(total_up_speed, self.display_speed_mode) or "0"
+        down_speed_text = (
+            format_speed_mode(total_down_speed, self.display_speed_mode) or "0"
+        )
+        up_speed_text = (
+            format_speed_mode(total_up_speed, self.display_speed_mode) or "0"
+        )
 
         down_limit_raw = max(0, self._safe_int(self._last_global_download_limit, 0))
         up_limit_raw = max(0, self._safe_int(self._last_global_upload_limit, 0))
@@ -230,10 +252,14 @@ class SessionUiController(WindowControllerBase):
             else (format_speed_mode(up_limit_raw, self.display_speed_mode) or "0")
         )
 
-        session_down_text = format_size_mode(total_session_download, self.display_size_mode)
+        session_down_text = format_size_mode(
+            total_session_download, self.display_size_mode
+        )
         session_up_text = format_size_mode(total_session_upload, self.display_size_mode)
         dht_label.setText(f"DHT: {max(0, self._safe_int(self._last_dht_nodes, 0))}")
-        down_label.setText(f"D: {down_speed_text} [{down_limit_text}] ({session_down_text})")
+        down_label.setText(
+            f"D: {down_speed_text} [{down_limit_text}] ({session_down_text})"
+        )
         up_label.setText(f"U: {up_speed_text} [{up_limit_text}] ({session_up_text})")
 
     def _bring_to_front_startup(self) -> None:
@@ -306,7 +332,9 @@ class SessionUiController(WindowControllerBase):
             self._safe_debug_repr(kwargs),
         )
 
-    def _debug_log_api_response(self, method_name: str, result: object, elapsed: float) -> None:
+    def _debug_log_api_response(
+        self, method_name: str, result: object, elapsed: float
+    ) -> None:
         """Log one qBittorrent API call response when debug logging is enabled."""
         if not self.debug_logging_enabled:
             return
@@ -317,7 +345,9 @@ class SessionUiController(WindowControllerBase):
             self._safe_debug_repr(result, max_len=None),
         )
 
-    def _debug_log_api_error(self, method_name: str, error: Exception, elapsed: float) -> None:
+    def _debug_log_api_error(
+        self, method_name: str, error: Exception, elapsed: float
+    ) -> None:
         """Log one qBittorrent API call failure when debug logging is enabled."""
         if not self.debug_logging_enabled:
             return
@@ -337,7 +367,10 @@ class SessionUiController(WindowControllerBase):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Handle window close event."""
-        if self._add_torrent_dialog is not None and self._add_torrent_dialog.isVisible():
+        if (
+            self._add_torrent_dialog is not None
+            and self._add_torrent_dialog.isVisible()
+        ):
             self._add_torrent_dialog.close()
         self._save_settings()
         self._save_content_cache()

@@ -133,8 +133,14 @@ class DetailsContentController(WindowControllerBase):
                 for entry in files:
                     name = str(entry.get("name", "") or "")
                     normalized = name.replace("\\", "/")
-                    basename = normalized.rsplit("/", 1)[-1] if "/" in normalized else normalized
-                    if matches_wildcard(basename, pattern) or matches_wildcard(normalized, pattern):
+                    basename = (
+                        normalized.rsplit("/", 1)[-1]
+                        if "/" in normalized
+                        else normalized
+                    )
+                    if matches_wildcard(basename, pattern) or matches_wildcard(
+                        normalized, pattern
+                    ):
                         filtered_files.append(entry)
             else:
                 filtered_files = files
@@ -142,7 +148,9 @@ class DetailsContentController(WindowControllerBase):
             if not filtered_files:
                 self.tree_files.clear()
                 self.tree_files.addTopLevelItem(
-                    QTreeWidgetItem(["(No files match current content filter)", "", "", ""])
+                    QTreeWidgetItem(
+                        ["(No files match current content filter)", "", "", ""]
+                    )
                 )
                 return
 
@@ -245,7 +253,11 @@ class DetailsContentController(WindowControllerBase):
             header = table.horizontalHeaderItem(col_idx)
             headers.append(str(header.text() if header else f"column_{col_idx}"))
 
-        rows = list(row_indexes) if row_indexes is not None else list(range(table.rowCount()))
+        rows = (
+            list(row_indexes)
+            if row_indexes is not None
+            else list(range(table.rowCount()))
+        )
         lines = ["\t".join(headers)]
         for row_idx in rows:
             values: list[str] = []
@@ -310,7 +322,9 @@ class DetailsContentController(WindowControllerBase):
         """Build context menu for peers table."""
         menu = QMenu(self)
         has_data = self._details_table_has_data_rows(self.tbl_peers)
-        has_selection = has_data and self._selected_table_row(self.tbl_peers) is not None
+        has_selection = (
+            has_data and self._selected_table_row(self.tbl_peers) is not None
+        )
         endpoint = self._selected_peer_endpoint()
         has_endpoint = bool(endpoint)
 
@@ -544,8 +558,12 @@ class DetailsContentController(WindowControllerBase):
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Tags")
         parent_rect = self.frameGeometry()
-        parent_width = parent_rect.width() if parent_rect.width() > 0 else max(1, self.width())
-        parent_height = parent_rect.height() if parent_rect.height() > 0 else max(1, self.height())
+        parent_width = (
+            parent_rect.width() if parent_rect.width() > 0 else max(1, self.width())
+        )
+        parent_height = (
+            parent_rect.height() if parent_rect.height() > 0 else max(1, self.height())
+        )
         dialog_width = 212
         dialog_height = max(1, int(parent_height * 0.90))
         dialog_x = parent_rect.x() + int(parent_width * 0.70)
@@ -557,7 +575,9 @@ class DetailsContentController(WindowControllerBase):
 
         list_widget = QListWidget(dialog)
         list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
-        selected_set = {str(tag).strip() for tag in list(selected_tags or []) if str(tag).strip()}
+        selected_set = {
+            str(tag).strip() for tag in list(selected_tags or []) if str(tag).strip()
+        }
         for tag in available_tags:
             item = QListWidgetItem(tag)
             item.setSelected(tag in selected_set)
@@ -574,7 +594,11 @@ class DetailsContentController(WindowControllerBase):
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
-        return [item.text().strip() for item in list_widget.selectedItems() if item.text().strip()]
+        return [
+            item.text().strip()
+            for item in list_widget.selectedItems()
+            if item.text().strip()
+        ]
 
     def _path_exists_on_local_machine(self, raw_path: object) -> bool:
         """Return True when a provided path exists on this machine."""
@@ -588,7 +612,9 @@ class DetailsContentController(WindowControllerBase):
 
     def _update_torrent_edit_path_browse_buttons(self) -> None:
         """Show browse buttons only for paths that exist on this machine."""
-        save_exists = self._path_exists_on_local_machine(self.txt_torrent_edit_save_path.text())
+        save_exists = self._path_exists_on_local_machine(
+            self.txt_torrent_edit_save_path.text()
+        )
         incomplete_exists = self._path_exists_on_local_machine(
             self.txt_torrent_edit_incomplete_path.text()
         )
@@ -639,7 +665,9 @@ class DetailsContentController(WindowControllerBase):
         return None
 
     @staticmethod
-    def _build_details_columns(rows: list[dict[str, object]], preferred: list[str]) -> list[str]:
+    def _build_details_columns(
+        rows: list[dict[str, object]], preferred: list[str]
+    ) -> list[str]:
         """Build ordered column list with preferred first, then remaining keys."""
         key_set = set()
         for row in rows:
@@ -657,12 +685,17 @@ class DetailsContentController(WindowControllerBase):
         table.setColumnCount(1)
         table.setHorizontalHeaderLabels(["Info"])
         item = QTableWidgetItem(message)
-        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        item.setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         table.setItem(0, 0, item)
         table.horizontalHeader().setStretchLastSection(True)
 
     def _populate_details_table(
-        self, table: QTableWidget, rows: list[dict[str, object]], preferred_columns: list[str]
+        self,
+        table: QTableWidget,
+        rows: list[dict[str, object]],
+        preferred_columns: list[str],
     ) -> None:
         """Populate one details table (trackers/peers) with dynamic columns."""
         if not rows:
@@ -736,7 +769,9 @@ class DetailsContentController(WindowControllerBase):
             )
         else:
             error = result.get("error", "Unknown error")
-            self._set_details_table_message(self.tbl_trackers, f"Failed to load trackers: {error}")
+            self._set_details_table_message(
+                self.tbl_trackers, f"Failed to load trackers: {error}"
+            )
 
         self.details_api_queue.add_task(
             "load_selected_peers",
@@ -776,7 +811,9 @@ class DetailsContentController(WindowControllerBase):
             )
         else:
             error = result.get("error", "Unknown error")
-            self._set_details_table_message(self.tbl_peers, f"Failed to load peers: {error}")
+            self._set_details_table_message(
+                self.tbl_peers, f"Failed to load peers: {error}"
+            )
 
     def _set_details_panels_enabled(self, enabled: bool) -> None:
         """Enable/disable bottom details tabs."""
@@ -836,14 +873,20 @@ class DetailsContentController(WindowControllerBase):
             completion_on = getattr(torrent, "completion_on", 0)
             last_activity = getattr(torrent, "last_activity", 0)
             private_value = getattr(torrent, "private", None)
-            private_str = "Yes" if private_value else ("No" if private_value is False else "N/A")
+            private_str = (
+                "Yes" if private_value else ("No" if private_value is False else "N/A")
+            )
             num_files = getattr(torrent, "num_files", "N/A")
-            content_path = self._display_detail_value(getattr(torrent, "content_path", None))
+            content_path = self._display_detail_value(
+                getattr(torrent, "content_path", None)
+            )
             tracker_url = getattr(torrent, "tracker", "") or ""
             tracker_host = self._tracker_display_text(tracker_url) or "N/A"
             eta = self._safe_int(getattr(torrent, "eta", 0), 0)
             eta_str = format_eta(eta) if eta > 0 else "N/A"
-            progress_pct = self._safe_float(getattr(torrent, "progress", 0.0), 0.0) * 100.0
+            progress_pct = (
+                self._safe_float(getattr(torrent, "progress", 0.0), 0.0) * 100.0
+            )
             ratio = self._safe_float(getattr(torrent, "ratio", 0.0), 0.0)
 
             sections: list[tuple[str, list[tuple[str, object]]]] = [
@@ -855,12 +898,15 @@ class DetailsContentController(WindowControllerBase):
                         ("State", getattr(torrent, "state", None)),
                         (
                             "Size",
-                            format_size_mode(getattr(torrent, "size", 0), self.display_size_mode),
+                            format_size_mode(
+                                getattr(torrent, "size", 0), self.display_size_mode
+                            ),
                         ),
                         (
                             "Total Size",
                             format_size_mode(
-                                getattr(torrent, "total_size", 0), self.display_size_mode
+                                getattr(torrent, "total_size", 0),
+                                self.display_size_mode,
                             ),
                         ),
                         ("Progress", f"{progress_pct:.2f}%"),
@@ -874,7 +920,8 @@ class DetailsContentController(WindowControllerBase):
                         (
                             "Downloaded",
                             format_size_mode(
-                                getattr(torrent, "downloaded", 0), self.display_size_mode
+                                getattr(torrent, "downloaded", 0),
+                                self.display_size_mode,
                             ),
                         ),
                         (
@@ -922,11 +969,15 @@ class DetailsContentController(WindowControllerBase):
                         ("Added On", format_datetime(getattr(torrent, "added_on", 0))),
                         (
                             "Completion On",
-                            format_datetime(completion_on) if completion_on > 0 else "N/A",
+                            format_datetime(completion_on)
+                            if completion_on > 0
+                            else "N/A",
                         ),
                         (
                             "Last Activity",
-                            format_datetime(last_activity) if last_activity > 0 else "N/A",
+                            format_datetime(last_activity)
+                            if last_activity > 0
+                            else "N/A",
                         ),
                         ("Save Path", getattr(torrent, "save_path", None)),
                         ("Content Path", content_path),
@@ -943,7 +994,9 @@ class DetailsContentController(WindowControllerBase):
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error displaying torrent details: {e}")
             self.txt_general_details.setPlainText(f"Error displaying details: {e}")
-            self._set_details_table_message(self.tbl_trackers, "Failed to render trackers.")
+            self._set_details_table_message(
+                self.tbl_trackers, "Failed to render trackers."
+            )
             self._set_details_table_message(self.tbl_peers, "Failed to render peers.")
             self._clear_torrent_edit_panel("Failed to load torrent for editing.")
 
@@ -967,7 +1020,9 @@ class DetailsContentController(WindowControllerBase):
     def _browse_torrent_edit_incomplete_path(self) -> None:
         """Browse for a new torrent incomplete save path."""
         initial = self.txt_torrent_edit_incomplete_path.text().strip()
-        selected = QFileDialog.getExistingDirectory(self, "Select Incomplete Save Path", initial)
+        selected = QFileDialog.getExistingDirectory(
+            self, "Select Incomplete Save Path", initial
+        )
         if selected:
             self.txt_torrent_edit_incomplete_path.setText(selected)
 
@@ -998,12 +1053,18 @@ class DetailsContentController(WindowControllerBase):
         if new_tags != str(original.get("tags", "") or ""):
             updates["tags"] = new_tags
 
-        new_download_limit_kib = self._safe_int(self.spn_torrent_edit_download_limit.value(), 0)
-        old_download_limit_kib = self._safe_int(original.get("download_limit_kib", 0), 0)
+        new_download_limit_kib = self._safe_int(
+            self.spn_torrent_edit_download_limit.value(), 0
+        )
+        old_download_limit_kib = self._safe_int(
+            original.get("download_limit_kib", 0), 0
+        )
         if new_download_limit_kib != old_download_limit_kib:
             updates["download_limit_bytes"] = self._kib_to_bytes(new_download_limit_kib)
 
-        new_upload_limit_kib = self._safe_int(self.spn_torrent_edit_upload_limit.value(), 0)
+        new_upload_limit_kib = self._safe_int(
+            self.spn_torrent_edit_upload_limit.value(), 0
+        )
         old_upload_limit_kib = self._safe_int(original.get("upload_limit_kib", 0), 0)
         if new_upload_limit_kib != old_upload_limit_kib:
             updates["upload_limit_bytes"] = self._kib_to_bytes(new_upload_limit_kib)
@@ -1012,7 +1073,9 @@ class DetailsContentController(WindowControllerBase):
         if new_save_path != str(original.get("save_path", "") or ""):
             updates["save_path"] = new_save_path
 
-        new_download_path = str(self.txt_torrent_edit_incomplete_path.text() or "").strip()
+        new_download_path = str(
+            self.txt_torrent_edit_incomplete_path.text() or ""
+        ).strip()
         if new_download_path != str(original.get("download_path", "") or ""):
             updates["download_path"] = new_download_path
 

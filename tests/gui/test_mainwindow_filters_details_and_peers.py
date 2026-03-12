@@ -5,7 +5,10 @@ import qbiremo_enhanced.main_window as appmod
 
 
 def _top_level_names(tree_widget):
-    return [tree_widget.topLevelItem(i).text(0) for i in range(tree_widget.topLevelItemCount())]
+    return [
+        tree_widget.topLevelItem(i).text(0)
+        for i in range(tree_widget.topLevelItemCount())
+    ]
 
 
 def _find_filter_item(tree_widget, kind, value):
@@ -99,12 +102,19 @@ def test_file_filter_uses_cached_content_and_updates_live(window, qtbot, make_to
         "h1": {
             "state": "downloading",
             "files": [
-                {"name": "Series/S01/episode01.mkv", "size": 1, "progress": 1.0, "priority": 1}
+                {
+                    "name": "Series/S01/episode01.mkv",
+                    "size": 1,
+                    "progress": 1.0,
+                    "priority": 1,
+                }
             ],
         },
         "h2": {
             "state": "seeding",
-            "files": [{"name": "Movies/movie.mp4", "size": 1, "progress": 1.0, "priority": 1}],
+            "files": [
+                {"name": "Movies/movie.mp4", "size": 1, "progress": 1.0, "priority": 1}
+            ],
         },
     }
     window._apply_filters()
@@ -132,7 +142,11 @@ def test_content_file_filter_in_content_tab(window, qtbot):
     }
 
     window._show_cached_torrent_content("h1")
-    assert sorted(_top_level_names(window.tree_files)) == ["readme.txt", "sample.nfo", "video.mkv"]
+    assert sorted(_top_level_names(window.tree_files)) == [
+        "readme.txt",
+        "sample.nfo",
+        "video.mkv",
+    ]
 
     window.txt_content_filter.setText("sample")
     qtbot.waitUntil(lambda: _top_level_names(window.tree_files) == ["sample.nfo"])
@@ -143,16 +157,25 @@ def test_content_file_filter_in_content_tab(window, qtbot):
     window.txt_content_filter.setText("")
     qtbot.waitUntil(
         lambda: (
-            sorted(_top_level_names(window.tree_files)) == ["readme.txt", "sample.nfo", "video.mkv"]
+            sorted(_top_level_names(window.tree_files))
+            == ["readme.txt", "sample.nfo", "video.mkv"]
         )
     )
 
 
 def test_details_panel_tabs_are_general_trackers_peers_content(window):
-    assert _tab_names(window.detail_tabs) == ["General", "Trackers", "Peers", "Content", "Edit"]
+    assert _tab_names(window.detail_tabs) == [
+        "General",
+        "Trackers",
+        "Peers",
+        "Content",
+        "Edit",
+    ]
 
 
-def test_general_trackers_peers_tabs_populate_on_selection(window, make_torrent, monkeypatch):
+def test_general_trackers_peers_tabs_populate_on_selection(
+    window, make_torrent, monkeypatch
+):
     t1 = make_torrent(
         hash="h1",
         name="Ubuntu ISO",
@@ -171,7 +194,14 @@ def test_general_trackers_peers_tabs_populate_on_selection(window, make_torrent,
         )
         window._populate_details_table(
             window.tbl_peers,
-            [{"peer_id": "peerA", "ip": "10.0.0.2", "port": 6881, "client": "qBittorrent"}],
+            [
+                {
+                    "peer_id": "peerA",
+                    "ip": "10.0.0.2",
+                    "port": 6881,
+                    "client": "qBittorrent",
+                }
+            ],
             ["peer_id", "ip", "port", "client"],
         )
 
@@ -193,7 +223,9 @@ def test_general_trackers_peers_tabs_populate_on_selection(window, make_torrent,
     assert "ip" in peer_headers
 
 
-def test_edit_tab_populates_for_single_selected_torrent(window, make_torrent, monkeypatch):
+def test_edit_tab_populates_for_single_selected_torrent(
+    window, make_torrent, monkeypatch
+):
     t1 = make_torrent(
         hash="h1",
         name="Ubuntu ISO",
@@ -208,7 +240,9 @@ def test_edit_tab_populates_for_single_selected_torrent(window, make_torrent, mo
     monkeypatch.setattr(
         window, "_load_selected_torrent_network_details", lambda *_args, **_kwargs: None
     )
-    monkeypatch.setattr(window, "_show_cached_torrent_content", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        window, "_show_cached_torrent_content", lambda *_args, **_kwargs: None
+    )
 
     window._display_torrent_details(t1)
 
@@ -238,7 +272,9 @@ def test_torrent_edit_add_tags_button_merges_selected_tags(window, monkeypatch):
     assert window.txt_torrent_edit_tags.text() == "tag1, tag2, tag3"
 
 
-def test_torrent_edit_path_browse_buttons_show_only_for_existing_local_paths(window, tmp_path):
+def test_torrent_edit_path_browse_buttons_show_only_for_existing_local_paths(
+    window, tmp_path
+):
     existing_dir = tmp_path / "existing"
     existing_dir.mkdir(parents=True)
     missing_dir = tmp_path / "missing"
@@ -254,7 +290,9 @@ def test_torrent_edit_path_browse_buttons_show_only_for_existing_local_paths(win
     assert window.btn_torrent_edit_browse_incomplete_path.isHidden() is False
 
 
-def test_torrent_edit_tag_picker_dialog_geometry_matches_parent_ratio(window, monkeypatch):
+def test_torrent_edit_tag_picker_dialog_geometry_matches_parent_ratio(
+    window, monkeypatch
+):
     window.resize(1000, 800)
     window.move(120, 80)
 
@@ -429,7 +467,10 @@ def test_friendly_add_preferences_apply_requested_queues_api_task(window, monkey
 
 
 def test_peers_table_uses_custom_context_menu(window):
-    assert window.tbl_peers.contextMenuPolicy() == appmod.Qt.ContextMenuPolicy.CustomContextMenu
+    assert (
+        window.tbl_peers.contextMenuPolicy()
+        == appmod.Qt.ContextMenuPolicy.CustomContextMenu
+    )
 
 
 def test_peers_context_menu_contains_requested_actions(window):
@@ -441,7 +482,9 @@ def test_peers_context_menu_contains_requested_actions(window):
     window.tbl_peers.selectRow(0)
 
     menu = window._build_peers_context_menu()
-    action_texts = [action.text() for action in menu.actions() if not action.isSeparator()]
+    action_texts = [
+        action.text() for action in menu.actions() if not action.isSeparator()
+    ]
 
     assert "Copy All Peers Info" in action_texts
     assert "Copy Peer Info" in action_texts
@@ -453,8 +496,18 @@ def test_peers_context_copy_actions_copy_expected_values(window):
     window._populate_details_table(
         window.tbl_peers,
         [
-            {"peer_id": "peerA", "ip": "10.0.0.2", "port": 6881, "client": "qBittorrent"},
-            {"peer_id": "peerB", "ip": "10.0.0.3", "port": 51413, "client": "Transmission"},
+            {
+                "peer_id": "peerA",
+                "ip": "10.0.0.2",
+                "port": 6881,
+                "client": "qBittorrent",
+            },
+            {
+                "peer_id": "peerB",
+                "ip": "10.0.0.3",
+                "port": 51413,
+                "client": "Transmission",
+            },
         ],
         ["peer_id", "ip", "port", "client"],
     )

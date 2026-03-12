@@ -17,7 +17,9 @@ from qbiremo_enhanced.constants import (
 )
 
 
-def test_resolve_config_root_uses_config_dir_override(monkeypatch, tmp_path: Path) -> None:
+def test_resolve_config_root_uses_config_dir_override(
+    monkeypatch, tmp_path: Path
+) -> None:
     target = tmp_path / "cfg"
     monkeypatch.setenv("CONFIG_DIR", str(target))
 

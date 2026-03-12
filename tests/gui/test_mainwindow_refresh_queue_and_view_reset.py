@@ -4,7 +4,10 @@ import qbiremo_enhanced.main_window as appmod
 
 
 def _top_level_names(tree_widget):
-    return [tree_widget.topLevelItem(i).text(0) for i in range(tree_widget.topLevelItemCount())]
+    return [
+        tree_widget.topLevelItem(i).text(0)
+        for i in range(tree_widget.topLevelItemCount())
+    ]
 
 
 def _find_filter_item(tree_widget, kind, value):
@@ -70,7 +73,9 @@ def _table_first_cell(table):
 
 
 def test_set_auto_refresh_interval_from_menu(window, monkeypatch):
-    monkeypatch.setattr(appmod.QInputDialog, "getInt", lambda *args, **kwargs: (60, True))
+    monkeypatch.setattr(
+        appmod.QInputDialog, "getInt", lambda *args, **kwargs: (60, True)
+    )
     window.auto_refresh_enabled = True
     window.refresh_timer.stop()
 
@@ -83,7 +88,10 @@ def test_set_auto_refresh_interval_from_menu(window, monkeypatch):
 
 
 def test_auto_refresh_menu_label_includes_current_interval(window):
-    assert window.action_auto_refresh.text() == f"Enable A&uto-Refresh ({window.refresh_interval})"
+    assert (
+        window.action_auto_refresh.text()
+        == f"Enable A&uto-Refresh ({window.refresh_interval})"
+    )
 
 
 def test_default_refresh_interval_uses_new_baseline(window):
@@ -103,7 +111,9 @@ def test_api_task_queue_ignores_stale_worker_completion(window):
     queue._on_task_complete(
         stale_worker,
         "stale",
-        lambda _result: callback_calls.__setitem__("count", callback_calls["count"] + 1),
+        lambda _result: callback_calls.__setitem__(
+            "count", callback_calls["count"] + 1
+        ),
         {"success": True},
     )
 
@@ -151,7 +161,9 @@ def test_api_task_queue_ignores_cancelled_worker_completion(window):
     queue._on_task_complete(
         active_worker,
         "active",
-        lambda _result: callback_calls.__setitem__("count", callback_calls["count"] + 1),
+        lambda _result: callback_calls.__setitem__(
+            "count", callback_calls["count"] + 1
+        ),
         {"success": True},
     )
 
@@ -169,7 +181,9 @@ def test_api_task_queue_ignores_cancelled_worker_error(window):
 
     failed_signals = {"count": 0}
     queue.task_failed.connect(
-        lambda _task_name, _error: failed_signals.__setitem__("count", failed_signals["count"] + 1)
+        lambda _task_name, _error: failed_signals.__setitem__(
+            "count", failed_signals["count"] + 1
+        )
     )
 
     queue._on_task_error(
@@ -204,7 +218,9 @@ def test_api_task_queue_coalesces_latest_task_while_worker_running(window, monke
 
     cancelled_signals = {"count": 0}
     queue.task_cancelled.connect(
-        lambda _task_name: cancelled_signals.__setitem__("count", cancelled_signals["count"] + 1)
+        lambda _task_name: cancelled_signals.__setitem__(
+            "count", cancelled_signals["count"] + 1
+        )
     )
 
     queue.add_task("next_task", lambda **_kwargs: None, lambda _result: None)
@@ -217,13 +233,21 @@ def test_api_task_queue_coalesces_latest_task_while_worker_running(window, monke
     assert cancelled_signals["count"] == 0
 
 
-def test_api_task_queue_starts_pending_task_when_current_worker_finishes(window, monkeypatch):
+def test_api_task_queue_starts_pending_task_when_current_worker_finishes(
+    window, monkeypatch
+):
     queue = window.api_queue
     active_worker = appmod.Worker(lambda **_kwargs: None)
     queue.current_worker = active_worker
     queue.current_task_name = "active"
     queue.is_processing = True
-    queue.pending_task = ("next_task", lambda **_kwargs: None, lambda _result: None, (), {})
+    queue.pending_task = (
+        "next_task",
+        lambda **_kwargs: None,
+        lambda _result: None,
+        (),
+        {},
+    )
 
     started = {"task_name": None}
     monkeypatch.setattr(
@@ -240,7 +264,9 @@ def test_api_task_queue_starts_pending_task_when_current_worker_finishes(window,
     assert queue.pending_task is None
 
 
-def test_refresh_torrents_skips_when_api_queue_busy_with_non_refresh_task(window, monkeypatch):
+def test_refresh_torrents_skips_when_api_queue_busy_with_non_refresh_task(
+    window, monkeypatch
+):
     queue = window.api_queue
     queue.current_worker = appmod.Worker(lambda **_kwargs: None)
     queue.current_task_name = "pause_torrent"
@@ -368,7 +394,9 @@ def test_task_completion_bump_respects_auto_refresh_max_cap(window, monkeypatch)
     assert save_calls["count"] == 1
 
 
-def test_ui_cycle_elapsed_can_bump_and_persist_auto_refresh_interval(window, monkeypatch):
+def test_ui_cycle_elapsed_can_bump_and_persist_auto_refresh_interval(
+    window, monkeypatch
+):
     window.auto_refresh_enabled = True
     window.refresh_interval = 2
     window._sync_auto_refresh_timer_state()
@@ -393,7 +421,9 @@ def test_ui_cycle_elapsed_can_bump_and_persist_auto_refresh_interval(window, mon
     assert save_calls["count"] == 1
 
 
-def test_refresh_torrents_skips_reentry_while_request_is_in_progress(window, monkeypatch):
+def test_refresh_torrents_skips_reentry_while_request_is_in_progress(
+    window, monkeypatch
+):
     calls = {"count": 0}
     monkeypatch.setattr(
         window.api_queue,
@@ -436,7 +466,11 @@ def test_refresh_torrents_pauses_auto_refresh_timer_until_load_finishes(
         window, "_load_selected_torrent_network_details", lambda *_args, **_kwargs: None
     )
     window._on_torrents_loaded(
-        {"success": True, "data": [make_torrent(hash="h1", name="One")], "elapsed": 0.01}
+        {
+            "success": True,
+            "data": [make_torrent(hash="h1", name="One")],
+            "elapsed": 0.01,
+        }
     )
 
     assert window._refresh_torrents_in_progress is False
@@ -466,7 +500,11 @@ def test_on_torrents_loaded_reports_ui_cycle_elapsed_for_interval_bump(
     )
 
     window._on_torrents_loaded(
-        {"success": True, "data": [make_torrent(hash="h1", name="One")], "elapsed": 0.01}
+        {
+            "success": True,
+            "data": [make_torrent(hash="h1", name="One")],
+            "elapsed": 0.01,
+        }
     )
 
     assert calls["source"] == "ui_refresh_cycle"
@@ -491,14 +529,18 @@ def test_refresh_torrents_failure_resumes_auto_refresh_timer(window):
 
 
 def test_clear_cache_and_refresh_action(window, monkeypatch):
-    window.content_cache = {"h1": {"state": "downloading", "files": [{"name": "a.bin"}]}}
+    window.content_cache = {
+        "h1": {"state": "downloading", "files": [{"name": "a.bin"}]}
+    }
     window.current_content_files = [{"name": "a.bin"}]
     window.cache_file_path.write_text("{}", encoding="utf-8")
     assert window.cache_file_path.exists()
 
     calls = {"count": 0}
     monkeypatch.setattr(
-        window, "_refresh_torrents", lambda: calls.__setitem__("count", calls["count"] + 1)
+        window,
+        "_refresh_torrents",
+        lambda: calls.__setitem__("count", calls["count"] + 1),
     )
 
     window._clear_cache_and_refresh()
@@ -529,7 +571,9 @@ def test_clear_cache_suppresses_next_cache_file_write(window, monkeypatch, tmp_p
             "data": {
                 "h1": {
                     "state": "downloading",
-                    "files": [{"name": "x.bin", "size": 1, "progress": 0.1, "priority": 1}],
+                    "files": [
+                        {"name": "x.bin", "size": 1, "progress": 0.1, "priority": 1}
+                    ],
                 }
             },
             "errors": {},
@@ -590,7 +634,8 @@ def test_reset_view_restores_layout_filters_and_refresh_defaults(window, monkeyp
     assert main_sizes != [700, 400]
     assert window.right_splitter.saveState() == window._default_right_splitter_state
     assert (
-        window.tbl_torrents.horizontalHeader().saveState() == window._default_torrent_header_state
+        window.tbl_torrents.horizontalHeader().saveState()
+        == window._default_torrent_header_state
     )
 
     assert window.cmb_private.currentText() == "All"

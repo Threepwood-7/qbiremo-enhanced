@@ -151,7 +151,9 @@ class AddTorrentDialog(QDialog):
         form.addRow("Rename:", self.txt_rename)
 
         self.txt_cookie = QLineEdit()
-        self.txt_cookie.setPlaceholderText("HTTP cookie(s) for URL-based torrents (optional)")
+        self.txt_cookie.setPlaceholderText(
+            "HTTP cookie(s) for URL-based torrents (optional)"
+        )
         form.addRow("Cookie:", self.txt_cookie)
         return tab
 
@@ -188,11 +190,15 @@ class AddTorrentDialog(QDialog):
         form.addRow("", self.chk_root_folder)
 
         self.cmb_content_layout = QComboBox()
-        self.cmb_content_layout.addItems(["Default", "Original", "Subfolder", "NoSubfolder"])
+        self.cmb_content_layout.addItems(
+            ["Default", "Original", "Subfolder", "NoSubfolder"]
+        )
         form.addRow("Content Layout:", self.cmb_content_layout)
 
         self.cmb_stop_condition = QComboBox()
-        self.cmb_stop_condition.addItems(["Default", "MetadataReceived", "FilesChecked"])
+        self.cmb_stop_condition.addItems(
+            ["Default", "MetadataReceived", "FilesChecked"]
+        )
         form.addRow("Stop Condition:", self.cmb_stop_condition)
         return tab
 
@@ -436,7 +442,8 @@ class AddTorrentDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Invalid Magnet/URL",
-                "These entries are not valid magnet links or URLs:\n" + "\n".join(invalid_urls),
+                "These entries are not valid magnet links or URLs:\n"
+                + "\n".join(invalid_urls),
             )
             return False
         return True
@@ -449,7 +456,9 @@ class AddTorrentDialog(QDialog):
     ) -> None:
         """Apply validated source file/url inputs into payload."""
         if source_files:
-            data["torrent_files"] = source_files[0] if len(source_files) == 1 else source_files
+            data["torrent_files"] = (
+                source_files[0] if len(source_files) == 1 else source_files
+            )
         if source_urls:
             data["urls"] = self._parse_url_sources(source_urls)
 
@@ -507,7 +516,9 @@ class TaxonomyManagerDialog(QDialog):
         category_layout.setContentsMargins(4, 4, 4, 4)
 
         self.lst_categories = QListWidget()
-        self.lst_categories.currentItemChanged.connect(self._on_category_selection_changed)
+        self.lst_categories.currentItemChanged.connect(
+            self._on_category_selection_changed
+        )
         category_layout.addWidget(self.lst_categories, 1)
 
         category_editor = QWidget()
@@ -526,14 +537,18 @@ class TaxonomyManagerDialog(QDialog):
         form.addRow("Save Path:", path_row)
 
         self.chk_category_use_incomplete = QCheckBox("Use incomplete save path")
-        self.chk_category_use_incomplete.toggled.connect(self._update_incomplete_path_enabled_state)
+        self.chk_category_use_incomplete.toggled.connect(
+            self._update_incomplete_path_enabled_state
+        )
         form.addRow("", self.chk_category_use_incomplete)
 
         inc_row = QHBoxLayout()
         self.txt_category_incomplete_path = QLineEdit()
         self.txt_category_incomplete_path.setPlaceholderText("Optional incomplete path")
         self.btn_category_browse_incomplete = QPushButton("Browse")
-        self.btn_category_browse_incomplete.clicked.connect(self._browse_category_incomplete_path)
+        self.btn_category_browse_incomplete.clicked.connect(
+            self._browse_category_incomplete_path
+        )
         inc_row.addWidget(self.txt_category_incomplete_path, 1)
         inc_row.addWidget(self.btn_category_browse_incomplete)
         form.addRow("Incomplete Path:", inc_row)
@@ -563,7 +578,9 @@ class TaxonomyManagerDialog(QDialog):
         tags_layout.setContentsMargins(4, 4, 4, 4)
 
         self.lst_tags_manage = QListWidget()
-        self.lst_tags_manage.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.lst_tags_manage.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         tags_layout.addWidget(self.lst_tags_manage, 1)
 
         add_tags_row = QHBoxLayout()
@@ -593,7 +610,9 @@ class TaxonomyManagerDialog(QDialog):
     def _browse_category_save_path(self) -> None:
         """Browse for category default save path."""
         initial = self.txt_category_save_path.text().strip()
-        selected = QFileDialog.getExistingDirectory(self, "Select Category Save Path", initial)
+        selected = QFileDialog.getExistingDirectory(
+            self, "Select Category Save Path", initial
+        )
         if selected:
             self.txt_category_save_path.setText(selected)
 
@@ -645,7 +664,9 @@ class TaxonomyManagerDialog(QDialog):
             self.lst_categories.addItem(name)
 
         if current_category:
-            matches = self.lst_categories.findItems(current_category, Qt.MatchFlag.MatchExactly)
+            matches = self.lst_categories.findItems(
+                current_category, Qt.MatchFlag.MatchExactly
+            )
             if matches:
                 self.lst_categories.setCurrentItem(matches[0])
             else:
@@ -675,13 +696,19 @@ class TaxonomyManagerDialog(QDialog):
             return
 
         name = current.text().strip()
-        details = self._category_data.get(name, {}) if isinstance(self._category_data, dict) else {}
+        details = (
+            self._category_data.get(name, {})
+            if isinstance(self._category_data, dict)
+            else {}
+        )
         self.txt_category_name.setReadOnly(True)
         self.txt_category_name.setText(name)
         self.txt_category_save_path.setText(str(details.get("save_path", "") or ""))
         use_incomplete = bool(details.get("use_incomplete_path", False))
         self.chk_category_use_incomplete.setChecked(use_incomplete)
-        self.txt_category_incomplete_path.setText(str(details.get("incomplete_path", "") or ""))
+        self.txt_category_incomplete_path.setText(
+            str(details.get("incomplete_path", "") or "")
+        )
         self._update_incomplete_path_enabled_state()
         self.btn_category_apply.setText("Update Category")
         self.btn_category_delete.setEnabled(True)
@@ -722,7 +749,9 @@ class TaxonomyManagerDialog(QDialog):
                 selected_name, save_path, incomplete_path, use_incomplete
             )
         else:
-            self.create_category_requested.emit(name, save_path, incomplete_path, use_incomplete)
+            self.create_category_requested.emit(
+                name, save_path, incomplete_path, use_incomplete
+            )
 
     def _delete_selected_category(self) -> None:
         """Emit delete request for selected category."""
@@ -950,7 +979,9 @@ class AppPreferencesDialog(QDialog):
                 )
             self.tree_preferences.expandToDepth(0)
             self._refresh_changed_highlights()
-            self.lbl_message.setText(f"Loaded {len(self._edited_preferences)} preferences.")
+            self.lbl_message.setText(
+                f"Loaded {len(self._edited_preferences)} preferences."
+            )
         finally:
             self._updating_tree = False
 
@@ -1026,7 +1057,9 @@ class AppPreferencesDialog(QDialog):
             item.setText(1, self._container_summary(value))
             for child_key in sorted(value.keys(), key=lambda v: str(v)):
                 child_path = (*path, child_key)
-                self._add_pref_item(item, child_path, str(child_key), value.get(child_key))
+                self._add_pref_item(
+                    item, child_path, str(child_key), value.get(child_key)
+                )
             return
 
         if isinstance(value, list) and value:
@@ -1068,7 +1101,9 @@ class AppPreferencesDialog(QDialog):
         return "".join(parts)
 
     @staticmethod
-    def _set_path_value(container: object, path: tuple[object, ...], value: object) -> None:
+    def _set_path_value(
+        container: object, path: tuple[object, ...], value: object
+    ) -> None:
         """Assign one nested container value addressed by path tuple."""
         target: Any = container
         for key in path[:-1]:
@@ -1193,7 +1228,9 @@ class AppPreferencesDialog(QDialog):
                 ancestor_item = self._path_items.get(ancestor_path)
                 if ancestor_item is None:
                     continue
-                ancestor_value = self._get_path_value(self._edited_preferences, ancestor_path)
+                ancestor_value = self._get_path_value(
+                    self._edited_preferences, ancestor_path
+                )
                 ancestor_item.setText(1, self._container_summary(ancestor_value))
                 ancestor_item.setText(2, self._value_type_name(ancestor_value))
         finally:
@@ -1277,7 +1314,9 @@ class FriendlyAddPreferencesDialog(QDialog):
         self.chk_temp_path_enabled.toggled.connect(self._update_temp_path_enabled_state)
         self.txt_temp_path = QLineEdit()
         self.chk_start_paused = QCheckBox("Start new torrents paused")
-        self.chk_create_subfolder = QCheckBox("Create subfolder for torrents with multiple files")
+        self.chk_create_subfolder = QCheckBox(
+            "Create subfolder for torrents with multiple files"
+        )
         self.chk_auto_tmm = QCheckBox("Enable automatic torrent management")
         self.chk_incomplete_ext = QCheckBox("Append .!qB extension to incomplete files")
         self.chk_preallocate = QCheckBox("Pre-allocate all disk space")
@@ -1306,7 +1345,9 @@ class FriendlyAddPreferencesDialog(QDialog):
         queue_form.addRow("Max active uploads:", self.spn_max_active_uploads)
         queue_form.addRow("Max active torrents:", self.spn_max_active_torrents)
         queue_form.addRow("Global maximum connections:", self.spn_max_connec)
-        queue_form.addRow("Maximum connections per torrent:", self.spn_max_connec_per_torrent)
+        queue_form.addRow(
+            "Maximum connections per torrent:", self.spn_max_connec_per_torrent
+        )
         queue_form.addRow("Global upload slots:", self.spn_max_uploads)
         queue_form.addRow("Upload slots per torrent:", self.spn_max_uploads_per_torrent)
         self.tabs.addTab(tab_queueing, "Queueing")
@@ -1338,15 +1379,21 @@ class FriendlyAddPreferencesDialog(QDialog):
         self.spn_max_ratio.setDecimals(2)
         self.spn_max_ratio.setRange(0.0, 10_000.0)
         self.spn_max_ratio.setSingleStep(0.05)
-        self.chk_max_seeding_time_enabled = QCheckBox("Enable default seeding time limit")
-        self.chk_max_seeding_time_enabled.toggled.connect(self._update_seeding_time_enabled_state)
+        self.chk_max_seeding_time_enabled = QCheckBox(
+            "Enable default seeding time limit"
+        )
+        self.chk_max_seeding_time_enabled.toggled.connect(
+            self._update_seeding_time_enabled_state
+        )
         self.spn_max_seeding_time = QSpinBox()
         self.spn_max_seeding_time.setRange(0, 10_000_000)
         self.spn_max_seeding_time.setSingleStep(10)
         share_form.addRow("", self.chk_max_ratio_enabled)
         share_form.addRow("Default ratio limit:", self.spn_max_ratio)
         share_form.addRow("", self.chk_max_seeding_time_enabled)
-        share_form.addRow("Default seeding time limit (minutes):", self.spn_max_seeding_time)
+        share_form.addRow(
+            "Default seeding time limit (minutes):", self.spn_max_seeding_time
+        )
         self.tabs.addTab(tab_share_limits, "Seeding Limits")
 
         self.lbl_message = QLabel("No preferences loaded.")
@@ -1432,7 +1479,9 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     def _update_seeding_time_enabled_state(self) -> None:
         """Enable seeding-time spinbox only when limit toggle is enabled."""
-        self.spn_max_seeding_time.setEnabled(bool(self.chk_max_seeding_time_enabled.isChecked()))
+        self.spn_max_seeding_time.setEnabled(
+            bool(self.chk_max_seeding_time_enabled.isChecked())
+        )
 
     def set_busy(self, busy: bool, message: str = "") -> None:
         """Enable/disable controls while loading/applying preferences."""
@@ -1472,7 +1521,9 @@ class FriendlyAddPreferencesDialog(QDialog):
             "encryption": self._to_int(self.cmb_encryption.currentData(), 0),
             "max_ratio_enabled": bool(self.chk_max_ratio_enabled.isChecked()),
             "max_ratio": float(self.spn_max_ratio.value()),
-            "max_seeding_time_enabled": bool(self.chk_max_seeding_time_enabled.isChecked()),
+            "max_seeding_time_enabled": bool(
+                self.chk_max_seeding_time_enabled.isChecked()
+            ),
             "max_seeding_time": int(self.spn_max_seeding_time.value()),
         }
         return values
@@ -1492,18 +1543,24 @@ class FriendlyAddPreferencesDialog(QDialog):
         self.chk_create_subfolder.setChecked(
             self._to_bool(prefs.get("create_subfolder_enabled", False), False)
         )
-        self.chk_auto_tmm.setChecked(self._to_bool(prefs.get("auto_tmm_enabled", False), False))
+        self.chk_auto_tmm.setChecked(
+            self._to_bool(prefs.get("auto_tmm_enabled", False), False)
+        )
         self.chk_incomplete_ext.setChecked(
             self._to_bool(prefs.get("incomplete_files_ext", False), False)
         )
-        self.chk_preallocate.setChecked(self._to_bool(prefs.get("preallocate_all", False), False))
+        self.chk_preallocate.setChecked(
+            self._to_bool(prefs.get("preallocate_all", False), False)
+        )
         self.chk_queueing_enabled.setChecked(
             self._to_bool(prefs.get("queueing_enabled", False), False)
         )
         self.spn_max_active_downloads.setValue(
             self._to_int(prefs.get("max_active_downloads", -1), -1)
         )
-        self.spn_max_active_uploads.setValue(self._to_int(prefs.get("max_active_uploads", -1), -1))
+        self.spn_max_active_uploads.setValue(
+            self._to_int(prefs.get("max_active_uploads", -1), -1)
+        )
         self.spn_max_active_torrents.setValue(
             self._to_int(prefs.get("max_active_torrents", -1), -1)
         )
@@ -1519,7 +1576,9 @@ class FriendlyAddPreferencesDialog(QDialog):
         self.chk_pex.setChecked(self._to_bool(prefs.get("pex", True), True))
         self.chk_lsd.setChecked(self._to_bool(prefs.get("lsd", True), True))
         self.chk_upnp.setChecked(self._to_bool(prefs.get("upnp", True), True))
-        self.chk_anonymous_mode.setChecked(self._to_bool(prefs.get("anonymous_mode", False), False))
+        self.chk_anonymous_mode.setChecked(
+            self._to_bool(prefs.get("anonymous_mode", False), False)
+        )
         self._set_combo_data(self.cmb_encryption, prefs.get("encryption", 0), 0)
         self.chk_max_ratio_enabled.setChecked(
             self._to_bool(prefs.get("max_ratio_enabled", False), False)
@@ -1528,7 +1587,9 @@ class FriendlyAddPreferencesDialog(QDialog):
         self.chk_max_seeding_time_enabled.setChecked(
             self._to_bool(prefs.get("max_seeding_time_enabled", False), False)
         )
-        self.spn_max_seeding_time.setValue(self._to_int(prefs.get("max_seeding_time", 0), 0))
+        self.spn_max_seeding_time.setValue(
+            self._to_int(prefs.get("max_seeding_time", 0), 0)
+        )
         self._update_temp_path_enabled_state()
         self._update_ratio_enabled_state()
         self._update_seeding_time_enabled_state()

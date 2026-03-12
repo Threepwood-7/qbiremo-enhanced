@@ -46,8 +46,12 @@ class TrackerHealthDialog(QDialog):
         self.tbl_health = QTableWidget()
         self.tbl_health.setAlternatingRowColors(True)
         self.tbl_health.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tbl_health.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tbl_health.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tbl_health.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.tbl_health.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
         self.tbl_health.setSortingEnabled(True)
         self.tbl_health.setColumnCount(9)
         self.tbl_health.setHorizontalHeaderLabels(
@@ -141,7 +145,9 @@ class TimelineGraphWidget(QWidget):
         if len(samples) < 2:
             painter.setPen(QColor(180, 180, 180))
             painter.drawText(
-                self.rect(), Qt.AlignmentFlag.AlignCenter, "Timeline waiting for samples..."
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Timeline waiting for samples...",
             )
             return
 

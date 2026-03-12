@@ -8,7 +8,10 @@ from qbiremo_enhanced.widgets import NumericTableWidgetItem
 
 
 def _top_level_names(tree_widget):
-    return [tree_widget.topLevelItem(i).text(0) for i in range(tree_widget.topLevelItemCount())]
+    return [
+        tree_widget.topLevelItem(i).text(0)
+        for i in range(tree_widget.topLevelItemCount())
+    ]
 
 
 def _find_filter_item(tree_widget, kind, value):
@@ -206,9 +209,13 @@ def test_qsettings_are_forced_to_ini_backend(window):
 def test_edit_ini_file_action_opens_settings_file(window, monkeypatch, tmp_path):
     opened = {"path": None}
     monkeypatch.setattr(
-        appmod, "open_path_in_default_app", lambda p: opened.__setitem__("path", p) or True
+        appmod,
+        "open_path_in_default_app",
+        lambda p: opened.__setitem__("path", p) or True,
     )
-    monkeypatch.setattr(window, "_settings_ini_path", lambda: tmp_path / "qBiremoEnhanced.ini")
+    monkeypatch.setattr(
+        window, "_settings_ini_path", lambda: tmp_path / "qBiremoEnhanced.ini"
+    )
 
     window._edit_settings_ini_file()
 
@@ -265,7 +272,12 @@ def test_edit_menu_remove_actions_use_expected_delete_mode(window, monkeypatch):
 
     assert calls == [
         (["h1", "h2"], False, "Remove", "Removing 2 torrents..."),
-        (["h1", "h2"], True, "Remove + Delete Data", "Removing 2 torrents and deleting data..."),
+        (
+            ["h1", "h2"],
+            True,
+            "Remove + Delete Data",
+            "Removing 2 torrents and deleting data...",
+        ),
     ]
 
 
@@ -320,12 +332,16 @@ def test_edit_menu_pause_resume_session_queue_tasks(window, monkeypatch):
 
 
 def test_pause_resume_actions_apply_to_all_selected_hashes(window, monkeypatch):
-    monkeypatch.setattr(window, "_get_selected_torrent_hashes", lambda: ["h1", "h2", "h3"])
+    monkeypatch.setattr(
+        window, "_get_selected_torrent_hashes", lambda: ["h1", "h2", "h3"]
+    )
     calls = []
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._pause_torrent()
@@ -339,13 +355,17 @@ def test_pause_resume_actions_apply_to_all_selected_hashes(window, monkeypatch):
     assert calls[1][2][0] == ["h1", "h2", "h3"]
 
 
-def test_force_recheck_and_priority_actions_apply_to_all_selected_hashes(window, monkeypatch):
+def test_force_recheck_and_priority_actions_apply_to_all_selected_hashes(
+    window, monkeypatch
+):
     monkeypatch.setattr(window, "_get_selected_torrent_hashes", lambda: ["h1", "h2"])
     calls = []
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._force_start_torrent()
@@ -399,15 +419,21 @@ def test_content_panel_contains_priority_and_rename_actions(window, qtbot, monke
     assert rename_calls["count"] == 1
 
 
-def test_set_torrent_download_limit_queues_selected_hashes_and_converts_kib(window, monkeypatch):
+def test_set_torrent_download_limit_queues_selected_hashes_and_converts_kib(
+    window, monkeypatch
+):
     monkeypatch.setattr(window, "_get_selected_torrent_hashes", lambda: ["h1", "h2"])
-    monkeypatch.setattr(appmod.QInputDialog, "getInt", lambda *args, **kwargs: (128, True))
+    monkeypatch.setattr(
+        appmod.QInputDialog, "getInt", lambda *args, **kwargs: (128, True)
+    )
 
     calls = []
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._set_torrent_download_limit()
@@ -418,15 +444,21 @@ def test_set_torrent_download_limit_queues_selected_hashes_and_converts_kib(wind
     assert calls[0][2][1] == 128 * 1024
 
 
-def test_set_torrent_upload_limit_queues_selected_hashes_and_converts_kib(window, monkeypatch):
+def test_set_torrent_upload_limit_queues_selected_hashes_and_converts_kib(
+    window, monkeypatch
+):
     monkeypatch.setattr(window, "_get_selected_torrent_hashes", lambda: ["h1"])
-    monkeypatch.setattr(appmod.QInputDialog, "getInt", lambda *args, **kwargs: (64, True))
+    monkeypatch.setattr(
+        appmod.QInputDialog, "getInt", lambda *args, **kwargs: (64, True)
+    )
 
     calls = []
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._set_torrent_upload_limit()
@@ -437,12 +469,16 @@ def test_set_torrent_upload_limit_queues_selected_hashes_and_converts_kib(window
     assert calls[0][2][1] == 64 * 1024
 
 
-def test_show_speed_limits_manager_dialog_queues_profile_load(window, monkeypatch, qtbot):
+def test_show_speed_limits_manager_dialog_queues_profile_load(
+    window, monkeypatch, qtbot
+):
     calls = []
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._show_speed_limits_manager()
@@ -455,12 +491,16 @@ def test_show_speed_limits_manager_dialog_queues_profile_load(window, monkeypatc
     assert calls[0][1] == window._api_fetch_speed_limits_profile
 
 
-def test_show_friendly_add_preferences_dialog_queues_preferences_load(window, monkeypatch, qtbot):
+def test_show_friendly_add_preferences_dialog_queues_preferences_load(
+    window, monkeypatch, qtbot
+):
     calls = []
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._show_friendly_add_preferences_editor()
@@ -478,7 +518,9 @@ def test_speed_limits_apply_requested_queues_profile_apply(window, monkeypatch):
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._on_speed_limits_apply_requested(512, 256, 128, 64, True)
@@ -493,7 +535,9 @@ def test_show_tracker_health_dashboard_queues_refresh(window, monkeypatch, qtbot
     monkeypatch.setattr(
         window.analytics_api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
     window.all_torrents = []
 
@@ -530,7 +574,9 @@ def test_set_selected_content_priority_queues_expected_api_payload(
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._set_selected_content_priority(6)
@@ -564,7 +610,9 @@ def test_rename_selected_content_item_queues_expected_api_payload(
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, fn, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, fn, args)
+        ),
     )
 
     window._rename_selected_content_item()
@@ -582,7 +630,9 @@ def test_clipboard_monitor_queues_add_from_magnet(window, monkeypatch):
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, args)
+        ),
     )
 
     added = window._process_clipboard_text(
@@ -600,14 +650,19 @@ def test_clipboard_monitor_queues_add_from_hash(window, monkeypatch):
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, args)
+        ),
     )
 
     added = window._process_clipboard_text("0123456789abcdef0123456789abcdef01234567")
     assert added is True
     assert calls[0][0] == "add_torrent_from_clipboard"
     payload = calls[0][1][0]
-    assert payload["urls"][0] == "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+    assert (
+        payload["urls"][0]
+        == "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+    )
 
 
 def test_clipboard_monitor_deduplicates_same_payload(window, monkeypatch):
@@ -615,7 +670,9 @@ def test_clipboard_monitor_deduplicates_same_payload(window, monkeypatch):
     monkeypatch.setattr(
         window.api_queue,
         "add_task",
-        lambda task_name, fn, callback, *args, **kwargs: calls.append((task_name, args)),
+        lambda task_name, fn, callback, *args, **kwargs: calls.append(
+            (task_name, args)
+        ),
     )
 
     first = window._process_clipboard_text("abcdef0123456789abcdef0123456789abcdef01")
@@ -692,7 +749,9 @@ def test_apply_selected_torrent_edits_requires_one_selected(window, monkeypatch)
     assert called["queued"] is False
 
 
-def test_apply_selected_torrent_edits_queues_only_changed_fields(window, make_torrent, monkeypatch):
+def test_apply_selected_torrent_edits_queues_only_changed_fields(
+    window, make_torrent, monkeypatch
+):
     torrent = make_torrent(
         hash="h1",
         name="Torrent A",
@@ -743,7 +802,9 @@ def test_apply_selected_torrent_edits_queues_only_changed_fields(window, make_to
     assert updates["download_path"] == ""
 
 
-def test_enter_opens_selected_torrent_local_directory(window, monkeypatch, make_torrent, tmp_path):
+def test_enter_opens_selected_torrent_local_directory(
+    window, monkeypatch, make_torrent, tmp_path
+):
     local_dir = tmp_path / "downloads" / "Torrent A"
     local_dir.mkdir(parents=True)
 
@@ -772,7 +833,10 @@ def test_enter_with_missing_local_directory_does_not_open(
 ):
     missing_dir = tmp_path / "missing" / "Torrent B"
     torrent = make_torrent(
-        hash="h2", name="Torrent B", content_path=str(missing_dir), save_path=str(missing_dir)
+        hash="h2",
+        name="Torrent B",
+        content_path=str(missing_dir),
+        save_path=str(missing_dir),
     )
     window.all_torrents = [torrent]
     window.filtered_torrents = [torrent]
@@ -800,7 +864,9 @@ def test_double_click_in_torrent_table_opens_local_directory(
     local_dir = tmp_path / "downloads_dblclick"
     local_dir.mkdir(parents=True)
 
-    torrent = make_torrent(hash="h_dbl", name="Double Click", content_path=str(local_dir))
+    torrent = make_torrent(
+        hash="h_dbl", name="Double Click", content_path=str(local_dir)
+    )
     window.all_torrents = [torrent]
     window.filtered_torrents = [torrent]
     monkeypatch.setattr(
@@ -892,7 +958,9 @@ def test_enter_on_torrent_expands_env_var_directory_path(
     local_dir.mkdir(parents=True)
     monkeypatch.setenv("QBIREMO_TEST_DIR", str(local_dir))
 
-    torrent = make_torrent(hash="h_env", name="Env Torrent", save_path="%QBIREMO_TEST_DIR%")
+    torrent = make_torrent(
+        hash="h_env", name="Env Torrent", save_path="%QBIREMO_TEST_DIR%"
+    )
     window.all_torrents = [torrent]
     window.filtered_torrents = [torrent]
     monkeypatch.setattr(
@@ -912,7 +980,9 @@ def test_enter_on_torrent_expands_env_var_directory_path(
     assert opened["path"] == str(local_dir)
 
 
-def test_enter_in_content_tree_expands_env_var_path(window, monkeypatch, make_torrent, tmp_path):
+def test_enter_in_content_tree_expands_env_var_path(
+    window, monkeypatch, make_torrent, tmp_path
+):
     local_root = tmp_path / "downloads_content_env"
     target_file = local_root / "folder" / "env_movie.mkv"
     target_file.parent.mkdir(parents=True)
@@ -944,7 +1014,9 @@ def test_enter_in_content_tree_expands_env_var_path(window, monkeypatch, make_to
     assert opened["path"] == str(target_file)
 
 
-def test_content_tree_item_activated_opens_local_file(window, monkeypatch, make_torrent, tmp_path):
+def test_content_tree_item_activated_opens_local_file(
+    window, monkeypatch, make_torrent, tmp_path
+):
     local_root = tmp_path / "downloads_activate"
     target_file = local_root / "folder" / "activate_movie.mkv"
     target_file.parent.mkdir(parents=True)
@@ -990,7 +1062,12 @@ def test_content_tree_event_filter_handles_enter_and_opens_file(
         save_path=str(local_root),
     )
     window.current_content_files = [
-        {"name": "folder/eventfilter_movie.mkv", "size": 1, "progress": 1.0, "priority": 1}
+        {
+            "name": "folder/eventfilter_movie.mkv",
+            "size": 1,
+            "progress": 1.0,
+            "priority": 1,
+        }
     ]
     window._apply_content_filter()
     folder_item = window.tree_files.topLevelItem(0)
@@ -1045,7 +1122,9 @@ def test_taxonomy_dialog_requests_queue_expected_api_actions(window, monkeypatch
     monkeypatch.setattr(
         window,
         "_queue_taxonomy_action",
-        lambda task_name, fn, action_name, *args: calls.append((task_name, fn, action_name, args)),
+        lambda task_name, fn, action_name, *args: calls.append(
+            (task_name, fn, action_name, args)
+        ),
     )
     monkeypatch.setattr(
         appmod.QMessageBox,
@@ -1148,13 +1227,17 @@ def test_mainwindow_module_uses_shared_open_helper(window, monkeypatch):
         "open_path_in_default_app",
         lambda p: captured.__setitem__("path", p) or True,
     )
-    monkeypatch.setattr(window, "_settings_ini_path", lambda: appmod.Path("C:/tmp/sample.txt"))
+    monkeypatch.setattr(
+        window, "_settings_ini_path", lambda: appmod.Path("C:/tmp/sample.txt")
+    )
 
     window._edit_settings_ini_file()
     assert captured["path"] == str(appmod.Path("C:/tmp/sample.txt"))
 
 
-def test_open_log_file_uses_open_helper_with_absolute_path(window, monkeypatch, tmp_path):
+def test_open_log_file_uses_open_helper_with_absolute_path(
+    window, monkeypatch, tmp_path
+):
     log_path = tmp_path / "runtime.log"
     window.log_file_path = str(log_path)
 
@@ -1170,7 +1253,9 @@ def test_open_log_file_uses_open_helper_with_absolute_path(window, monkeypatch, 
     assert captured["path"] == str(log_path.resolve())
 
 
-def test_open_log_file_reports_failure_when_helper_returns_false(window, monkeypatch, tmp_path):
+def test_open_log_file_reports_failure_when_helper_returns_false(
+    window, monkeypatch, tmp_path
+):
     log_path = tmp_path / "cannot-open.log"
     window.log_file_path = str(log_path)
 
@@ -1188,7 +1273,9 @@ def test_open_log_file_reports_failure_when_helper_returns_false(window, monkeyp
     assert "Failed to open log file" in window.lbl_status.text()
 
 
-def test_mainwindow_eventfilter_forwards_false_result_from_session_controller(window, monkeypatch):
+def test_mainwindow_eventfilter_forwards_false_result_from_session_controller(
+    window, monkeypatch
+):
     called = {}
 
     def _fake_event_filter(_self, watched, event):
