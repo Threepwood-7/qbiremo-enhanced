@@ -60,9 +60,6 @@ from threep_commons.files import (
     build_instance_app_name,
     resolve_cache_file_path,
 )
-from threep_commons.formatters import (
-    normalize_display_mode as _normalize_display_mode,
-)
 from threep_commons.instance_lock import (
     acquire_instance_lock,
     compute_instance_id,
@@ -1517,15 +1514,6 @@ class MainWindow(QMainWindow):
             mode = "human_readable" if use_human else "bytes"
             self.display_size_mode = mode
             self.display_speed_mode = mode
-        else:
-            # Backward compatibility for older persisted keys.
-            self.display_size_mode = _normalize_display_mode(
-                settings.value("displaySizeMode", self.display_size_mode), DEFAULT_DISPLAY_SIZE_MODE
-            )
-            self.display_speed_mode = _normalize_display_mode(
-                settings.value("displaySpeedMode", self.display_speed_mode),
-                DEFAULT_DISPLAY_SPEED_MODE,
-            )
         if hasattr(self, "action_human_readable"):
             hr_checked = (
                 self.display_size_mode == "human_readable"
@@ -1589,8 +1577,6 @@ class MainWindow(QMainWindow):
                 and self.display_speed_mode == "human_readable"
             ),
         )
-        settings.setValue("displaySizeMode", self.display_size_mode)
-        settings.setValue("displaySpeedMode", self.display_speed_mode)
         settings.setValue("clipboardMonitorEnabled", bool(self.clipboard_monitor_enabled))
         settings.setValue("debugLoggingEnabled", bool(self.debug_logging_enabled))
 

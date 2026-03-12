@@ -111,7 +111,7 @@ def test_validate_and_normalize_config_logs_invalid_values(caplog):
     assert "unknown_field" in log_text
 
 
-def test_validate_and_normalize_config_maps_legacy_keys(caplog):
+def test_validate_and_normalize_config_ignores_old_legacy_keys(caplog):
     caplog.set_level(logging.WARNING, logger=appmod.G_APP_NAME)
     cfg = {
         "host": "10.0.0.2",
@@ -124,13 +124,18 @@ def test_validate_and_normalize_config_maps_legacy_keys(caplog):
 
     normalized = appmod.validate_and_normalize_config(cfg, "legacy_config.toml")
 
-    assert normalized["qb_host"] == "10.0.0.2"
-    assert normalized["qb_port"] == 12345
-    assert normalized["qb_username"] == "legacy_user"
-    assert normalized["qb_password"] == "legacy_pass"
-    assert normalized["http_basic_auth_username"] == "legacy_http_user"
-    assert normalized["http_basic_auth_password"] == "legacy_http_pass"
-    assert "deprecated" in caplog.text
+    assert normalized["qb_host"] == "localhost"
+    assert normalized["qb_port"] == 8080
+    assert normalized["qb_username"] == "admin"
+    assert normalized["qb_password"] == ""
+    assert normalized["http_basic_auth_username"] == ""
+    assert normalized["http_basic_auth_password"] == ""
+    assert "Unknown config key 'host'" in caplog.text
+    assert "Unknown config key 'port'" in caplog.text
+    assert "Unknown config key 'username'" in caplog.text
+    assert "Unknown config key 'password'" in caplog.text
+    assert "Unknown config key 'http_user'" in caplog.text
+    assert "Unknown config key 'http_password'" in caplog.text
 
 
 def test_validate_and_normalize_config_accepts_https_protocol_scheme():

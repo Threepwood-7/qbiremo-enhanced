@@ -124,6 +124,30 @@ def test_display_mode_toggle_is_persisted_via_qsettings(qtbot, monkeypatch, tmp_
     assert w2.action_human_readable.isChecked() is False
 
 
+def test_old_display_mode_keys_are_ignored_on_load(qtbot, monkeypatch, tmp_path):
+    settings_root = tmp_path / "qsettings"
+    settings_root.mkdir(parents=True, exist_ok=True)
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(settings_root))
+
+    settings = QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        appmod.G_ORG_NAME,
+        _default_settings_app_name(),
+    )
+    settings.clear()
+    settings.setValue("displaySizeMode", "human_readable")
+    settings.setValue("displaySpeedMode", "human_readable")
+    settings.sync()
+
+    window = _make_window(qtbot, monkeypatch, tmp_path)
+
+    assert window.display_size_mode == appmod.DEFAULT_DISPLAY_SIZE_MODE
+    assert window.display_speed_mode == appmod.DEFAULT_DISPLAY_SPEED_MODE
+    assert window.action_human_readable.isChecked() is False
+
+
 def test_default_cache_path_uses_data_dir(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(appmod, "CACHE_FILE_NAME", "qbiremo_enhanced.cache")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))

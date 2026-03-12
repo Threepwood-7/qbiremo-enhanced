@@ -72,15 +72,6 @@ CONFIG_VALIDATION_KNOWN_KEYS = {
     "_instance_lock_file_path",
 }
 
-CONFIG_VALIDATION_LEGACY_MAP = {
-    "host": "qb_host",
-    "port": "qb_port",
-    "username": "qb_username",
-    "password": "qb_password",
-    "http_user": "http_basic_auth_username",
-    "http_password": "http_basic_auth_password",
-}
-
 CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS = (
     "auto_refresh",
     "refresh_interval",
@@ -251,16 +242,6 @@ def _config_validation_coerce_int(value: object, default: int) -> int:
     return default
 
 
-def _apply_legacy_config_mappings(normalized: dict[str, object]) -> None:
-    """Map legacy config keys to current keys with warnings."""
-    for old_key, new_key in CONFIG_VALIDATION_LEGACY_MAP.items():
-        if new_key not in normalized and old_key in normalized:
-            normalized[new_key] = normalized.get(old_key)
-            _config_validation_warn(
-                f"'{old_key}' is deprecated; use '{new_key}'. Using '{old_key}' value for now."
-            )
-
-
 def _remove_settings_managed_config_keys(normalized: dict[str, object]) -> None:
     """Drop config keys that are intentionally managed by QSettings."""
     for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
@@ -383,7 +364,7 @@ def _warn_unknown_config_keys(normalized: dict[str, object]) -> None:
     unknown_keys = sorted(
         key
         for key in normalized
-        if key not in CONFIG_VALIDATION_KNOWN_KEYS and key not in CONFIG_VALIDATION_LEGACY_MAP
+        if key not in CONFIG_VALIDATION_KNOWN_KEYS
     )
     for key in unknown_keys:
         _config_validation_warn(f"Unknown config key '{key}' will be ignored.")
@@ -399,7 +380,6 @@ def validate_and_normalize_config(config: object, profile_id: str) -> Normalized
         config = {}
 
     normalized: dict[str, object] = dict(config)
-    _apply_legacy_config_mappings(normalized)
     _remove_settings_managed_config_keys(normalized)
     _normalize_qb_host_value(normalized)
     _normalize_qb_port_value(normalized)
