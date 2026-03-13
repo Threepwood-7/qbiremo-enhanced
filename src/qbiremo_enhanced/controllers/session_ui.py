@@ -9,10 +9,6 @@ from PySide6.QtGui import (
     QCloseEvent,
     QKeyEvent,
 )
-from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-)
 from threep_commons.formatters import (
     format_size_mode,
     format_speed_mode,
@@ -29,8 +25,11 @@ from ..dialogs import (
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase, logger
 
 if TYPE_CHECKING:
+    from PySide6.QtWidgets import QWidget
+
     from ..models.torrent import (
         SessionTimelineSample,
+        TrackerHealthRow,
     )
 
 
@@ -184,8 +183,11 @@ class SessionUiController(WindowControllerBase):
         dialog = self._tracker_health_dialog
         if result.get("success"):
             rows = result.get("data", [])
+            tracker_rows = (
+                cast("list[TrackerHealthRow]", rows) if isinstance(rows, list) else []
+            )
             if dialog is not None and dialog.isVisible():
-                dialog.set_rows(rows if isinstance(rows, list) else [])
+                dialog.set_rows(tracker_rows)
                 dialog.set_busy(False)
             self._set_status("Tracker health loaded")
         else:
@@ -280,7 +282,7 @@ class SessionUiController(WindowControllerBase):
         ):
             self._open_selected_content_path()
             return True
-        return QMainWindow.eventFilter(self, watched, event)
+        return self.window.eventFilter(watched, event)
 
     def _update_window_title_speeds(self) -> None:
         """Show aggregate up/down speeds in the window title."""
@@ -319,7 +321,7 @@ class SessionUiController(WindowControllerBase):
             return text[:max_len] + "...<truncated>"
         return text
 
-    def _debug_log_api_call(
+    def debug_log_api_call(
         self, method_name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> None:
         """Log one qBittorrent API call invocation when debug logging is enabled."""
@@ -332,7 +334,7 @@ class SessionUiController(WindowControllerBase):
             self._safe_debug_repr(kwargs),
         )
 
-    def _debug_log_api_response(
+    def debug_log_api_response(
         self, method_name: str, result: object, elapsed: float
     ) -> None:
         """Log one qBittorrent API call response when debug logging is enabled."""
@@ -345,7 +347,7 @@ class SessionUiController(WindowControllerBase):
             self._safe_debug_repr(result, max_len=None),
         )
 
-    def _debug_log_api_error(
+    def debug_log_api_error(
         self, method_name: str, error: Exception, elapsed: float
     ) -> None:
         """Log one qBittorrent API call failure when debug logging is enabled."""

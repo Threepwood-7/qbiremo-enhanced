@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtGui import QIcon
 
@@ -32,7 +33,8 @@ def parse_tags(tags: object) -> list[str]:
     if isinstance(tags, str):
         return [token.strip() for token in tags.split(",") if token.strip()]
     if isinstance(tags, (list, tuple, set)):
-        return [str(token) for token in tags]
+        values = cast("list[object] | tuple[object, ...] | set[object]", tags)
+        return [str(token) for token in values]
     return []
 
 

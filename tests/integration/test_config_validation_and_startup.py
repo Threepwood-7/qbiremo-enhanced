@@ -199,8 +199,8 @@ def test_main_opens_log_file_on_startup_crash(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(appmod.atexit, "register", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(appmod, "_setup_logging", lambda _config: dummy_handler)
-    monkeypatch.setattr(appmod, "_install_exception_hooks", lambda _handler: None)
+    monkeypatch.setattr(appmod, "setup_logging", lambda _config: dummy_handler)
+    monkeypatch.setattr(appmod, "install_exception_hooks", lambda _handler: None)
     monkeypatch.setattr(
         appmod,
         "open_path_in_default_app",
@@ -260,8 +260,8 @@ def test_main_accepts_instance_counter_cli_argument(monkeypatch):
         ),
     )
     monkeypatch.setattr(appmod.atexit, "register", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(appmod, "_setup_logging", lambda _config: DummyHandler())
-    monkeypatch.setattr(appmod, "_install_exception_hooks", lambda _handler: None)
+    monkeypatch.setattr(appmod, "setup_logging", lambda _config: DummyHandler())
+    monkeypatch.setattr(appmod, "install_exception_hooks", lambda _handler: None)
 
     class FakeApplication:
         def __init__(self, _argv):
@@ -328,8 +328,8 @@ def test_main_uses_incremented_instance_counter_when_lock_exists(monkeypatch):
         ),
     )
     monkeypatch.setattr(appmod.atexit, "register", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(appmod, "_setup_logging", lambda _config: DummyHandler())
-    monkeypatch.setattr(appmod, "_install_exception_hooks", lambda _handler: None)
+    monkeypatch.setattr(appmod, "setup_logging", lambda _config: DummyHandler())
+    monkeypatch.setattr(appmod, "install_exception_hooks", lambda _handler: None)
 
     class FakeApplication:
         def __init__(self, _argv):
@@ -400,7 +400,7 @@ def test_setup_logging_falls_back_to_default_file_when_primary_path_fails(monkey
     monkeypatch.setenv("DATA_DIR", str(Path.cwd() / ".tmp_test_data"))
 
     try:
-        handler = appmod._setup_logging(config)
+        handler = appmod.setup_logging(config)
     finally:
         appmod.logger.handlers.clear()
         for old_handler in original_handlers:
@@ -445,8 +445,8 @@ def test_main_logs_load_issues_and_starts_with_defaults(monkeypatch, caplog):
         ),
     )
     monkeypatch.setattr(appmod.atexit, "register", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(appmod, "_setup_logging", lambda _config: DummyHandler())
-    monkeypatch.setattr(appmod, "_install_exception_hooks", lambda _handler: None)
+    monkeypatch.setattr(appmod, "setup_logging", lambda _config: DummyHandler())
+    monkeypatch.setattr(appmod, "install_exception_hooks", lambda _handler: None)
 
     class FakeApplication:
         def __init__(self, _argv):

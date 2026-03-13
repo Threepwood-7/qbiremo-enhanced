@@ -384,7 +384,10 @@ def validate_and_normalize_config(config: object, profile_id: str) -> Normalized
         )
         config = {}
 
-    normalized: dict[str, object] = dict(config)
+    normalized = {
+        str(key): value
+        for key, value in cast("dict[object, object]", config).items()
+    }
     _remove_settings_managed_config_keys(normalized)
     _normalize_qb_host_value(normalized)
     _normalize_qb_port_value(normalized)
@@ -401,7 +404,7 @@ def validate_and_normalize_config(config: object, profile_id: str) -> Normalized
     return cast("NormalizedConfig", normalized)
 
 
-def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
+def setup_logging(config: NormalizedConfig) -> logging.FileHandler:
     """Configure file logging and return the active file handler."""
     instance_id = str(config.get("_instance_id", "") or "").strip().lower()
     if not instance_id:
@@ -409,7 +412,7 @@ def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
     config["_instance_id"] = instance_id
 
     log_file = config.get("log_file", DEFAULT_LOG_FILE_NAME)
-    if not isinstance(log_file, str) or not log_file.strip():
+    if not log_file.strip():
         log_file = DEFAULT_LOG_FILE_NAME
     log_file_path = _resolve_log_file_path(log_file, instance_id)
     config["_log_file_path"] = str(log_file_path)
@@ -423,7 +426,7 @@ def _setup_logging(config: NormalizedConfig) -> logging.FileHandler:
     return file_handler
 
 
-def _install_exception_hooks(file_handler: logging.FileHandler) -> None:
+def install_exception_hooks(file_handler: logging.FileHandler) -> None:
     """Install global exception hooks that flush and persist fatal errors."""
 
     _install_exception_hooks_shared(logger, file_handler)

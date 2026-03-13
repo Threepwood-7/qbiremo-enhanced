@@ -80,13 +80,13 @@ from threep_commons.settings import QSettingsValueStore
 from .config_runtime import (
     DEFAULT_PROFILE_ID,
     _default_instance_log_file_path,
-    _install_exception_hooks,
-    _setup_logging,
     compute_instance_id_from_config,
     get_missing_required_config,
+    install_exception_hooks,
     load_config_with_issues,
     normalize_profile_id,
     save_profile_config,
+    setup_logging,
     validate_and_normalize_config,
 )
 from .constants import (
@@ -1765,8 +1765,8 @@ def main() -> None:
         atexit.register(release_instance_lock, lock_path)
 
         # Set up logging first, then install the global exception hook.
-        file_handler = _setup_logging(config)
-        _install_exception_hooks(file_handler)
+        file_handler = setup_logging(config)
+        install_exception_hooks(file_handler)
         for issue in load_issues:
             logger.warning("%s", issue)
 

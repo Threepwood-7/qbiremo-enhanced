@@ -32,7 +32,7 @@ from ..models.torrent import (
     TrackerHealthRow,
     TrackerRow,
 )
-from ..tasking import _DebugAPIClientProxy
+from ..tasking import DebugAPIClientProxy
 from ..types import APITaskResult, api_task_result
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase, logger
 
@@ -109,7 +109,7 @@ class NetworkApiController(WindowControllerBase):
         """Create and authenticate a qBittorrent API client."""
         qb_client = qbittorrentapi.Client(**self.qb_conn_info)
         qb = (
-            _DebugAPIClientProxy(qb_client, cast("Any", self))
+            DebugAPIClientProxy(qb_client, cast("Any", self))
             if self.debug_logging_enabled
             else qb_client
         )

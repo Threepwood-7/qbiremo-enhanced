@@ -43,15 +43,15 @@ class _ContextManagedClient(Protocol):
 class _DebugLogOwner(Protocol):
     """Protocol for objects that expose API debug logging hooks."""
 
-    def _debug_log_api_call(
+    def debug_log_api_call(
         self, method_name: str, args: tuple[object, ...], kwargs: dict[str, object]
     ) -> None: ...
 
-    def _debug_log_api_error(
+    def debug_log_api_error(
         self, method_name: str, error: Exception, elapsed: float
     ) -> None: ...
 
-    def _debug_log_api_response(
+    def debug_log_api_response(
         self, method_name: str, result: object, elapsed: float
     ) -> None: ...
 
@@ -169,21 +169,26 @@ class APITaskQueue(QObject):
         worker = Worker(fn, *args, **kwargs)
         self.current_worker = worker
 
-        worker.signals.result.connect(
-            lambda result, _worker=worker: self._on_task_complete(
+        def _handle_result(result: object, _worker: Worker = worker) -> None:
+            self._on_task_complete(
                 _worker,
                 task_name,
                 callback,
                 result,
             )
-        )
-        worker.signals.error.connect(
-            lambda error, _worker=worker: self._on_task_error(
+
+        def _handle_error(
+            error: tuple[type[BaseException], BaseException, str],
+            _worker: Worker = worker,
+        ) -> None:
+            self._on_task_error(
                 _worker,
                 task_name,
                 error,
             )
-        )
+
+        worker.signals.result.connect(_handle_result)
+        worker.signals.error.connect(_handle_error)
         worker.signals.cancelled.connect(
             lambda _worker=worker: self._on_task_cancelled(_worker, task_name)
         )
@@ -286,7 +291,7 @@ class APITaskQueue(QObject):
             self._start_task(task_name, fn, callback, *args, **kwargs)
 
 
-class _DebugAPIClientProxy:
+class DebugAPIClientProxy:
     """Proxy that logs qBittorrent API calls and responses."""
 
     def __init__(self, client: object, owner: _DebugLogOwner) -> None:
@@ -294,12 +299,12 @@ class _DebugAPIClientProxy:
         self._client = client
         self._owner = owner
 
-    def __enter__(self) -> "_DebugAPIClientProxy":
+    def __enter__(self) -> "DebugAPIClientProxy":
         """Enter wrapped context manager while preserving proxy behavior."""
         entered = cast("_ContextManagedClient", self._client).__enter__()
         if entered is self._client:
             return self
-        return _DebugAPIClientProxy(entered, self._owner)
+        return DebugAPIClientProxy(entered, self._owner)
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         """Delegate context-manager exit to wrapped client."""
@@ -315,16 +320,16 @@ class _DebugAPIClientProxy:
 
         def _wrapped(*args: object, **kwargs: object) -> object:
             """Execute one proxied API call with debug timing logs."""
-            self._owner._debug_log_api_call(name, args, kwargs)
+            self._owner.debug_log_api_call(name, args, kwargs)
             start_time = time.time()
             try:
                 result = attr(*args, **kwargs)
             except RECOVERABLE_API_CALL_EXCEPTIONS as e:
                 elapsed = time.time() - start_time
-                self._owner._debug_log_api_error(name, e, elapsed)
+                self._owner.debug_log_api_error(name, e, elapsed)
                 raise
             elapsed = time.time() - start_time
-            self._owner._debug_log_api_response(name, result, elapsed)
+            self._owner.debug_log_api_response(name, result, elapsed)
             return result
 
         return _wrapped
