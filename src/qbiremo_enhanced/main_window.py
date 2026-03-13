@@ -79,8 +79,8 @@ from threep_commons.settings import QSettingsValueStore
 
 from .config_runtime import (
     DEFAULT_PROFILE_ID,
-    _default_instance_log_file_path,
     compute_instance_id_from_config,
+    default_instance_log_file_path,
     get_missing_required_config,
     install_exception_hooks,
     load_config_with_issues,
@@ -185,7 +185,7 @@ class MainWindow(QMainWindow):
     def _install_controller_methods(self, controller_cls: type[object]) -> None:
         """Bind controller class methods onto this window when no local override exists."""
         for name, raw_attr in controller_cls.__dict__.items():
-            descriptor = cast("Any", raw_attr)
+            descriptor = raw_attr
             if name.startswith("__"):
                 continue
             if name in {"eventFilter", "closeEvent"}:
@@ -220,9 +220,7 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Delegate custom event-filter handling to session controller logic."""
-        return SessionUiController.eventFilter(
-            cast("SessionUiController", self), watched, event
-        )
+        return SessionUiController.eventFilter(cast("Any", self), watched, event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Delegate close-event cleanup to session controller logic."""
@@ -234,8 +232,7 @@ class MainWindow(QMainWindow):
         configure_qsettings(APP_IDENTITY)
         self._initialize_controllers()
 
-        normalized_config: NormalizedConfig = config if isinstance(config, dict) else {}
-        self.config = normalized_config
+        self.config = config
         config = self.config
         self.instance_id = str(config.get("_instance_id", "") or "").strip().lower()
         if not self.instance_id:
@@ -273,8 +270,8 @@ class MainWindow(QMainWindow):
         self.clipboard_monitor_enabled = False
         self.debug_logging_enabled = False
         self._last_clipboard_text = ""
-        self._clipboard_seen_keys = set()
-        self._clipboard_seen_order = deque()
+        self._clipboard_seen_keys: set[str] = set()
+        self._clipboard_seen_order: deque[str] = deque()
         self._clipboard = None
 
         # Defaults are managed by code/QSettings.
@@ -339,7 +336,7 @@ class MainWindow(QMainWindow):
         # Log file path (set by main() before constructing MainWindow)
         self.log_file_path = config.get(
             "_log_file_path",
-            _default_instance_log_file_path(self.instance_id),
+            default_instance_log_file_path(self.instance_id),
         )
 
         # Auto-refresh settings
@@ -1140,16 +1137,12 @@ class MainWindow(QMainWindow):
                 self.qb_conn_info.get(
                     "username", self.config.get("qb_username", "admin")
                 )
-                if isinstance(self.config, dict)
-                else self.qb_conn_info.get("username", "admin")
             ).strip()
             or "admin"
         )
         raw_host = (
             str(
                 self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
-                if isinstance(self.config, dict)
-                else self.qb_conn_info.get("host", "localhost")
             ).strip()
             or "localhost"
         )
@@ -1162,13 +1155,9 @@ class MainWindow(QMainWindow):
                 host = raw_host
         port = _normalize_instance_port(
             self.config.get("qb_port", self.qb_conn_info.get("port", 8080))
-            if isinstance(self.config, dict)
-            else self.qb_conn_info.get("port", 8080)
         )
         counter = _normalize_instance_counter(
             self.config.get("_instance_counter", 1)
-            if isinstance(self.config, dict)
-            else 1
         )
         return f"{user}@{host}:{port} [{counter}]"
 
@@ -1410,25 +1399,18 @@ class MainWindow(QMainWindow):
                 self.qb_conn_info.get(
                     "username", self.config.get("qb_username", "admin")
                 )
-                if isinstance(self.config, dict)
-                else self.qb_conn_info.get("username", "admin")
             ).strip()
             or "admin"
         )
         configured_scheme = _normalize_http_protocol_scheme(
             self.config.get("http_protocol_scheme", "http")
-            if isinstance(self.config, dict)
-            else "http"
         )
         explicit_scheme_override = bool(
-            isinstance(self.config, dict)
-            and str(self.config.get("http_protocol_scheme", "") or "").strip()
+            str(self.config.get("http_protocol_scheme", "") or "").strip()
         )
         raw_host = (
             str(
                 self.config.get("qb_host", self.qb_conn_info.get("host", "localhost"))
-                if isinstance(self.config, dict)
-                else self.qb_conn_info.get("host", "localhost")
             ).strip()
             or "localhost"
         )
@@ -1454,8 +1436,6 @@ class MainWindow(QMainWindow):
             if host_port_from_url is not None
             else (
                 self.config.get("qb_port", self.qb_conn_info.get("port", 8080))
-                if isinstance(self.config, dict)
-                else self.qb_conn_info.get("port", 8080)
             )
         )
         encoded_user = quote(user, safe="")
@@ -1526,7 +1506,11 @@ class MainWindow(QMainWindow):
             if isinstance(hidden_columns, str):
                 hidden_list = [hidden_columns]
             elif isinstance(hidden_columns, (list, tuple, set)):
-                hidden_list = [str(v) for v in hidden_columns]
+                hidden_values = cast(
+                    "list[object] | tuple[object, ...] | set[object]",
+                    hidden_columns,
+                )
+                hidden_list = [str(v) for v in hidden_values]
             else:
                 hidden_list = []
             self._apply_hidden_columns_by_keys(hidden_list)
@@ -1720,6 +1704,8 @@ def main() -> None:
         os.environ["DATA_DIR"] = str(Path(args.data_dir).expanduser())
     configure_qsettings(APP_IDENTITY)
     selected_profile = normalize_profile_id(args.profile)
+    config: NormalizedConfig = {}
+    file_handler: logging.FileHandler | None = None
 
     try:
         app = QApplication(sys.argv)
@@ -1785,12 +1771,12 @@ def main() -> None:
         raise
     except Exception:
         logger.critical("Fatal error during startup", exc_info=True)
-        if "file_handler" in locals():
+        if file_handler is not None:
             file_handler.flush()
         open_path_in_default_app(
             config.get(
                 "_log_file_path",
-                _default_instance_log_file_path(
+                default_instance_log_file_path(
                     str(config.get("_instance_id", "") or "")
                 ),
             )

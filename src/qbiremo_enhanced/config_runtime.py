@@ -44,6 +44,8 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .models.config import NormalizedConfig
 
 logger = logging.getLogger(SETTINGS_APP_NAME)
@@ -159,7 +161,7 @@ def _resolve_log_file_path(raw_log_file: str, instance_id: str) -> Path:
     return resolve_log_path(APP_IDENTITY, raw_log_file, instance_id=instance_id)
 
 
-def _default_instance_log_file_path(instance_id: str) -> str:
+def default_instance_log_file_path(instance_id: str) -> str:
     """Build one default per-instance log path under app runtime storage."""
 
     return str(_resolve_log_file_path(DEFAULT_LOG_FILE_NAME, instance_id))
@@ -211,7 +213,7 @@ def load_config_with_issues(
     return cast("NormalizedConfig", loaded), issues
 
 
-def get_missing_required_config(config: dict[str, Any]) -> list[str]:
+def get_missing_required_config(config: Mapping[str, object]) -> list[str]:
     missing: list[str] = []
     if "qb_host" in config:
         host = str(config.get("qb_host", "") or "").strip()
@@ -420,7 +422,7 @@ def setup_logging(config: NormalizedConfig) -> logging.FileHandler:
     try:
         file_handler = setup_logger_to_file(logger, log_file_path)
     except (OSError, RuntimeError):
-        fallback_log_file = Path(_default_instance_log_file_path(instance_id))
+        fallback_log_file = Path(default_instance_log_file_path(instance_id))
         config["_log_file_path"] = str(fallback_log_file)
         file_handler = setup_logger_to_file(logger, fallback_log_file)
     return file_handler
