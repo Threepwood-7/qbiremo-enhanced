@@ -981,12 +981,7 @@ class NetworkApiController(WindowControllerBase):
                         else [str(urls_payload).strip()]
                     )
                     submitted_urls = len(url_entries)
-                    urls_argument = (
-                        "\n".join(url_entries)
-                        if len(url_entries) > 1
-                        else (url_entries[0] if url_entries else "")
-                    )
-                    url_result = qb.torrents_add(urls=urls_argument, **dict(data))
+                    url_result = qb.torrents_add(urls=url_entries, **dict(data))
                     if url_result == "Ok.":
                         added_urls = len(url_entries)
                     else:
@@ -2172,7 +2167,9 @@ class NetworkApiController(WindowControllerBase):
             self._set_status(f"Failed to apply torrent edits: {error}")
         self._hide_progress()
 
-    def _on_task_completed(self, task_name: str, result: APITaskResult[object]) -> None:
+    def _on_task_completed(
+        self, task_name: str, result: APITaskResult[object] | None
+    ) -> None:
         """Handle task completion."""
         self._maybe_bump_auto_refresh_interval_from_api_elapsed(task_name, result)
         self._log("DEBUG", f"Task completed: {task_name}")
@@ -2214,9 +2211,11 @@ class NetworkApiController(WindowControllerBase):
         )
 
     def _maybe_bump_auto_refresh_interval_from_api_elapsed(
-        self, task_name: str, result: APITaskResult[object]
+        self, task_name: str, result: APITaskResult[object] | None
     ) -> None:
         """Increase auto-refresh interval when one API task exceeds current interval."""
+        if result is None:
+            return
         elapsed_seconds = self._safe_float(result.get("elapsed", 0.0), 0.0)
         self._maybe_bump_auto_refresh_interval_for_elapsed(
             source="api_task",

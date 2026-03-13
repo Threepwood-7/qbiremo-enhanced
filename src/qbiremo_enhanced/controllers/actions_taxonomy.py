@@ -61,7 +61,12 @@ class ActionsTaxonomyController(WindowControllerBase):
 
     def _window_parent(self) -> QWidget | None:
         """Return the owning Qt window as a widget parent when available."""
-        return cast("QWidget | None", getattr(self, "window", None))
+        owner = getattr(self, "window", None)
+        if isinstance(owner, QWidget):
+            return owner
+        if isinstance(self, QWidget):
+            return self
+        return None
 
     def _config_map(self) -> dict[str, object]:
         """Return runtime config as a plain dict for typed lookups."""

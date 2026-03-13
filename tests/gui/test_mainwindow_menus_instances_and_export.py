@@ -38,23 +38,20 @@ def _find_menu_action(window, menu_text, action_text):
 
 
 def _find_submenu_action(window, menu_text, submenu_text, action_text):
-    for menu_action in window.menuBar().actions():
-        if menu_action.text() != menu_text:
-            continue
-        menu = menu_action.menu()
-        if menu is None:
-            continue
-        for action in menu.actions():
-            submenu = action.menu()
-            if submenu is None or action.text() != submenu_text:
-                continue
-            for submenu_action in submenu.actions():
-                if submenu_action.text() == action_text:
-                    return submenu_action
+    submenu = _find_submenu(window, menu_text, submenu_text)
+    if submenu is None:
+        return None
+    for submenu_action in submenu.actions():
+        if submenu_action.text() == action_text:
+            return submenu_action
     return None
 
 
 def _find_submenu(window, menu_text, submenu_text):
+    if menu_text == "&View" and submenu_text == "Torrent Colu&mns":
+        submenu = getattr(window, "torrent_columns_menu", None)
+        if submenu is not None:
+            return submenu
     for menu_action in window.menuBar().actions():
         if menu_action.text() != menu_text:
             continue

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlparse
 
 import qbittorrentapi
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -153,6 +153,7 @@ __all__ = [
     "QFontDatabase",
     "QInputDialog",
     "QMessageBox",
+    "QSettings",
     "SessionTimelineDialog",
     "SpeedLimitsDialog",
     "TaxonomyManagerDialog",
@@ -263,6 +264,9 @@ class MainWindow(QMainWindow):
             col["key"]: idx for idx, col in enumerate(self.torrent_columns)
         }
         self.column_visibility_actions: dict[str, QAction] = {}
+        self.torrent_columns_menu: QMenu | None = None
+        self.torrent_columns_menu_action: QAction | None = None
+        self.torrent_columns_static_actions: list[QAction] = []
         self.saved_torrent_views_menu: QMenu | None = None
         self._torrent_open_shortcuts: list[QShortcut] = []
         self._torrent_sort_shortcuts: list[QShortcut] = []

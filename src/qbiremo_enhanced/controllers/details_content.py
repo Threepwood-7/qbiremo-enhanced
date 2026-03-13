@@ -325,7 +325,7 @@ class DetailsContentController(WindowControllerBase):
 
     def _build_peers_context_menu(self) -> QMenu:
         """Build context menu for peers table."""
-        menu = QMenu(cast("Any", self.window))
+        menu = QMenu(cast("Any", self))
         has_data = self._details_table_has_data_rows(self.tbl_peers)
         has_selection = (
             has_data and self._selected_table_row(self.tbl_peers) is not None
@@ -368,7 +368,7 @@ class DetailsContentController(WindowControllerBase):
             return
 
         reply = QMessageBox.question(
-            cast("Any", self.window),
+            cast("Any", self),
             "Ban Peer",
             f"Ban peer {endpoint}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -565,7 +565,7 @@ class DetailsContentController(WindowControllerBase):
         self, available_tags: list[str], selected_tags: list[str]
     ) -> list[str] | None:
         """Show multi-select picker for known tags and return selected values."""
-        dialog = QDialog(cast("Any", self.window))
+        dialog = QDialog(cast("Any", self))
         dialog.setWindowTitle("Add Tags")
         parent_rect = self.frameGeometry()
         parent_width = (
@@ -1062,7 +1062,7 @@ class DetailsContentController(WindowControllerBase):
         """Browse for a new torrent save path."""
         initial = self.txt_torrent_edit_save_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
-            cast("Any", self.window),
+            cast("Any", self),
             "Select Save Path",
             initial,
         )
@@ -1073,7 +1073,7 @@ class DetailsContentController(WindowControllerBase):
         """Browse for a new torrent incomplete save path."""
         initial = self.txt_torrent_edit_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
-            cast("Any", self.window),
+            cast("Any", self),
             "Select Incomplete Save Path",
             initial,
         )

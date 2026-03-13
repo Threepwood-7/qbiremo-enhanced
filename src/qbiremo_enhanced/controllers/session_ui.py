@@ -9,6 +9,7 @@ from PySide6.QtGui import (
     QCloseEvent,
     QKeyEvent,
 )
+from PySide6.QtWidgets import QMainWindow
 from threep_commons.formatters import (
     format_size_mode,
     format_speed_mode,
@@ -282,7 +283,7 @@ class SessionUiController(WindowControllerBase):
         ):
             self._open_selected_content_path()
             return True
-        return self.window.eventFilter(watched, event)
+        return QMainWindow.eventFilter(cast("QMainWindow", self), watched, event)
 
     def _update_window_title_speeds(self) -> None:
         """Show aggregate up/down speeds in the window title."""
