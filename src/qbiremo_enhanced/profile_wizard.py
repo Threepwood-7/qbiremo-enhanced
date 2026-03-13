@@ -35,7 +35,8 @@ class ProfileSetupDialog(QDialog):
         root = QVBoxLayout(self)
         root.addWidget(
             QLabel(
-                "Configure one qBiremo profile. Values are stored in the shared profile settings store."
+                "Configure one qBiremo profile. Values are stored in the shared "
+                "profile settings store."
             )
         )
 

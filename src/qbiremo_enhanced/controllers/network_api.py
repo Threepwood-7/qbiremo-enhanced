@@ -54,6 +54,150 @@ class _TrackerHealthBucket(TypedDict):
 class NetworkApiController(WindowControllerBase):
     """Handle API calls, cache I/O, and queue callbacks for network data."""
 
+    @staticmethod
+    def _normalize_single_torrent_hash(torrent_hash: str) -> str:
+        """Return one non-empty torrent hash or raise for invalid input."""
+        normalized_hash = str(torrent_hash or "").strip()
+        if not normalized_hash:
+            raise ValueError("Missing torrent hash")
+        return normalized_hash
+
+    def _apply_single_torrent_text_edits(
+        self,
+        qb: qbittorrentapi.Client,
+        *,
+        normalized_hash: str,
+        hashes: list[str],
+        normalized_updates: Mapping[str, object],
+    ) -> None:
+        """Apply editable name, category, tag, and auto-management fields."""
+        if "name" in normalized_updates:
+            torrent_name = str(normalized_updates.get("name", "") or "").strip()
+            if not torrent_name:
+                raise ValueError("Torrent name cannot be empty")
+            qb.torrents_rename(
+                torrent_hash=normalized_hash,
+                new_torrent_name=torrent_name,
+            )
+
+        if "auto_tmm" in normalized_updates:
+            qb.torrents_set_auto_management(
+                enable=bool(normalized_updates["auto_tmm"]),
+                torrent_hashes=hashes,
+            )
+
+        if "category" in normalized_updates:
+            qb.torrents_set_category(
+                torrent_hashes=hashes,
+                category=str(normalized_updates.get("category", "") or ""),
+            )
+
+        if "tags" not in normalized_updates:
+            return
+        tags_text = str(normalized_updates.get("tags", "") or "")
+        qb.torrents_remove_tags(torrent_hashes=hashes)
+        if tags_text:
+            qb.torrents_add_tags(
+                torrent_hashes=hashes,
+                tags=tags_text,
+            )
+
+    @staticmethod
+    def _set_save_path_edit(
+        qb: qbittorrentapi.Client,
+        *,
+        hashes: list[str],
+        save_path: str,
+    ) -> None:
+        """Apply save-path edits using the best API available."""
+        if hasattr(qb, "torrents_set_save_path"):
+            qb.torrents_set_save_path(
+                torrent_hashes=hashes,
+                save_path=save_path,
+            )
+            return
+        if save_path:
+            qb.torrents_set_location(
+                torrent_hashes=hashes,
+                location=save_path,
+            )
+            return
+        raise RuntimeError(
+            "Clearing save path is not supported by this qBittorrent version."
+        )
+
+    @staticmethod
+    def _set_download_path_edit(
+        qb: qbittorrentapi.Client,
+        *,
+        hashes: list[str],
+        download_path: str,
+    ) -> None:
+        """Apply incomplete save-path edits when supported by the API."""
+        if hasattr(qb, "torrents_set_download_path"):
+            qb.torrents_set_download_path(
+                torrent_hashes=hashes,
+                download_path=download_path,
+            )
+            return
+        raise RuntimeError(
+            "Editing incomplete save path is not supported by this qBittorrent version."
+        )
+
+    def _apply_single_torrent_path_edits(
+        self,
+        qb: qbittorrentapi.Client,
+        *,
+        hashes: list[str],
+        normalized_updates: Mapping[str, object],
+    ) -> None:
+        """Apply save-path related edits for one torrent."""
+        if "save_path" in normalized_updates:
+            save_path = str(normalized_updates.get("save_path", "") or "")
+            self._set_save_path_edit(qb, hashes=hashes, save_path=save_path)
+
+        if "download_path" not in normalized_updates:
+            return
+        download_path = str(normalized_updates.get("download_path", "") or "")
+        self._set_download_path_edit(
+            qb,
+            hashes=hashes,
+            download_path=download_path,
+        )
+
+    def _apply_single_torrent_limit_edits(
+        self,
+        qb: qbittorrentapi.Client,
+        *,
+        hashes: list[str],
+        normalized_updates: Mapping[str, object],
+    ) -> None:
+        """Apply per-torrent bandwidth limits for one torrent."""
+        if "download_limit_bytes" in normalized_updates:
+            qb.torrents_set_download_limit(
+                torrent_hashes=hashes,
+                limit=max(
+                    0,
+                    self._safe_int(
+                        normalized_updates.get("download_limit_bytes", 0),
+                        0,
+                    ),
+                ),
+            )
+
+        if "upload_limit_bytes" not in normalized_updates:
+            return
+        qb.torrents_set_upload_limit(
+            torrent_hashes=hashes,
+            limit=max(
+                0,
+                self._safe_int(
+                    normalized_updates.get("upload_limit_bytes", 0),
+                    0,
+                ),
+            ),
+        )
+
     def _all_torrents_list(self) -> list[object]:
         """Return the current torrent snapshot as a plain object list."""
         torrents = getattr(self, "all_torrents", [])
@@ -140,7 +284,7 @@ class NetworkApiController(WindowControllerBase):
         return []
 
     def _build_connection_info(self, config: NormalizedConfig) -> dict[str, object]:
-        """Build qBittorrent connection info from profile config with env var fallback."""
+        """Build qBittorrent connection info with environment fallbacks."""
         # Host URL may contain scheme, basic-auth credentials, and port.
         raw_host = config.get("qb_host") or "localhost"
         scheme_override = _normalize_http_protocol_scheme(
@@ -398,7 +542,7 @@ class NetworkApiController(WindowControllerBase):
             )
 
     def _selected_remote_torrent_filters(self) -> dict[str, object]:
-        """Build remote API filter kwargs from selected status/category/tag/private filters."""
+        """Build remote API filter kwargs from the selected torrent filters."""
         filters: dict[str, object] = {}
 
         status = self._status_filter_value()
@@ -526,7 +670,7 @@ class NetworkApiController(WindowControllerBase):
             )
 
     def _merge_sync_maindata(self, maindata: object) -> list[Any]:
-        """Merge one sync/maindata payload into local torrent map and return ordered list."""
+        """Merge one sync payload into the local torrent map and return it."""
         payload = self._entry_to_dict(maindata)
         full_update = bool(payload.get("full_update", False))
         rid = self._safe_int(payload.get("rid", self._sync_rid), self._sync_rid)
@@ -1113,95 +1257,27 @@ class NetworkApiController(WindowControllerBase):
         """Apply editable properties for a single torrent."""
         start_time = time.time()
         try:
-            normalized_hash = str(torrent_hash or "").strip()
-            if not normalized_hash:
-                raise ValueError("Missing torrent hash")
+            normalized_hash = self._normalize_single_torrent_hash(torrent_hash)
             normalized_updates = dict(updates or {})
             hashes = [normalized_hash]
 
             with self._create_client() as qb:
-                if "name" in normalized_updates:
-                    torrent_name = str(normalized_updates.get("name", "") or "").strip()
-                    if not torrent_name:
-                        raise ValueError("Torrent name cannot be empty")
-                    qb.torrents_rename(
-                        torrent_hash=normalized_hash,
-                        new_torrent_name=torrent_name,
-                    )
-
-                if "auto_tmm" in normalized_updates:
-                    qb.torrents_set_auto_management(
-                        enable=bool(normalized_updates["auto_tmm"]),
-                        torrent_hashes=hashes,
-                    )
-
-                if "category" in normalized_updates:
-                    qb.torrents_set_category(
-                        torrent_hashes=hashes,
-                        category=str(normalized_updates.get("category", "") or ""),
-                    )
-
-                if "tags" in normalized_updates:
-                    tags_text = str(normalized_updates.get("tags", "") or "")
-                    qb.torrents_remove_tags(torrent_hashes=hashes)
-                    if tags_text:
-                        qb.torrents_add_tags(
-                            torrent_hashes=hashes,
-                            tags=tags_text,
-                        )
-
-                if "save_path" in normalized_updates:
-                    save_path = str(normalized_updates.get("save_path", "") or "")
-                    if hasattr(qb, "torrents_set_save_path"):
-                        qb.torrents_set_save_path(
-                            torrent_hashes=hashes,
-                            save_path=save_path,
-                        )
-                    elif save_path:
-                        qb.torrents_set_location(
-                            torrent_hashes=hashes,
-                            location=save_path,
-                        )
-                    else:
-                        raise RuntimeError(
-                            "Clearing save path is not supported by this qBittorrent version."
-                        )
-
-                if "download_path" in normalized_updates:
-                    download_path = str(
-                        normalized_updates.get("download_path", "") or ""
-                    )
-                    if hasattr(qb, "torrents_set_download_path"):
-                        qb.torrents_set_download_path(
-                            torrent_hashes=hashes,
-                            download_path=download_path,
-                        )
-                    else:
-                        raise RuntimeError(
-                            "Editing incomplete save path is not supported by this qBittorrent version."
-                        )
-
-                if "download_limit_bytes" in normalized_updates:
-                    qb.torrents_set_download_limit(
-                        torrent_hashes=hashes,
-                        limit=max(
-                            0,
-                            self._safe_int(
-                                normalized_updates.get("download_limit_bytes", 0), 0
-                            ),
-                        ),
-                    )
-
-                if "upload_limit_bytes" in normalized_updates:
-                    qb.torrents_set_upload_limit(
-                        torrent_hashes=hashes,
-                        limit=max(
-                            0,
-                            self._safe_int(
-                                normalized_updates.get("upload_limit_bytes", 0), 0
-                            ),
-                        ),
-                    )
+                self._apply_single_torrent_text_edits(
+                    qb,
+                    normalized_hash=normalized_hash,
+                    hashes=hashes,
+                    normalized_updates=normalized_updates,
+                )
+                self._apply_single_torrent_path_edits(
+                    qb,
+                    hashes=hashes,
+                    normalized_updates=normalized_updates,
+                )
+                self._apply_single_torrent_limit_edits(
+                    qb,
+                    hashes=hashes,
+                    normalized_updates=normalized_updates,
+                )
 
             elapsed = time.time() - start_time
             return api_task_result(data=True, elapsed=elapsed, success=True)
@@ -1774,8 +1850,10 @@ class NetworkApiController(WindowControllerBase):
                 self._set_status(f"Connection error: {error}")
                 self.txt_general_details.setPlainText(
                     f"Failed to connect to qBittorrent:\n\n{error}\n\n"
-                    f"Host: {self.qb_conn_info.get('host')}:{self.qb_conn_info.get('port')}\n"
-                    f"Check your configuration and ensure qBittorrent WebUI is accessible."
+                    f"Host: {self.qb_conn_info.get('host')}:"
+                    f"{self.qb_conn_info.get('port')}\n"
+                    "Check your configuration and ensure qBittorrent WebUI is "
+                    "accessible."
                 )
                 # Continue anyway - load tags with empty categories
                 self.category_details = {}
@@ -1952,7 +2030,7 @@ class NetworkApiController(WindowControllerBase):
     def _select_first_torrent_after_refresh(
         self, previous_selected_hash: str | None = None
     ) -> None:
-        """Select/restore one row after refresh without overriding a valid existing selection."""
+        """Select or restore one row after refresh without clobbering selection."""
         if self.tbl_torrents.rowCount() <= 0:
             return
 
@@ -1980,7 +2058,8 @@ class NetworkApiController(WindowControllerBase):
             self.tbl_torrents.selectRow(0)
             return
 
-        # Prior selection still present: keep if already selected, otherwise restore by hash.
+        # Prior selection still present: keep it if already selected, otherwise
+        # restore it by hash.
         if current_hash == previous_hash:
             return
         self.tbl_torrents.clearSelection()
@@ -2104,7 +2183,7 @@ class NetworkApiController(WindowControllerBase):
         task_name: str,
         elapsed_seconds: float,
     ) -> None:
-        """Increase auto-refresh interval when one measured cycle exceeds current interval."""
+        """Increase auto-refresh interval when a cycle exceeds the current one."""
         elapsed = self._safe_float(elapsed_seconds, 0.0)
         if elapsed <= 0:
             return
@@ -2187,7 +2266,8 @@ class NetworkApiController(WindowControllerBase):
                 "DEBUG",
                 (
                     "Refresh skipped: API queue busy "
-                    f"(active={active_task or 'none'}, pending={pending_name or 'none'})"
+                    f"(active={active_task or 'none'}, "
+                    f"pending={pending_name or 'none'})"
                 ),
             )
             return

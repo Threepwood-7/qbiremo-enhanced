@@ -250,7 +250,8 @@ def _remove_settings_managed_config_keys(normalized: dict[str, object]) -> None:
     for key in CONFIG_VALIDATION_SETTINGS_MANAGED_KEYS:
         if key in normalized:
             _config_validation_warn(
-                f"'{key}' is ignored in runtime profile config; managed via UI settings."
+                f"'{key}' is ignored in runtime profile config; managed via UI "
+                "settings."
             )
             normalized.pop(key, None)
 
@@ -299,17 +300,20 @@ def _normalize_http_timeout_value(normalized: dict[str, object]) -> None:
             timeout_seconds = int(raw_timeout)
         except (TypeError, ValueError, OverflowError):
             _config_validation_warn(
-                f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
+                f"'http_timeout' invalid ({raw_timeout!r}); using "
+                f"{DEFAULT_HTTP_TIMEOUT_SECONDS}."
             )
             timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
     else:
         _config_validation_warn(
-            f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
+            f"'http_timeout' invalid ({raw_timeout!r}); using "
+            f"{DEFAULT_HTTP_TIMEOUT_SECONDS}."
         )
         timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
     if timeout_seconds <= 0:
         _config_validation_warn(
-            f"'http_timeout' invalid ({raw_timeout!r}); using {DEFAULT_HTTP_TIMEOUT_SECONDS}."
+            f"'http_timeout' invalid ({raw_timeout!r}); using "
+            f"{DEFAULT_HTTP_TIMEOUT_SECONDS}."
         )
         timeout_seconds = DEFAULT_HTTP_TIMEOUT_SECONDS
     normalized["http_timeout"] = int(timeout_seconds)
@@ -352,7 +356,8 @@ def _normalize_title_bar_speed_format_value(normalized: dict[str, object]) -> No
     )
     if not isinstance(raw_title_fmt, str) or not raw_title_fmt.strip():
         _config_validation_warn(
-            f"'title_bar_speed_format' invalid; using default {DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
+            "'title_bar_speed_format' invalid; using default "
+            f"{DEFAULT_TITLE_BAR_SPEED_FORMAT!r}."
         )
         title_fmt = DEFAULT_TITLE_BAR_SPEED_FORMAT
     else:
@@ -381,7 +386,8 @@ def validate_and_normalize_config(config: object, profile_id: str) -> Normalized
     """Validate config values and return one sanitized config mapping."""
     if not isinstance(config, dict):
         logger.warning(
-            "Config validation: root config from profile %s is not a mapping. Using defaults.",
+            "Config validation: root config from profile %s is not a mapping. "
+            "Using defaults.",
             profile_id,
         )
         config = {}

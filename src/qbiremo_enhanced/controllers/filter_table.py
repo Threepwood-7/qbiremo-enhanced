@@ -454,7 +454,7 @@ class FilterTableController(WindowControllerBase):
         self._set_status(f"Applied view: {name}")
 
     def _save_current_torrent_view(self) -> None:
-        """Prompt for a name and save current column visibility/widths as a named view."""
+        """Save current column visibility and widths as a named view."""
         name, ok = QInputDialog.getText(
             cast("Any", self.window),
             "Save Torrent View",
@@ -493,7 +493,7 @@ class FilterTableController(WindowControllerBase):
         self.tbl_torrents.resizeColumnsToContents()
 
     def _count_status_filter_matches(self, status_filter: str) -> int:
-        """Count torrents matching one status filter using current in-memory torrent list."""
+        """Count torrents matching one status filter in the current snapshot."""
         self._ensure_filter_count_cache()
         status = str(status_filter or "all").strip().lower()
         return self._safe_int(
@@ -501,7 +501,7 @@ class FilterTableController(WindowControllerBase):
         )
 
     def _count_category_filter_matches(self, category_filter: object) -> int:
-        """Count torrents matching one category filter using current in-memory torrent list."""
+        """Count torrents matching one category filter in the current snapshot."""
         self._ensure_filter_count_cache()
         return self._safe_int(
             getattr(self, "_category_filter_counts", {}).get(category_filter, 0),
@@ -509,7 +509,7 @@ class FilterTableController(WindowControllerBase):
         )
 
     def _count_tag_filter_matches(self, tag_filter: object) -> int:
-        """Count torrents matching one tag filter using current in-memory torrent list."""
+        """Count torrents matching one tag filter in the current snapshot."""
         self._ensure_filter_count_cache()
         return self._safe_int(
             getattr(self, "_tag_filter_counts", {}).get(tag_filter, 0), 0
@@ -543,7 +543,7 @@ class FilterTableController(WindowControllerBase):
         return f"{label} ({count})"
 
     def _update_filter_tree_count_labels(self) -> None:
-        """Refresh status/category/tag tree labels using latest in-memory torrent snapshot."""
+        """Refresh filter-tree counts from the latest in-memory torrent snapshot."""
         if not hasattr(self, "tree_filters"):
             return
         try:
@@ -726,7 +726,7 @@ class FilterTableController(WindowControllerBase):
         self.current_file_filter = normalize_filter_pattern(self.txt_file_filter.text())
 
     def _apply_sync_local_filters(self, torrents: list[object]) -> list[object]:
-        """Apply local status/category/tag filters when sync data is unfiltered remotely."""
+        """Apply local filters when sync data is not filtered remotely."""
         filtered = torrents
         status_filter = self._status_filter_value()
         if status_filter != "all":
@@ -1052,6 +1052,44 @@ class FilterTableController(WindowControllerBase):
         except ValueError:
             return text
 
+    @staticmethod
+    def _torrent_raw_value(
+        torrent: object,
+        key: str,
+        default: object = None,
+    ) -> object:
+        """Read one attribute from torrent object with fallback."""
+        return getattr(torrent, key, default)
+
+    @staticmethod
+    def _normalize_torrent_bool(value: object) -> bool | None:
+        """Normalize bool-like values, returning None when undecidable."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        return None
+
+    @staticmethod
+    def _format_torrent_flag_cell(
+        value: bool | None,
+        *,
+        align_center: Qt.AlignmentFlag,
+    ) -> tuple[str, Qt.AlignmentFlag, float]:
+        """Render tri-state boolean cells using Yes/No/blank text."""
+        if value is True:
+            return "Yes", align_center, 1.0
+        if value is False:
+            return "No", align_center, 0.0
+        return "", align_center, -1.0
+
     def _format_torrent_table_cell(
         self,
         torrent: object,
@@ -1062,25 +1100,6 @@ class FilterTableController(WindowControllerBase):
         align_right = Qt.AlignmentFlag.AlignRight
         align_center = Qt.AlignmentFlag.AlignCenter
 
-        def _raw_value(key: str, default: object = None) -> object:
-            """Read one attribute from torrent object with fallback."""
-            return getattr(torrent, key, default)
-
-        def _as_bool(value: object) -> bool | None:
-            """Normalize bool-like values, returning None when undecidable."""
-            if value is None:
-                return None
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, (int, float)):
-                return bool(value)
-            text = str(value).strip().lower()
-            if text in {"1", "true", "yes", "on"}:
-                return True
-            if text in {"0", "false", "no", "off"}:
-                return False
-            return None
-
         if column_key in {
             "hash",
             "name",
@@ -1090,7 +1109,11 @@ class FilterTableController(WindowControllerBase):
             "content_path",
             "magnet_uri",
         }:
-            return str(_raw_value(column_key, "") or ""), align_left, None
+            return (
+                str(self._torrent_raw_value(torrent, column_key, "") or ""),
+                align_left,
+                None,
+            )
         if column_key in {
             "size",
             "total_size",
@@ -1101,24 +1124,24 @@ class FilterTableController(WindowControllerBase):
             "downloaded_session",
             "uploaded_session",
         }:
-            raw = self._safe_int(_raw_value(column_key, 0), 0)
+            raw = self._safe_int(self._torrent_raw_value(torrent, column_key, 0), 0)
             return (
                 format_size_mode(raw, self.display_size_mode),
                 align_right,
                 float(raw),
             )
         if column_key == "progress":
-            raw = self._safe_float(_raw_value("progress", 0), 0.0)
+            raw = self._safe_float(self._torrent_raw_value(torrent, "progress", 0), 0.0)
             return f"{raw * 100:.1f}%", align_right, float(raw)
         if column_key in {"dlspeed", "upspeed", "dl_limit", "up_limit"}:
-            raw = self._safe_int(_raw_value(column_key, 0), 0)
+            raw = self._safe_int(self._torrent_raw_value(torrent, column_key, 0), 0)
             return (
                 format_speed_mode(raw, self.display_speed_mode),
                 align_right,
                 float(raw),
             )
         if column_key in {"ratio", "availability", "max_ratio", "ratio_limit"}:
-            raw = self._safe_float(_raw_value(column_key, 0), 0.0)
+            raw = self._safe_float(self._torrent_raw_value(torrent, column_key, 0), 0.0)
             return format_float(raw), align_right, float(raw)
         if column_key in {
             "num_seeds",
@@ -1128,13 +1151,13 @@ class FilterTableController(WindowControllerBase):
             "num_files",
             "priority",
         }:
-            raw = self._safe_int(_raw_value(column_key, 0), 0)
+            raw = self._safe_int(self._torrent_raw_value(torrent, column_key, 0), 0)
             return format_int(raw), align_right, float(raw)
         if column_key in {"eta", "reannounce", "seeding_time", "time_active"}:
-            raw = self._safe_int(_raw_value(column_key, 0), 0)
+            raw = self._safe_int(self._torrent_raw_value(torrent, column_key, 0), 0)
             return format_eta(raw), align_right, float(raw)
         if column_key in {"seeding_time_limit", "max_seeding_time"}:
-            raw = self._safe_int(_raw_value(column_key, 0), 0)
+            raw = self._safe_int(self._torrent_raw_value(torrent, column_key, 0), 0)
             if raw < 0:
                 return "Unlimited", align_right, float(raw)
             return format_eta(raw), align_right, float(raw)
@@ -1144,14 +1167,14 @@ class FilterTableController(WindowControllerBase):
             "last_activity",
             "seen_complete",
         }:
-            raw = self._safe_int(_raw_value(column_key, 0), 0)
+            raw = self._safe_int(self._torrent_raw_value(torrent, column_key, 0), 0)
             return format_datetime(raw), align_left, float(raw)
         if column_key == "tags":
-            tags_text = ", ".join(parse_tags(_raw_value("tags", None)))
+            tags_text = ", ".join(parse_tags(self._torrent_raw_value(torrent, "tags")))
             return tags_text, align_left, None
         if column_key == "tracker":
             tracker_text = self._tracker_display_text(
-                str(_raw_value("tracker", "") or "")
+                str(self._torrent_raw_value(torrent, "tracker", "") or "")
             )
             return tracker_text, align_left, None
         if column_key in {
@@ -1162,14 +1185,18 @@ class FilterTableController(WindowControllerBase):
             "super_seeding",
             "private",
         }:
-            bool_value = _as_bool(_raw_value(column_key, None))
-            if bool_value is True:
-                return "Yes", align_center, 1.0
-            if bool_value is False:
-                return "No", align_center, 0.0
-            return "", align_center, -1.0
+            return self._format_torrent_flag_cell(
+                self._normalize_torrent_bool(
+                    self._torrent_raw_value(torrent, column_key)
+                ),
+                align_center=align_center,
+            )
 
-        return str(_raw_value(column_key, "") or ""), align_left, None
+        return (
+            str(self._torrent_raw_value(torrent, column_key, "") or ""),
+            align_left,
+            None,
+        )
 
     def _update_torrents_table(self) -> None:
         """Update the torrents table with filtered data."""

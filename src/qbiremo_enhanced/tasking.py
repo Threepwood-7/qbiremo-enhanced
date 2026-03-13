@@ -90,7 +90,7 @@ class Worker(QRunnable):
         self.is_cancelled = True
 
     def _is_cancelled_now(self) -> bool:
-        """Read cancellation state with a callable boundary for thread-driven updates."""
+        """Read cancellation state through one callable thread-safe boundary."""
         return bool(self.is_cancelled)
 
     def _safe_emit(self, signal: _EmittableSignal, *args: object) -> None:

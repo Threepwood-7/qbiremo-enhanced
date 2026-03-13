@@ -282,7 +282,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         return candidate
 
     def _create_new_profile_from_current_config(self) -> None:
-        """Create one new profile from current config and launch it in a new instance."""
+        """Create one new profile from current config and launch a new instance."""
         config = self._config_map()
         current_profile = normalize_profile_id(
             config.get("_profile_id", DEFAULT_PROFILE_ID) or DEFAULT_PROFILE_ID
@@ -305,7 +305,10 @@ class ActionsTaxonomyController(WindowControllerBase):
         new_profile_id, payload = wizard_result
         normalized_profile = normalize_profile_id(new_profile_id)
         if normalized_profile in existing_profiles:
-            message = f"Profile '{normalized_profile}' already exists. Choose a unique profile ID."
+            message = (
+                f"Profile '{normalized_profile}' already exists. "
+                "Choose a unique profile ID."
+            )
             QMessageBox.warning(self._window_parent(), "New Profile", message)
             self._log("WARNING", message)
             self._set_status(message)
@@ -409,7 +412,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         return name_map
 
     def _export_selected_torrents(self) -> None:
-        """Prompt destination directory and export selected torrents as .torrent files."""
+        """Prompt for a destination directory and export `.torrent` files."""
         torrent_hashes = self._get_selected_torrent_hashes()
         if not torrent_hashes:
             self._set_status("Select at least one torrent to export")
@@ -1742,7 +1745,10 @@ class ActionsTaxonomyController(WindowControllerBase):
         reply = QMessageBox.question(
             self._window_parent(),
             "Remove Torrent(s)",
-            f"Remove {len(torrent_hashes)} selected torrent(s) from qBittorrent and keep data on disk?",
+            (
+                f"Remove {len(torrent_hashes)} selected torrent(s) from "
+                "qBittorrent and keep data on disk?"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1765,7 +1771,10 @@ class ActionsTaxonomyController(WindowControllerBase):
         reply = QMessageBox.question(
             self._window_parent(),
             "Remove And Delete Data",
-            f"Remove {len(torrent_hashes)} selected torrent(s) and delete data from disk?",
+            (
+                f"Remove {len(torrent_hashes)} selected torrent(s) and delete "
+                "data from disk?"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1820,7 +1829,10 @@ class ActionsTaxonomyController(WindowControllerBase):
         reply = QMessageBox.question(
             self._window_parent(),
             "Delete Torrent(s)",
-            f"Delete {len(torrent_hashes)} selected torrent(s) and their files from disk?",
+            (
+                f"Delete {len(torrent_hashes)} selected torrent(s) and their "
+                "files from disk?"
+            ),
             QMessageBox.StandardButton.Yes
             | QMessageBox.StandardButton.No
             | QMessageBox.StandardButton.Cancel,

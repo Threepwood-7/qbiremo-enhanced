@@ -183,7 +183,7 @@ class MainWindow(QMainWindow):
             return int(default)
 
     def _install_controller_methods(self, controller_cls: type[object]) -> None:
-        """Bind controller class methods onto this window when no local override exists."""
+        """Bind controller methods onto the window when no local override exists."""
         for name, raw_attr in controller_cls.__dict__.items():
             descriptor = raw_attr
             if name.startswith("__"):
@@ -1624,7 +1624,10 @@ class MainWindow(QMainWindow):
             self._log("INFO", "Starting initial data load...")
             self._log(
                 "INFO",
-                f"Connecting to qBittorrent at {self.qb_conn_info['host']}:{self.qb_conn_info['port']}",
+                (
+                    "Connecting to qBittorrent at "
+                    f"{self.qb_conn_info['host']}:{self.qb_conn_info['port']}"
+                ),
             )
             self._show_progress("Loading categories...")
 
@@ -1683,7 +1686,9 @@ def main() -> None:
         dest="config_dir",
         required=False,
         default=None,
-        help="Override QSettings INI root directory (takes precedence over CONFIG_DIR).",
+        help=(
+            "Override QSettings INI root directory (takes precedence over CONFIG_DIR)."
+        ),
     )
     parser.add_argument(
         "--data-dir",

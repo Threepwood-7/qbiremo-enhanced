@@ -1149,6 +1149,38 @@ class AppPreferencesDialog(QDialog):
         raise ValueError("expected boolean (true/false)")
 
     @staticmethod
+    def _parse_json_object_text(stripped: str) -> dict[str, object]:
+        """Parse one JSON object payload from edited text."""
+        if not stripped:
+            return {}
+        parsed = json.loads(stripped)
+        parsed_dict = AppPreferencesDialog._as_object_dict(parsed)
+        if not parsed_dict:
+            raise ValueError("expected JSON object")
+        return parsed_dict
+
+    @staticmethod
+    def _parse_json_array_text(stripped: str) -> list[object]:
+        """Parse one JSON array payload from edited text."""
+        if not stripped:
+            return []
+        parsed = json.loads(stripped)
+        parsed_list = AppPreferencesDialog._as_object_list(parsed)
+        if not parsed_list:
+            raise ValueError("expected JSON array")
+        return parsed_list
+
+    @staticmethod
+    def _parse_nullable_json_value(raw: str, stripped: str) -> object:
+        """Parse nullable JSON values, falling back to raw text on failure."""
+        if stripped.lower() in {"", "null", "none"}:
+            return None
+        try:
+            return json.loads(stripped)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return raw
+
+    @staticmethod
     def _parse_value_by_example(text: str, example: object) -> object:
         """Parse editor text using original value type as parsing guide."""
         raw = str(text or "")
@@ -1167,28 +1199,11 @@ class AppPreferencesDialog(QDialog):
                 raise ValueError("expected float")
             return float(stripped)
         if example_dict:
-            if not stripped:
-                return {}
-            parsed = json.loads(stripped)
-            parsed_dict = AppPreferencesDialog._as_object_dict(parsed)
-            if not parsed_dict:
-                raise ValueError("expected JSON object")
-            return parsed_dict
+            return AppPreferencesDialog._parse_json_object_text(stripped)
         if example_list:
-            if not stripped:
-                return []
-            parsed = json.loads(stripped)
-            parsed_list = AppPreferencesDialog._as_object_list(parsed)
-            if not parsed_list:
-                raise ValueError("expected JSON array")
-            return parsed_list
+            return AppPreferencesDialog._parse_json_array_text(stripped)
         if example is None:
-            if stripped.lower() in {"", "null", "none"}:
-                return None
-            try:
-                return json.loads(stripped)
-            except (TypeError, ValueError, json.JSONDecodeError):
-                return raw
+            return AppPreferencesDialog._parse_nullable_json_value(raw, stripped)
         if isinstance(example, str):
             return raw
         try:
@@ -1323,7 +1338,8 @@ class FriendlyAddPreferencesDialog(QDialog):
         layout = QVBoxLayout(self)
 
         self.lbl_summary = QLabel(
-            "Friendly editor for common settings. For advanced keys, use Edit App Preferences."
+            "Friendly editor for common settings. For advanced keys, use "
+            "Edit App Preferences."
         )
         self.lbl_summary.setWordWrap(True)
         layout.addWidget(self.lbl_summary)

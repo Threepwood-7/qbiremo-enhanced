@@ -281,10 +281,20 @@ class SessionTimelineDialog(QDialog):
             self.lbl_summary.setText("No timeline samples yet.")
             return
         last = samples[-1]
+        down_text = format_speed_mode(
+            int(last.get("down_bps", 0)),
+            mode="human_readable",
+        )
+        up_text = format_speed_mode(
+            int(last.get("up_bps", 0)),
+            mode="human_readable",
+        )
         summary = (
             f"Samples: {len(samples)}   "
-            f"DL: {format_speed_mode(int(last.get('down_bps', 0)), mode='human_readable')}   "
-            f"UL: {format_speed_mode(int(last.get('up_bps', 0)), mode='human_readable')}   "
+            "DL: "
+            f"{down_text}   "
+            "UL: "
+            f"{up_text}   "
             f"Active: {int(last.get('active_count', 0))}   "
             f"Alt Mode: {'On' if bool(last.get('alt_enabled', False)) else 'Off'}"
         )

@@ -215,7 +215,7 @@ class DetailsContentController(WindowControllerBase):
 
     @staticmethod
     def _details_table_has_data_rows(table: QTableWidget) -> bool:
-        """Return True when details table contains actual data rows (not info placeholder)."""
+        """Return True when the table contains data rows, not just a placeholder."""
         if table.rowCount() <= 0 or table.columnCount() <= 0:
             return False
         if table.columnCount() == 1:
@@ -412,7 +412,8 @@ class DetailsContentController(WindowControllerBase):
                 key_text = html.escape(str(key))
                 value_text = html.escape(self._display_detail_value(value))
                 chunks.append(
-                    f'<tr><td class="key">{key_text}</td><td class="value">{value_text}</td></tr>'
+                    f'<tr><td class="key">{key_text}</td><td class="value">'
+                    f"{value_text}</td></tr>"
                 )
             chunks.append("</table>")
         chunks.append("</body></html>")
@@ -992,11 +993,17 @@ class DetailsContentController(WindowControllerBase):
                     [
                         (
                             "Seeds",
-                            f"{getattr(torrent, 'num_seeds', 0)} ({getattr(torrent, 'num_complete', 0)})",
+                            (
+                                f"{getattr(torrent, 'num_seeds', 0)} "
+                                f"({getattr(torrent, 'num_complete', 0)})"
+                            ),
                         ),
                         (
                             "Peers",
-                            f"{getattr(torrent, 'num_leechs', 0)} ({getattr(torrent, 'num_incomplete', 0)})",
+                            (
+                                f"{getattr(torrent, 'num_leechs', 0)} "
+                                f"({getattr(torrent, 'num_incomplete', 0)})"
+                            ),
                         ),
                     ],
                 ),
