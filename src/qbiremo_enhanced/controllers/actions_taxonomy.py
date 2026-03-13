@@ -59,6 +59,151 @@ from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
 class ActionsTaxonomyController(WindowControllerBase):
     """Handle user actions, taxonomy flows, and preference dialogs."""
 
+    def _window_parent(self) -> QWidget | None:
+        """Return the owning Qt window as a widget parent when available."""
+        return cast("QWidget | None", getattr(self, "window", None))
+
+    def _config_map(self) -> dict[str, object]:
+        """Return runtime config as a plain dict for typed lookups."""
+        config = getattr(self, "config", {})
+        if not isinstance(config, dict):
+            return {}
+        return cast("dict[str, object]", config)
+
+    def _category_names(self) -> list[str]:
+        """Return cached category names as plain strings."""
+        categories = getattr(self, "categories", [])
+        if not isinstance(categories, list):
+            return []
+        return [str(category) for category in cast("list[object]", categories)]
+
+    def _tag_names(self) -> list[str]:
+        """Return cached tag names as plain strings."""
+        tags = getattr(self, "tags", [])
+        if not isinstance(tags, list):
+            return []
+        return [str(tag) for tag in cast("list[object]", tags)]
+
+    def _filtered_torrents_list(self) -> list[object]:
+        """Return currently filtered torrents as a plain list."""
+        torrents = getattr(self, "filtered_torrents", [])
+        if not isinstance(torrents, list):
+            return []
+        return list(cast("list[object]", torrents))
+
+    def _all_torrents_list(self) -> list[object]:
+        """Return all loaded torrents as a plain list."""
+        torrents = getattr(self, "all_torrents", [])
+        if not isinstance(torrents, list):
+            return []
+        return list(cast("list[object]", torrents))
+
+    @staticmethod
+    def _object_dict(value: object) -> dict[str, object]:
+        """Normalize one object to a plain string-key dict when possible."""
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(key): entry
+            for key, entry in cast("dict[object, object]", value).items()
+        }
+
+    @staticmethod
+    def _string_list(value: object) -> list[str]:
+        """Normalize one object to a plain string list."""
+        if not isinstance(value, list):
+            return []
+        return [str(entry) for entry in cast("list[object]", value)]
+
+    @staticmethod
+    def _result_error(result: object) -> str:
+        """Extract one readable error message from an API task result."""
+        return str(
+            ActionsTaxonomyController._object_dict(result).get("error", "Unknown error")
+            or "Unknown error"
+        )
+
+    @staticmethod
+    def _result_elapsed(result: object) -> object:
+        """Extract elapsed timing value for logging helpers."""
+        return ActionsTaxonomyController._object_dict(result).get("elapsed", 0)
+
+    @staticmethod
+    def _result_data_dict(result: object) -> dict[str, object]:
+        """Extract dict payload data from one API task result."""
+        return ActionsTaxonomyController._object_dict(
+            ActionsTaxonomyController._object_dict(result).get("data", {})
+        )
+
+    def _torrent_action_callback(self, action_name: str) -> Callable[[object], None]:
+        """Build a typed queue callback for bool-result torrent actions."""
+
+        def _on_result(result: object) -> None:
+            self._on_torrent_action_done(
+                action_name, cast("APITaskResult[bool]", result)
+            )
+
+        return _on_result
+
+    def _content_action_callback(self, action_name: str) -> Callable[[object], None]:
+        """Build a typed queue callback for content mutation actions."""
+
+        def _on_result(result: object) -> None:
+            self._on_content_action_done(
+                action_name, cast("APITaskResult[object]", result)
+            )
+
+        return _on_result
+
+    def _global_bandwidth_action_callback(
+        self, action_name: str
+    ) -> Callable[[object], None]:
+        """Build a typed queue callback for global bandwidth actions."""
+
+        def _on_result(result: object) -> None:
+            self._on_global_bandwidth_action_done(
+                action_name,
+                cast("APITaskResult[bool]", result),
+            )
+
+        return _on_result
+
+    def _taxonomy_action_callback(self, action_name: str) -> Callable[[object], None]:
+        """Build a typed queue callback for taxonomy mutation actions."""
+
+        def _on_result(result: object) -> None:
+            self._on_taxonomy_action_done(
+                action_name, cast("APITaskResult[bool]", result)
+            )
+
+        return _on_result
+
+    def _taxonomy_reload_categories_callback(
+        self, action_name: str
+    ) -> Callable[[object], None]:
+        """Build typed callback for taxonomy category reload step."""
+
+        def _on_result(result: object) -> None:
+            self._on_taxonomy_categories_reloaded(
+                action_name,
+                cast("APITaskResult[object]", result),
+            )
+
+        return _on_result
+
+    def _taxonomy_reload_tags_callback(
+        self, action_name: str
+    ) -> Callable[[object], None]:
+        """Build typed callback for taxonomy tag reload step."""
+
+        def _on_result(result: object) -> None:
+            self._on_taxonomy_tags_reloaded(
+                action_name,
+                cast("APITaskResult[list[str]]", result),
+            )
+
+        return _on_result
+
     @staticmethod
     def _build_new_instance_command(
         profile_id: str, instance_counter: int | None = None
@@ -101,35 +246,23 @@ class ActionsTaxonomyController(WindowControllerBase):
 
     def _launch_new_instance_current_config(self) -> None:
         """Launch a new app instance using the current runtime profile."""
+        config = self._config_map()
         profile_id = normalize_profile_id(
-            (
-                self.config.get("_profile_id")
-                if isinstance(self.config, dict)
-                else DEFAULT_PROFILE_ID
-            )
-            or DEFAULT_PROFILE_ID
+            config.get("_profile_id", DEFAULT_PROFILE_ID) or DEFAULT_PROFILE_ID
         )
-        counter = _normalize_instance_counter(
-            self.config.get("_instance_counter", 1)
-            if isinstance(self.config, dict)
-            else 1
-        )
+        counter = _normalize_instance_counter(config.get("_instance_counter", 1))
         self._launch_new_instance_with_profile(profile_id, counter)
 
     def _launch_new_instance_from_config(self) -> None:
         """Launch a new app instance after selecting a profile id."""
+        config = self._config_map()
         current_profile = normalize_profile_id(
-            (
-                self.config.get("_profile_id")
-                if isinstance(self.config, dict)
-                else DEFAULT_PROFILE_ID
-            )
-            or DEFAULT_PROFILE_ID
+            config.get("_profile_id", DEFAULT_PROFILE_ID) or DEFAULT_PROFILE_ID
         )
         selected_profile = prompt_profile_selection(
             list_profile_ids(),
             current_profile=current_profile,
-            parent=self,
+            parent=self._window_parent(),
         )
         if not selected_profile:
             return
@@ -150,13 +283,9 @@ class ActionsTaxonomyController(WindowControllerBase):
 
     def _create_new_profile_from_current_config(self) -> None:
         """Create one new profile from current config and launch it in a new instance."""
+        config = self._config_map()
         current_profile = normalize_profile_id(
-            (
-                self.config.get("_profile_id")
-                if isinstance(self.config, dict)
-                else DEFAULT_PROFILE_ID
-            )
-            or DEFAULT_PROFILE_ID
+            config.get("_profile_id", DEFAULT_PROFILE_ID) or DEFAULT_PROFILE_ID
         )
         existing_profiles = {
             normalize_profile_id(profile) for profile in list_profile_ids()
@@ -164,11 +293,11 @@ class ActionsTaxonomyController(WindowControllerBase):
         suggested_profile = self._suggest_new_profile_id(
             current_profile, existing_profiles
         )
-        initial_config = dict(self.config) if isinstance(self.config, dict) else {}
+        initial_config = dict(config)
         wizard_result = run_profile_setup_wizard(
             suggested_profile,
             initial_config,
-            parent=self,
+            parent=self._window_parent(),
         )
         if wizard_result is None:
             return
@@ -177,7 +306,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         normalized_profile = normalize_profile_id(new_profile_id)
         if normalized_profile in existing_profiles:
             message = f"Profile '{normalized_profile}' already exists. Choose a unique profile ID."
-            QMessageBox.warning(self, "New Profile", message)
+            QMessageBox.warning(self._window_parent(), "New Profile", message)
             self._log("WARNING", message)
             self._set_status(message)
             return
@@ -202,7 +331,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             return
 
         # Use a standalone top-level window so it appears in the taskbar.
-        dialog = AddTorrentDialog(self.categories, self.tags, None)
+        dialog = AddTorrentDialog(self._category_names(), self._tag_names(), None)
         dialog.setWindowModality(Qt.WindowModality.NonModal)
         dialog.setWindowFlag(Qt.WindowType.Window, True)
         dialog.setWindowFlag(Qt.WindowType.Tool, False)
@@ -245,7 +374,7 @@ class ActionsTaxonomyController(WindowControllerBase):
 
     @staticmethod
     def _unique_export_file_path(
-        export_dir: Path, base_name: str, torrent_hash: str, used_names: set
+        export_dir: Path, base_name: str, torrent_hash: str, used_names: set[str]
     ) -> Path:
         """Return a unique destination file path for one exported torrent file."""
         sanitized_base = ActionsTaxonomyController._sanitize_export_filename(
@@ -288,7 +417,7 @@ class ActionsTaxonomyController(WindowControllerBase):
 
         initial_dir = str(Path.home())
         export_dir = QFileDialog.getExistingDirectory(
-            self,
+            self._window_parent(),
             "Select Export Directory",
             initial_dir,
         )
@@ -310,18 +439,20 @@ class ActionsTaxonomyController(WindowControllerBase):
             name_map,
         )
 
-    def _on_export_selected_torrents_done(self, result: dict) -> None:
+    def _on_export_selected_torrents_done(
+        self, result: APITaskResult[dict[str, object]]
+    ) -> None:
         """Handle completion of selected-torrent export action."""
-        data = result.get("data", {}) or {}
-        exported = list(data.get("exported", []) or [])
-        failed = dict(data.get("failed", {}) or {})
+        data = self._result_data_dict(cast("APITaskResult[object]", result))
+        exported = self._string_list(data.get("exported", []))
+        failed = self._object_dict(data.get("failed", {}))
         exported_count = len(exported)
         failed_count = len(failed)
         if result.get("success"):
             self._log(
                 "INFO",
                 f"Export Torrent succeeded ({exported_count} file(s))",
-                result.get("elapsed", 0),
+                self._result_elapsed(cast("APITaskResult[object]", result)),
             )
             self._set_status(
                 "Exported 1 torrent file"
@@ -329,9 +460,11 @@ class ActionsTaxonomyController(WindowControllerBase):
                 else f"Exported {exported_count} torrent files"
             )
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             self._log(
-                "ERROR", f"Export Torrent failed: {error}", result.get("elapsed", 0)
+                "ERROR",
+                f"Export Torrent failed: {error}",
+                self._result_elapsed(cast("APITaskResult[object]", result)),
             )
             if exported_count > 0:
                 self._set_status(
@@ -346,10 +479,10 @@ class ActionsTaxonomyController(WindowControllerBase):
         if not torrent_hash:
             return None
 
-        for torrent in self.filtered_torrents:
+        for torrent in self._filtered_torrents_list():
             if str(getattr(torrent, "hash", "")) == torrent_hash:
                 return torrent
-        for torrent in self.all_torrents:
+        for torrent in self._all_torrents_list():
             if str(getattr(torrent, "hash", "")) == torrent_hash:
                 return torrent
         return None
@@ -426,8 +559,6 @@ class ActionsTaxonomyController(WindowControllerBase):
 
     def _on_torrent_table_item_double_clicked(self, item: QTableWidgetItem) -> None:
         """Open local torrent directory for the row that was double-clicked."""
-        if item is None:
-            return
         hash_item = self.tbl_torrents.item(item.row(), 0)
         torrent_hash = hash_item.text().strip() if hash_item else ""
         self._open_torrent_location_by_hash(torrent_hash)
@@ -452,9 +583,13 @@ class ActionsTaxonomyController(WindowControllerBase):
         item_data = item.data(0, Qt.ItemDataRole.UserRole)
         if not isinstance(item_data, dict):
             return
+        data_map = {
+            str(key): value
+            for key, value in cast("dict[object, object]", item_data).items()
+        }
 
-        relative_path = str(item_data.get("relative_path", "") or "").strip()
-        is_file = bool(item_data.get("is_file", False))
+        relative_path = str(data_map.get("relative_path", "") or "").strip()
+        is_file = bool(data_map.get("is_file", False))
         if not relative_path:
             return
 
@@ -521,7 +656,7 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _get_selected_torrent_hashes(self) -> list[str]:
         """Get unique selected torrent hashes preserving current row order."""
         hashes: list[str] = []
-        seen = set()
+        seen: set[str] = set()
 
         sel_model = self.tbl_torrents.selectionModel()
         if sel_model:
@@ -533,44 +668,56 @@ class ActionsTaxonomyController(WindowControllerBase):
                     hashes.append(torrent_hash)
         return hashes
 
-    def _on_torrent_action_done(self, action_name: str, result: dict) -> None:
+    def _on_torrent_action_done(
+        self, action_name: str, result: APITaskResult[bool]
+    ) -> None:
         """Generic callback for pause/resume/delete actions."""
         if result.get("success"):
-            self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
+            self._log("INFO", f"{action_name} succeeded", self._result_elapsed(result))
             QTimer.singleShot(500, self._refresh_torrents)
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             self._log(
-                "ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0)
+                "ERROR", f"{action_name} failed: {error}", self._result_elapsed(result)
             )
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
 
-    def _on_ban_peer_done(self, endpoint: str, result: dict) -> None:
+    def _on_ban_peer_done(
+        self, endpoint: str, result: APITaskResult[dict[str, list[str]]]
+    ) -> None:
         """Callback for peer ban action."""
         if result.get("success"):
             self._log(
-                "INFO", f"Ban Peer succeeded: {endpoint}", result.get("elapsed", 0)
+                "INFO",
+                f"Ban Peer succeeded: {endpoint}",
+                self._result_elapsed(cast("APITaskResult[object]", result)),
             )
             self._set_status(f"Banned peer: {endpoint}")
-            torrent_hash = self._selected_torrent_hash().strip()
+            torrent_hash = str(self._selected_torrent_hash() or "").strip()
             if torrent_hash:
+
+                def _reload_network_details(selected_hash: str = torrent_hash) -> None:
+                    self._load_selected_torrent_network_details(selected_hash)
+
                 QTimer.singleShot(
                     300,
-                    lambda h=torrent_hash: self._load_selected_torrent_network_details(
-                        h
-                    ),
+                    _reload_network_details,
                 )
         else:
-            error = result.get("error", "Unknown error")
-            self._log("ERROR", f"Ban Peer failed: {error}", result.get("elapsed", 0))
+            error = self._result_error(cast("APITaskResult[object]", result))
+            self._log(
+                "ERROR",
+                f"Ban Peer failed: {error}",
+                self._result_elapsed(cast("APITaskResult[object]", result)),
+            )
             self._set_status(f"Ban Peer failed: {error}")
         self._hide_progress()
 
     def _queue_bulk_torrent_action(
         self,
         task_name: str,
-        api_method: Callable[..., APITaskResult],
+        api_method: Callable[..., APITaskResult[bool]],
         action_name: str,
         singular_progress: str,
         plural_progress: str,
@@ -587,7 +734,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             task_name,
             api_method,
-            lambda r: self._on_torrent_action_done(action_name, r),
+            self._torrent_action_callback(action_name),
             torrent_hashes,
         )
 
@@ -687,7 +834,7 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _prompt_limit_kib(self, title: str, label: str) -> int | None:
         """Prompt for a speed limit in KiB/s (0 means unlimited)."""
         value, ok = QInputDialog.getInt(
-            self,
+            self._window_parent(),
             title,
             label,
             value=0,
@@ -717,7 +864,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "set_torrent_download_limit",
             self._api_set_torrent_download_limit,
-            lambda r: self._on_torrent_action_done("Set Torrent Download Limit", r),
+            self._torrent_action_callback("Set Torrent Download Limit"),
             torrent_hashes,
             limit_bytes,
         )
@@ -744,7 +891,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "set_torrent_upload_limit",
             self._api_set_torrent_upload_limit,
-            lambda r: self._on_torrent_action_done("Set Torrent Upload Limit", r),
+            self._torrent_action_callback("Set Torrent Upload Limit"),
             torrent_hashes,
             limit_bytes,
         )
@@ -752,16 +899,18 @@ class ActionsTaxonomyController(WindowControllerBase):
             "INFO", f"Setting upload limit for {count} torrent(s) to {limit_kib} KiB/s"
         )
 
-    def _on_global_bandwidth_action_done(self, action_name: str, result: dict) -> None:
+    def _on_global_bandwidth_action_done(
+        self, action_name: str, result: APITaskResult[bool]
+    ) -> None:
         """Handle global bandwidth action completion."""
         if result.get("success"):
-            self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
+            self._log("INFO", f"{action_name} succeeded", self._result_elapsed(result))
             self._set_status(f"{action_name} applied")
             QTimer.singleShot(500, self._refresh_torrents)
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             self._log(
-                "ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0)
+                "ERROR", f"{action_name} failed: {error}", self._result_elapsed(result)
             )
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
@@ -777,7 +926,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._request_app_preferences_refresh()
             return
 
-        dialog = AppPreferencesDialog(cast("QWidget | None", self))
+        dialog = AppPreferencesDialog(self._window_parent())
         dialog.apply_requested.connect(self._on_app_preferences_apply_requested)
         dialog.finished.connect(self._on_app_preferences_dialog_closed)
         self._app_preferences_dialog = cast("AppPreferencesDialog | None", dialog)
@@ -809,17 +958,19 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._on_app_preferences_loaded,
         )
 
-    def _on_app_preferences_loaded(self, result: dict) -> None:
+    def _on_app_preferences_loaded(
+        self, result: APITaskResult[dict[str, object]]
+    ) -> None:
         """Populate app-preferences dialog from API response."""
         dialog = self._app_preferences_dialog
         if result.get("success"):
-            data = result.get("data", {}) or {}
+            data = result.get("data", {})
             if dialog is not None and dialog.isVisible():
-                dialog.set_preferences(data if isinstance(data, dict) else {})
+                dialog.set_preferences(data)
                 dialog.set_busy(False, "Loaded")
             self._set_status("App preferences loaded")
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             if dialog is not None and dialog.isVisible():
                 dialog.set_busy(False, f"Failed: {error}")
             self._set_status(f"Failed to load app preferences: {error}")
@@ -847,14 +998,16 @@ class ActionsTaxonomyController(WindowControllerBase):
             updates,
         )
 
-    def _on_app_preferences_applied(self, result: dict) -> None:
+    def _on_app_preferences_applied(
+        self, result: APITaskResult[dict[str, int]]
+    ) -> None:
         """Handle completion of app preferences apply."""
         if result.get("success"):
             self._set_status("App preferences applied")
             self._set_app_preferences_dialog_busy(False, "Applied")
             self._request_app_preferences_refresh()
             return
-        error = result.get("error", "Unknown error")
+        error = self._result_error(cast("APITaskResult[object]", result))
         self._set_status(f"Failed to apply app preferences: {error}")
         self._set_app_preferences_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
@@ -870,7 +1023,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._request_friendly_add_preferences_refresh()
             return
 
-        dialog = FriendlyAddPreferencesDialog(cast("QWidget | None", self))
+        dialog = FriendlyAddPreferencesDialog(self._window_parent())
         dialog.apply_requested.connect(
             self._on_friendly_add_preferences_apply_requested
         )
@@ -908,17 +1061,19 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._on_friendly_add_preferences_loaded,
         )
 
-    def _on_friendly_add_preferences_loaded(self, result: dict) -> None:
+    def _on_friendly_add_preferences_loaded(
+        self, result: APITaskResult[dict[str, object]]
+    ) -> None:
         """Populate friendly add-preferences dialog from API response."""
         dialog = self._friendly_add_preferences_dialog
         if result.get("success"):
-            data = result.get("data", {}) or {}
+            data = result.get("data", {})
             if dialog is not None and dialog.isVisible():
-                dialog.set_preferences(data if isinstance(data, dict) else {})
+                dialog.set_preferences(data)
                 dialog.set_busy(False, "Loaded")
             self._set_status("Add preferences loaded")
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             if dialog is not None and dialog.isVisible():
                 dialog.set_busy(False, f"Failed: {error}")
             self._set_status(f"Failed to load add preferences: {error}")
@@ -946,14 +1101,16 @@ class ActionsTaxonomyController(WindowControllerBase):
             updates,
         )
 
-    def _on_friendly_add_preferences_applied(self, result: dict) -> None:
+    def _on_friendly_add_preferences_applied(
+        self, result: APITaskResult[dict[str, int]]
+    ) -> None:
         """Handle completion of friendly add-preferences apply."""
         if result.get("success"):
             self._set_status("Add preferences applied")
             self._set_friendly_add_preferences_dialog_busy(False, "Applied")
             self._request_friendly_add_preferences_refresh()
             return
-        error = result.get("error", "Unknown error")
+        error = self._result_error(cast("APITaskResult[object]", result))
         self._set_status(f"Failed to apply add preferences: {error}")
         self._set_friendly_add_preferences_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
@@ -969,7 +1126,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._request_speed_limits_profile()
             return
 
-        dialog = SpeedLimitsDialog(cast("QWidget | None", self))
+        dialog = SpeedLimitsDialog(self._window_parent())
         dialog.refresh_requested.connect(self._request_speed_limits_profile)
         dialog.apply_requested.connect(self._on_speed_limits_apply_requested)
         dialog.finished.connect(self._on_speed_limits_dialog_closed)
@@ -1000,10 +1157,12 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._on_speed_limits_profile_loaded,
         )
 
-    def _on_speed_limits_profile_loaded(self, result: dict) -> None:
+    def _on_speed_limits_profile_loaded(
+        self, result: APITaskResult[dict[str, object]]
+    ) -> None:
         """Populate speed limits dialog from API response."""
         if result.get("success"):
-            data = result.get("data", {}) or {}
+            data = result.get("data", {})
             self._last_alt_speed_mode = bool(
                 data.get("alt_enabled", self._last_alt_speed_mode)
             )
@@ -1047,7 +1206,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._set_speed_limits_dialog_busy(False, "Loaded")
             self._update_statusbar_transfer_summary()
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             self._set_status(f"Failed to load speed limits: {error}")
             self._set_speed_limits_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
@@ -1074,14 +1233,14 @@ class ActionsTaxonomyController(WindowControllerBase):
             bool(alt_enabled),
         )
 
-    def _on_speed_limits_profile_applied(self, result: dict) -> None:
+    def _on_speed_limits_profile_applied(self, result: APITaskResult[bool]) -> None:
         """Handle completion of speed limits apply."""
         if result.get("success"):
             self._set_status("Speed limits applied")
             self._set_speed_limits_dialog_busy(False, "Applied")
             self._request_speed_limits_profile()
             return
-        error = result.get("error", "Unknown error")
+        error = self._result_error(cast("APITaskResult[object]", result))
         self._set_status(f"Failed to apply speed limits: {error}")
         self._set_speed_limits_dialog_busy(False, f"Failed: {error}")
         self._hide_progress()
@@ -1099,9 +1258,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "set_global_download_limit",
             self._api_set_global_download_limit,
-            lambda r: self._on_global_bandwidth_action_done(
-                "Set Global Download Limit", r
-            ),
+            self._global_bandwidth_action_callback("Set Global Download Limit"),
             limit_bytes,
         )
 
@@ -1118,9 +1275,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "set_global_upload_limit",
             self._api_set_global_upload_limit,
-            lambda r: self._on_global_bandwidth_action_done(
-                "Set Global Upload Limit", r
-            ),
+            self._global_bandwidth_action_callback("Set Global Upload Limit"),
             limit_bytes,
         )
 
@@ -1130,9 +1285,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "toggle_alt_speed_mode",
             self._api_toggle_alt_speed_mode,
-            lambda r: self._on_global_bandwidth_action_done(
-                "Toggle Alternative Speed Mode", r
-            ),
+            self._global_bandwidth_action_callback("Toggle Alternative Speed Mode"),
         )
 
     def _get_selected_content_item_info(self) -> dict[str, object] | None:
@@ -1150,9 +1303,13 @@ class ActionsTaxonomyController(WindowControllerBase):
         if not isinstance(item_data, dict):
             self._set_status("No content item selected")
             return None
+        data_map = {
+            str(key): value
+            for key, value in cast("dict[object, object]", item_data).items()
+        }
 
         relative_path = (
-            str(item_data.get("relative_path", "") or "").replace("\\", "/").strip("/")
+            str(data_map.get("relative_path", "") or "").replace("\\", "/").strip("/")
         )
         if not relative_path:
             self._set_status("No content item selected")
@@ -1161,7 +1318,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         return {
             "item": item,
             "relative_path": relative_path,
-            "is_file": bool(item_data.get("is_file", False)),
+            "is_file": bool(data_map.get("is_file", False)),
         }
 
     def _selected_torrent_hash_for_content_action(self) -> str | None:
@@ -1175,15 +1332,17 @@ class ActionsTaxonomyController(WindowControllerBase):
             return None
         return torrent_hash
 
-    def _on_content_action_done(self, action_name: str, result: dict) -> None:
+    def _on_content_action_done(
+        self, action_name: str, result: APITaskResult[object]
+    ) -> None:
         """Callback for content actions (priority/rename)."""
         if result.get("success"):
-            self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
+            self._log("INFO", f"{action_name} succeeded", self._result_elapsed(result))
             QTimer.singleShot(500, self._refresh_torrents)
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(result)
             self._log(
-                "ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0)
+                "ERROR", f"{action_name} failed: {error}", self._result_elapsed(result)
             )
             self._set_status(f"{action_name} failed: {error}")
         self._hide_progress()
@@ -1204,7 +1363,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "set_content_priority",
             self._api_set_content_priority,
-            lambda r: self._on_content_action_done("Set Content Priority", r),
+            self._content_action_callback("Set Content Priority"),
             torrent_hash,
             info["relative_path"],
             info["is_file"],
@@ -1244,7 +1403,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "rename_content_path",
             self._api_rename_content_path,
-            lambda r: self._on_content_action_done("Rename Content", r),
+            self._content_action_callback("Rename Content"),
             torrent_hash,
             old_rel,
             new_rel,
@@ -1255,7 +1414,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self, label: str, old_name: str
     ) -> tuple[str, bool]:
         """Prompt for a new content file/folder name with persistent dialog size."""
-        dialog = QDialog(self)
+        dialog = QDialog(self._window_parent())
         dialog.setWindowTitle(f"Rename {str(label or '').title()}")
         dialog.setMinimumWidth(600)
 
@@ -1299,16 +1458,18 @@ class ActionsTaxonomyController(WindowControllerBase):
             return "", False
         return str(txt_name.text() or ""), True
 
-    def _on_taxonomy_action_done(self, action_name: str, result: dict) -> None:
+    def _on_taxonomy_action_done(
+        self, action_name: str, result: APITaskResult[bool]
+    ) -> None:
         """Callback for create/edit/delete category/tag actions."""
         if result.get("success"):
-            self._log("INFO", f"{action_name} succeeded", result.get("elapsed", 0))
+            self._log("INFO", f"{action_name} succeeded", self._result_elapsed(result))
             self._reload_taxonomy_data(action_name)
             return
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             self._log(
-                "ERROR", f"{action_name} failed: {error}", result.get("elapsed", 0)
+                "ERROR", f"{action_name} failed: {error}", self._result_elapsed(result)
             )
             self._set_status(f"{action_name} failed: {error}")
             self._set_taxonomy_dialog_busy(False, f"{action_name} failed: {error}")
@@ -1328,31 +1489,35 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "reload_categories_for_taxonomy",
             self._fetch_categories,
-            lambda r: self._on_taxonomy_categories_reloaded(action_name, r),
+            self._taxonomy_reload_categories_callback(action_name),
         )
 
-    def _on_taxonomy_categories_reloaded(self, action_name: str, result: dict) -> None:
+    def _on_taxonomy_categories_reloaded(
+        self, action_name: str, result: APITaskResult[object]
+    ) -> None:
         """Handle category reload in taxonomy post-action chain."""
         if result.get("success"):
             self._set_categories_from_payload(result.get("data", {}))
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(result)
             self._log("ERROR", f"Reload categories failed after {action_name}: {error}")
 
         self.api_queue.add_task(
             "reload_tags_for_taxonomy",
             self._fetch_tags,
-            lambda r: self._on_taxonomy_tags_reloaded(action_name, r),
+            self._taxonomy_reload_tags_callback(action_name),
         )
 
-    def _on_taxonomy_tags_reloaded(self, action_name: str, result: dict) -> None:
+    def _on_taxonomy_tags_reloaded(
+        self, action_name: str, result: APITaskResult[list[str]]
+    ) -> None:
         """Finalize taxonomy reload and update UI/dialog."""
         if result.get("success"):
-            self.tags = result.get("data", [])
+            self.tags = list(result.get("data", []))
             self._update_tag_tree()
             self._sync_taxonomy_dialog_data()
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(cast("APITaskResult[object]", result))
             self._log("ERROR", f"Reload tags failed after {action_name}: {error}")
 
         self._set_taxonomy_dialog_busy(False, f"{action_name} succeeded")
@@ -1362,7 +1527,7 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _queue_taxonomy_action(
         self,
         task_name: str,
-        api_method: Callable[..., APITaskResult],
+        api_method: Callable[..., APITaskResult[bool]],
         action_name: str,
         *args: object,
     ) -> None:
@@ -1372,7 +1537,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             task_name,
             api_method,
-            lambda r: self._on_taxonomy_action_done(action_name, r),
+            self._taxonomy_action_callback(action_name),
             *args,
         )
 
@@ -1384,8 +1549,8 @@ class ActionsTaxonomyController(WindowControllerBase):
             self._taxonomy_dialog.activateWindow()
             return
 
-        dialog = TaxonomyManagerDialog(cast("QWidget | None", self))
-        dialog.set_taxonomy_data(self._taxonomy_category_data(), list(self.tags))
+        dialog = TaxonomyManagerDialog(self._window_parent())
+        dialog.set_taxonomy_data(self._taxonomy_category_data(), self._tag_names())
         dialog.create_category_requested.connect(
             self._on_taxonomy_create_category_requested
         )
@@ -1473,7 +1638,7 @@ class ActionsTaxonomyController(WindowControllerBase):
             return
 
         confirm = QMessageBox.question(
-            self,
+            self._window_parent(),
             "Delete Category",
             f"Delete category '{normalized_name}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1511,7 +1676,7 @@ class ActionsTaxonomyController(WindowControllerBase):
 
         tag_text = ", ".join(normalized)
         confirm = QMessageBox.question(
-            self,
+            self._window_parent(),
             "Delete Tag(s)",
             f"Delete selected tag(s): {tag_text} ?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1534,7 +1699,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "pause_session",
             self._api_pause_session,
-            lambda r: self._on_torrent_action_done("Pause Session", r),
+            self._torrent_action_callback("Pause Session"),
         )
 
     def _resume_session(self) -> None:
@@ -1544,7 +1709,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             "resume_session",
             self._api_resume_session,
-            lambda r: self._on_torrent_action_done("Resume Session", r),
+            self._torrent_action_callback("Resume Session"),
         )
 
     def _queue_delete_torrents(
@@ -1564,7 +1729,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         self.api_queue.add_task(
             task_name,
             self._api_delete_torrent,
-            lambda r: self._on_torrent_action_done(action_name, r),
+            self._torrent_action_callback(action_name),
             torrent_hashes,
             delete_files,
         )
@@ -1575,7 +1740,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         if not torrent_hashes:
             return
         reply = QMessageBox.question(
-            self,
+            self._window_parent(),
             "Remove Torrent(s)",
             f"Remove {len(torrent_hashes)} selected torrent(s) from qBittorrent and keep data on disk?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1598,7 +1763,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         if not torrent_hashes:
             return
         reply = QMessageBox.question(
-            self,
+            self._window_parent(),
             "Remove And Delete Data",
             f"Remove {len(torrent_hashes)} selected torrent(s) and delete data from disk?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1653,7 +1818,7 @@ class ActionsTaxonomyController(WindowControllerBase):
         if not torrent_hashes:
             return
         reply = QMessageBox.question(
-            self,
+            self._window_parent(),
             "Delete Torrent(s)",
             f"Delete {len(torrent_hashes)} selected torrent(s) and their files from disk?",
             QMessageBox.StandardButton.Yes
@@ -1699,7 +1864,7 @@ class ActionsTaxonomyController(WindowControllerBase):
     def _reset_view_defaults(self) -> None:
         """Reset view/layout/filter/refresh options back to startup defaults."""
         reply = QMessageBox.question(
-            self,
+            self._window_parent(),
             "Reset View",
             "Reset view to defaults?\n\n"
             "This resets column widths, splitter positions, refresh interval, "
@@ -1798,7 +1963,7 @@ class ActionsTaxonomyController(WindowControllerBase):
                 current = DEFAULT_REFRESH_INTERVAL
 
             seconds, ok = QInputDialog.getInt(
-                self,
+                self._window_parent(),
                 "Auto-Refresh Interval",
                 "Refresh every (seconds):",
                 value=current,
@@ -1918,7 +2083,7 @@ class ActionsTaxonomyController(WindowControllerBase):
 
     def _show_about(self) -> None:
         """Show about dialog."""
-        dialog = QDialog(self)
+        dialog = QDialog(self._window_parent())
         dialog.setWindowTitle("About qBiremo Enhanced")
         dialog.resize(1100, 360)
 

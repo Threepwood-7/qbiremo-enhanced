@@ -387,8 +387,7 @@ def validate_and_normalize_config(config: object, profile_id: str) -> Normalized
         config = {}
 
     normalized = {
-        str(key): value
-        for key, value in cast("dict[object, object]", config).items()
+        str(key): value for key, value in cast("dict[object, object]", config).items()
     }
     _remove_settings_managed_config_keys(normalized)
     _normalize_qb_host_value(normalized)

@@ -1156,9 +1156,7 @@ class MainWindow(QMainWindow):
         port = _normalize_instance_port(
             self.config.get("qb_port", self.qb_conn_info.get("port", 8080))
         )
-        counter = _normalize_instance_counter(
-            self.config.get("_instance_counter", 1)
-        )
+        counter = _normalize_instance_counter(self.config.get("_instance_counter", 1))
         return f"{user}@{host}:{port} [{counter}]"
 
     def _capture_default_view_state(self) -> None:
@@ -1434,9 +1432,7 @@ class MainWindow(QMainWindow):
         port = _normalize_instance_port(
             host_port_from_url
             if host_port_from_url is not None
-            else (
-                self.config.get("qb_port", self.qb_conn_info.get("port", 8080))
-            )
+            else (self.config.get("qb_port", self.qb_conn_info.get("port", 8080)))
         )
         encoded_user = quote(user, safe="")
         host_text = host

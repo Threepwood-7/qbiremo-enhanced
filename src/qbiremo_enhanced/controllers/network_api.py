@@ -8,7 +8,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from urllib.parse import urlparse
 
 import qbittorrentapi
@@ -37,8 +37,107 @@ from ..types import APITaskResult, api_task_result
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase, logger
 
 
+class _TrackerHealthBucket(TypedDict):
+    """Accumulate per-tracker status counts across many torrents."""
+
+    tracker: str
+    torrent_hashes: set[str]
+    row_count: int
+    working_count: int
+    failing_count: int
+    unknown_count: int
+    next_announce_sum: int
+    next_announce_count: int
+    last_error: str
+
+
 class NetworkApiController(WindowControllerBase):
     """Handle API calls, cache I/O, and queue callbacks for network data."""
+
+    def _all_torrents_list(self) -> list[object]:
+        """Return the current torrent snapshot as a plain object list."""
+        torrents = getattr(self, "all_torrents", [])
+        return (
+            list(cast("list[object]", torrents)) if isinstance(torrents, list) else []
+        )
+
+    def _content_cache_map(self) -> dict[str, TorrentCacheEntry]:
+        """Return the cached content mapping with a stable dict shape."""
+        cache = getattr(self, "content_cache", {})
+        if not isinstance(cache, dict):
+            self.content_cache = {}
+            return {}
+        return cast("dict[str, TorrentCacheEntry]", cache)
+
+    def _sync_torrent_map_data(self) -> dict[str, dict[str, object]]:
+        """Return the maindata torrent snapshot keyed by torrent hash."""
+        sync_map = getattr(self, "_sync_torrent_map", {})
+        if not isinstance(sync_map, dict):
+            self._sync_torrent_map = {}
+            return {}
+        return cast("dict[str, dict[str, object]]", sync_map)
+
+    def _category_details_map(self) -> dict[str, dict[str, object]]:
+        """Return cached category metadata with a stable mapping shape."""
+        details = getattr(self, "category_details", {})
+        if not isinstance(details, dict):
+            self.category_details = {}
+            return {}
+        return cast("dict[str, dict[str, object]]", details)
+
+    def _category_names(self) -> list[str]:
+        """Return category names as plain strings."""
+        categories = getattr(self, "categories", [])
+        if not isinstance(categories, list):
+            return []
+        return [str(category) for category in cast("list[object]", categories)]
+
+    def _tag_names(self) -> list[str]:
+        """Return tag names as plain strings."""
+        tags = getattr(self, "tags", [])
+        if not isinstance(tags, list):
+            return []
+        return [str(tag) for tag in cast("list[object]", tags)]
+
+    def _status_filter_value(self) -> str:
+        """Return the active remote status filter text."""
+        return str(getattr(self, "current_status_filter", "") or "").strip()
+
+    def _category_filter_value(self) -> object:
+        """Return the active remote category filter."""
+        return getattr(self, "current_category_filter", None)
+
+    def _tag_filter_value(self) -> object:
+        """Return the active remote tag filter."""
+        return getattr(self, "current_tag_filter", None)
+
+    def _private_filter_value(self) -> bool | None:
+        """Return the active private/public filter when set."""
+        private_filter = getattr(self, "current_private_filter", None)
+        return private_filter if isinstance(private_filter, bool) else None
+
+    def _file_filter_value(self) -> str:
+        """Return the active cached file-name filter text."""
+        return str(getattr(self, "current_file_filter", "") or "")
+
+    @staticmethod
+    def _object_dict(value: object) -> dict[str, object]:
+        """Normalize one object to a plain string-key dict when possible."""
+        if not isinstance(value, Mapping):
+            return {}
+        mapping = cast("Mapping[object, object]", value)
+        return {str(key): entry for key, entry in mapping.items()}
+
+    @staticmethod
+    def _object_list(value: object) -> list[object]:
+        """Normalize one object to a plain object list when possible."""
+        if isinstance(value, list):
+            return list(cast("list[object]", value))
+        if isinstance(value, tuple):
+            return list(cast("tuple[object, ...]", value))
+        if isinstance(value, set):
+            return list(cast("set[object]", value))
+        return []
 
     def _build_connection_info(self, config: NormalizedConfig) -> dict[str, object]:
         """Build qBittorrent connection info from profile config with env var fallback."""
@@ -49,7 +148,7 @@ class NetworkApiController(WindowControllerBase):
         )
         explicit_scheme_override = "http_protocol_scheme" in config
 
-        extra_headers = {}
+        extra_headers: dict[str, str] = {}
         host = raw_host
 
         # Parse URL to extract HTTP basic auth if embedded
@@ -90,7 +189,7 @@ class NetworkApiController(WindowControllerBase):
         if http_timeout <= 0:
             http_timeout = DEFAULT_HTTP_TIMEOUT_SECONDS
 
-        conn = {
+        conn: dict[str, object] = {
             "host": host,
             "port": port,
             "username": (config.get("qb_username") or "admin"),
@@ -151,19 +250,22 @@ class NetworkApiController(WindowControllerBase):
                 return
 
             normalized: dict[str, TorrentCacheEntry] = {}
-            for torrent_hash, entry in parsed.items():
-                if not isinstance(entry, dict):
+            parsed_map = {
+                str(torrent_hash): entry
+                for torrent_hash, entry in cast("dict[object, object]", parsed).items()
+            }
+            for torrent_hash, entry in parsed_map.items():
+                entry_map = self._object_dict(entry)
+                if not entry_map:
                     continue
-                files = entry.get("files", [])
-                if not isinstance(files, list):
-                    files = []
-                normalized_files = []
-                for f in files:
-                    if not isinstance(f, dict):
+                normalized_files: list[TorrentFileEntry] = []
+                for file_entry in self._object_list(entry_map.get("files", [])):
+                    file_map = self._object_dict(file_entry)
+                    if not file_map:
                         continue
-                    normalized_files.append(self._normalize_cached_file(f))
+                    normalized_files.append(self._normalize_cached_file(file_map))
                 normalized[str(torrent_hash)] = {
-                    "state": str(entry.get("state", "") or ""),
+                    "state": str(entry_map.get("state", "") or ""),
                     "files": normalized_files,
                 }
             self.content_cache = normalized
@@ -229,23 +331,21 @@ class NetworkApiController(WindowControllerBase):
         """Return cached files for torrent hash, or empty list."""
         if not torrent_hash:
             return []
-        entry = self.content_cache.get(torrent_hash, {})
-        files = entry.get("files", []) if isinstance(entry, dict) else []
-        return files if isinstance(files, list) else []
+        entry = self._content_cache_map().get(torrent_hash)
+        return list(entry["files"]) if entry else []
 
     def _get_cache_refresh_candidates(self) -> dict[str, str]:
         """Return torrent hashes that need cache refresh (new/missing/status change)."""
         candidates: dict[str, str] = {}
-        for torrent in self.all_torrents:
+        content_cache = self._content_cache_map()
+        for torrent in self._all_torrents_list():
             torrent_hash = getattr(torrent, "hash", "") or ""
             if not torrent_hash:
                 continue
             state = str(getattr(torrent, "state", "") or "")
-            cached = self.content_cache.get(torrent_hash)
-            cached_state = (
-                str(cached.get("state", "")) if isinstance(cached, dict) else ""
-            )
-            cached_files = cached.get("files") if isinstance(cached, dict) else None
+            cached = content_cache.get(str(torrent_hash))
+            cached_state = str(cached["state"]) if cached else ""
+            cached_files = cached["files"] if cached else None
             if cached_state != state or not isinstance(cached_files, list):
                 candidates[torrent_hash] = state
 
@@ -268,7 +368,7 @@ class NetworkApiController(WindowControllerBase):
                 return True
         return False
 
-    def _fetch_categories(self, **_kw: object) -> APITaskResult:
+    def _fetch_categories(self, **_kw: object) -> APITaskResult[object]:
         """Fetch categories from qBittorrent."""
         start_time = time.time()
         try:
@@ -282,7 +382,7 @@ class NetworkApiController(WindowControllerBase):
                 data=None, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _fetch_tags(self, **_kw: object) -> APITaskResult:
+    def _fetch_tags(self, **_kw: object) -> APITaskResult[list[str]]:
         """Fetch tags from qBittorrent."""
         start_time = time.time()
         try:
@@ -301,18 +401,21 @@ class NetworkApiController(WindowControllerBase):
         """Build remote API filter kwargs from selected status/category/tag/private filters."""
         filters: dict[str, object] = {}
 
-        status = str(self.current_status_filter or "").strip()
+        status = self._status_filter_value()
         if status and status.lower() != "all":
             filters["status_filter"] = status
 
-        if self.current_category_filter is not None:
-            filters["category"] = str(self.current_category_filter or "")
+        category_filter = self._category_filter_value()
+        if category_filter is not None:
+            filters["category"] = str(category_filter or "")
 
-        if self.current_tag_filter is not None:
-            filters["tag"] = str(self.current_tag_filter or "")
+        tag_filter = self._tag_filter_value()
+        if tag_filter is not None:
+            filters["tag"] = str(tag_filter or "")
 
-        if self.current_private_filter is not None:
-            filters["private"] = bool(self.current_private_filter)
+        private_filter = self._private_filter_value()
+        if private_filter is not None:
+            filters["private"] = private_filter
 
         return filters
 
@@ -382,7 +485,7 @@ class NetworkApiController(WindowControllerBase):
         except RECOVERABLE_CONTROLLER_EXCEPTIONS:
             return fallback
 
-    def _fetch_torrents(self, **_kw: object) -> APITaskResult:
+    def _fetch_torrents(self, **_kw: object) -> APITaskResult[list[object]]:
         """Fetch torrents via incremental sync/maindata and return current full list."""
         start_time = time.time()
 
@@ -427,37 +530,32 @@ class NetworkApiController(WindowControllerBase):
         payload = self._entry_to_dict(maindata)
         full_update = bool(payload.get("full_update", False))
         rid = self._safe_int(payload.get("rid", self._sync_rid), self._sync_rid)
-        torrents_update = payload.get("torrents", {}) or {}
-        removed_hashes = payload.get("torrents_removed", []) or []
+        torrents_update = self._object_dict(payload.get("torrents", {}))
+        removed_hashes = self._object_list(payload.get("torrents_removed", []))
+        sync_torrent_map = self._sync_torrent_map_data()
 
         if full_update:
-            self._sync_torrent_map = {}
+            sync_torrent_map.clear()
 
-        if hasattr(torrents_update, "items"):
-            for raw_hash, entry in cast("Any", torrents_update).items():
-                entry_dict = self._entry_to_dict(entry)
-                torrent_hash = str(entry_dict.get("hash") or raw_hash or "").strip()
-                if not torrent_hash:
-                    continue
+        for raw_hash, entry in torrents_update.items():
+            entry_dict = self._entry_to_dict(entry)
+            torrent_hash = str(entry_dict.get("hash") or raw_hash or "").strip()
+            if not torrent_hash:
+                continue
 
-                merged = dict(self._sync_torrent_map.get(torrent_hash, {}))
-                merged.update(entry_dict)
-                merged["hash"] = torrent_hash
-                self._sync_torrent_map[torrent_hash] = merged
+            merged = dict(sync_torrent_map.get(torrent_hash, {}))
+            merged.update(entry_dict)
+            merged["hash"] = torrent_hash
+            sync_torrent_map[torrent_hash] = merged
 
-        if isinstance(removed_hashes, (list, tuple, set)):
-            for raw_hash in removed_hashes:
-                torrent_hash = str(raw_hash or "").strip()
-                if torrent_hash:
-                    self._sync_torrent_map.pop(torrent_hash, None)
+        for raw_hash in removed_hashes:
+            torrent_hash = str(raw_hash or "").strip()
+            if torrent_hash:
+                sync_torrent_map.pop(torrent_hash, None)
 
         self._sync_rid = rid
 
-        torrents = [
-            SimpleNamespace(**entry)
-            for entry in self._sync_torrent_map.values()
-            if isinstance(entry, dict)
-        ]
+        torrents = [SimpleNamespace(**entry) for entry in sync_torrent_map.values()]
         torrents.sort(
             key=lambda t: self._safe_int(getattr(t, "added_on", 0), 0), reverse=True
         )
@@ -467,7 +565,8 @@ class NetworkApiController(WindowControllerBase):
     def _entry_to_dict(entry: object) -> dict[str, object]:
         """Convert qBittorrent API list/dict entry objects to plain dict."""
         if isinstance(entry, Mapping):
-            return {str(k): v for k, v in entry.items()}
+            mapping = cast("Mapping[object, object]", entry)
+            return {str(key): value for key, value in mapping.items()}
         if hasattr(cast("Any", entry), "items"):
             try:
                 return {str(k): v for k, v in cast("Any", entry).items()}
@@ -488,7 +587,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _fetch_selected_torrent_trackers(
         self, torrent_hash: str, **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[list[TrackerRow]]:
         """Fetch all tracker rows for one torrent."""
         start_time = time.time()
         try:
@@ -509,19 +608,14 @@ class NetworkApiController(WindowControllerBase):
 
     def _fetch_selected_torrent_peers(
         self, torrent_hash: str, **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[list[PeerRow]]:
         """Fetch all peer rows for one torrent."""
         start_time = time.time()
         try:
             with self._create_client() as qb:
                 peers_info = qb.sync_torrent_peers(torrent_hash=torrent_hash, rid=0)
 
-            if isinstance(peers_info, Mapping):
-                raw_peers = peers_info.get("peers", {}) or {}
-            elif hasattr(cast("Any", peers_info), "get"):
-                raw_peers = cast("Any", peers_info).get("peers", {}) or {}
-            else:
-                raw_peers = getattr(peers_info, "peers", {}) or {}
+            raw_peers = self._entry_to_dict(peers_info).get("peers", {})
             peers_map = self._entry_to_dict(raw_peers)
 
             rows: list[PeerRow] = []
@@ -574,11 +668,11 @@ class NetworkApiController(WindowControllerBase):
 
     def _fetch_tracker_health_data(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[list[TrackerHealthRow]]:
         """Fetch and aggregate tracker health metrics across provided torrents."""
         start_time = time.time()
         try:
-            stats: dict[str, dict[str, Any]] = {}
+            stats: dict[str, _TrackerHealthBucket] = {}
             with self._create_client() as qb:
                 for torrent_hash in list(torrent_hashes or []):
                     if not torrent_hash:
@@ -646,9 +740,7 @@ class NetworkApiController(WindowControllerBase):
                             / max(1, bucket["next_announce_count"])
                         )
                     )
-                torrent_hashes_bucket = bucket.get("torrent_hashes", set())
-                if not isinstance(torrent_hashes_bucket, set):
-                    torrent_hashes_bucket = set()
+                torrent_hashes_bucket = bucket["torrent_hashes"]
 
                 dead = bool(failing > 0 and working == 0 and fail_rate >= 50.0)
                 rows.append(
@@ -682,11 +774,11 @@ class NetworkApiController(WindowControllerBase):
 
     def _refresh_content_cache_for_torrents(
         self, torrent_states: dict[str, str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[dict[str, TorrentCacheEntry]]:
         """Refresh cached file trees for provided torrent hashes."""
         start_time = time.time()
         try:
-            updates: dict[str, dict[str, object]] = {}
+            updates: dict[str, TorrentCacheEntry] = {}
             errors: dict[str, str] = {}
             with self._create_client() as qb:
                 for torrent_hash, state in torrent_states.items():
@@ -715,7 +807,9 @@ class NetworkApiController(WindowControllerBase):
                 errors={},
             )
 
-    def _add_torrent_api(self, torrent_data: dict, **_kw: object) -> APITaskResult:
+    def _add_torrent_api(
+        self, torrent_data: dict[str, object], **_kw: object
+    ) -> APITaskResult[bool]:
         """Add a torrent via API."""
         start_time = time.time()
         data = dict(torrent_data)  # avoid mutating caller's dict
@@ -731,16 +825,24 @@ class NetworkApiController(WindowControllerBase):
                 files_payload = data.pop("torrent_files", None)
 
                 if urls_payload not in (None, "", []):
-                    if isinstance(urls_payload, (list, tuple, set)):
-                        url_entries = [
-                            str(u or "").strip()
-                            for u in urls_payload
-                            if str(u or "").strip()
+                    url_entries = (
+                        [
+                            str(url_value or "").strip()
+                            for url_value in self._object_list(
+                                cast("object", urls_payload)
+                            )
+                            if str(url_value or "").strip()
                         ]
-                    else:
-                        url_entries = [str(urls_payload).strip()]
+                        if isinstance(urls_payload, (list, tuple, set))
+                        else [str(urls_payload).strip()]
+                    )
                     submitted_urls = len(url_entries)
-                    url_result = qb.torrents_add(urls=urls_payload, **dict(data))
+                    urls_argument = (
+                        "\n".join(url_entries)
+                        if len(url_entries) > 1
+                        else (url_entries[0] if url_entries else "")
+                    )
+                    url_result = qb.torrents_add(urls=urls_argument, **dict(data))
                     if url_result == "Ok.":
                         added_urls = len(url_entries)
                     else:
@@ -750,14 +852,17 @@ class NetworkApiController(WindowControllerBase):
                         )
 
                 if files_payload not in (None, "", []):
-                    if isinstance(files_payload, (list, tuple, set)):
-                        file_paths = [
-                            str(path or "").strip()
-                            for path in files_payload
-                            if str(path or "").strip()
+                    file_paths = (
+                        [
+                            str(path_value or "").strip()
+                            for path_value in self._object_list(
+                                cast("object", files_payload)
+                            )
+                            if str(path_value or "").strip()
                         ]
-                    else:
-                        file_paths = [str(files_payload).strip()]
+                        if isinstance(files_payload, (list, tuple, set))
+                        else [str(files_payload).strip()]
+                    )
                     submitted_files = len(file_paths)
                     for file_path in file_paths:
                         try:
@@ -810,7 +915,7 @@ class NetworkApiController(WindowControllerBase):
         export_dir: str,
         name_map: dict[str, str],
         **_kw: object,
-    ) -> APITaskResult:
+    ) -> APITaskResult[dict[str, object]]:
         """Export selected torrents into .torrent files in the target directory."""
         start_time = time.time()
         try:
@@ -830,7 +935,7 @@ class NetworkApiController(WindowControllerBase):
 
             exported_files: list[str] = []
             failed: dict[str, str] = {}
-            used_names: set = set()
+            used_names: set[str] = set()
             with self._create_client() as qb:
                 for torrent_hash in normalized_hashes:
                     try:
@@ -871,7 +976,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_pause_torrent(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Pause one or more torrents via API."""
         start_time = time.time()
         try:
@@ -887,7 +992,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_resume_torrent(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Resume one or more torrents via API."""
         start_time = time.time()
         try:
@@ -903,7 +1008,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_force_start_torrent(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Enable force start for one or more torrents via API."""
         start_time = time.time()
         try:
@@ -921,7 +1026,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_recheck_torrent(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Recheck one or more torrents via API."""
         start_time = time.time()
         try:
@@ -937,7 +1042,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_increase_torrent_priority(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Increase queue priority for one or more torrents via API."""
         start_time = time.time()
         try:
@@ -953,7 +1058,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_decrease_torrent_priority(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Decrease queue priority for one or more torrents via API."""
         start_time = time.time()
         try:
@@ -969,7 +1074,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_top_torrent_priority(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Move one or more torrents to top queue priority via API."""
         start_time = time.time()
         try:
@@ -985,7 +1090,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_minimum_torrent_priority(
         self, torrent_hashes: list[str], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Move one or more torrents to minimum queue priority via API."""
         start_time = time.time()
         try:
@@ -1004,7 +1109,7 @@ class NetworkApiController(WindowControllerBase):
         torrent_hash: str,
         updates: dict[str, object],
         **_kw: object,
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Apply editable properties for a single torrent."""
         start_time = time.time()
         try:
@@ -1108,7 +1213,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_set_torrent_download_limit(
         self, torrent_hashes: list[str], limit_bytes: int, **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Set per-torrent download limit (bytes/sec) for selected torrents."""
         start_time = time.time()
         try:
@@ -1126,7 +1231,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_set_torrent_upload_limit(
         self, torrent_hashes: list[str], limit_bytes: int, **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Set per-torrent upload limit (bytes/sec) for selected torrents."""
         start_time = time.time()
         try:
@@ -1144,7 +1249,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_set_global_download_limit(
         self, limit_bytes: int, **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Set global download limit (bytes/sec)."""
         start_time = time.time()
         try:
@@ -1160,7 +1265,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_set_global_upload_limit(
         self, limit_bytes: int, **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Set global upload limit (bytes/sec)."""
         start_time = time.time()
         try:
@@ -1174,7 +1279,7 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_toggle_alt_speed_mode(self, **_kw: object) -> APITaskResult:
+    def _api_toggle_alt_speed_mode(self, **_kw: object) -> APITaskResult[bool]:
         """Toggle alternative/global speed-limit mode."""
         start_time = time.time()
         try:
@@ -1188,7 +1293,9 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_fetch_speed_limits_profile(self, **_kw: object) -> APITaskResult:
+    def _api_fetch_speed_limits_profile(
+        self, **_kw: object
+    ) -> APITaskResult[dict[str, object]]:
         """Fetch normal/alternative speed limits and current alt-speed mode."""
         start_time = time.time()
         try:
@@ -1211,17 +1318,14 @@ class NetworkApiController(WindowControllerBase):
                     break
 
             elapsed = time.time() - start_time
-            return {
-                "data": {
-                    "normal_dl": max(0, normal_dl),
-                    "normal_ul": max(0, normal_ul),
-                    "alt_dl": max(0, alt_dl),
-                    "alt_ul": max(0, alt_ul),
-                    "alt_enabled": bool(mode == 1),
-                },
-                "elapsed": elapsed,
-                "success": True,
+            profile: dict[str, object] = {
+                "normal_dl": max(0, normal_dl),
+                "normal_ul": max(0, normal_ul),
+                "alt_dl": max(0, alt_dl),
+                "alt_ul": max(0, alt_ul),
+                "alt_enabled": bool(mode == 1),
             }
+            return api_task_result(data=profile, elapsed=elapsed, success=True)
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(
@@ -1236,7 +1340,7 @@ class NetworkApiController(WindowControllerBase):
         alt_ul: int,
         alt_enabled: bool,
         **_kw: object,
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Apply normal/alternative speed limits and desired alt-speed mode."""
         start_time = time.time()
         try:
@@ -1272,7 +1376,9 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_fetch_app_preferences(self, **_kw: object) -> APITaskResult:
+    def _api_fetch_app_preferences(
+        self, **_kw: object
+    ) -> APITaskResult[dict[str, object]]:
         """Fetch raw qBittorrent application preferences."""
         start_time = time.time()
         try:
@@ -1289,30 +1395,34 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_apply_app_preferences(
         self, updates: dict[str, object], **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[dict[str, int]]:
         """Apply only changed application preferences."""
         start_time = time.time()
         try:
             normalized_updates = dict(updates or {})
             if not normalized_updates:
                 elapsed = time.time() - start_time
-                return {"data": {"applied": 0}, "elapsed": elapsed, "success": True}
+                return api_task_result(
+                    data={"applied": 0},
+                    elapsed=elapsed,
+                    success=True,
+                )
             with self._create_client() as qb:
                 qb.app_set_preferences(prefs=normalized_updates)
             elapsed = time.time() - start_time
-            return {
-                "data": {"applied": len(normalized_updates)},
-                "elapsed": elapsed,
-                "success": True,
-            }
+            return api_task_result(
+                data={"applied": len(normalized_updates)},
+                elapsed=elapsed,
+                success=True,
+            )
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
-            return {
-                "data": {"applied": 0},
-                "elapsed": elapsed,
-                "success": False,
-                "error": str(e),
-            }
+            return api_task_result(
+                data={"applied": 0},
+                elapsed=elapsed,
+                success=False,
+                error=str(e),
+            )
 
     def _api_set_content_priority(
         self,
@@ -1321,7 +1431,7 @@ class NetworkApiController(WindowControllerBase):
         is_file: bool,
         priority: int,
         **_kw: object,
-    ) -> APITaskResult:
+    ) -> APITaskResult[dict[str, int]]:
         """Set file priority for one file or a whole folder subtree."""
         start_time = time.time()
         try:
@@ -1361,11 +1471,11 @@ class NetworkApiController(WindowControllerBase):
                 )
 
             elapsed = time.time() - start_time
-            return {
-                "data": {"updated_file_count": len(file_ids)},
-                "elapsed": elapsed,
-                "success": True,
-            }
+            return api_task_result(
+                data={"updated_file_count": len(file_ids)},
+                elapsed=elapsed,
+                success=True,
+            )
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
             return api_task_result(
@@ -1379,7 +1489,7 @@ class NetworkApiController(WindowControllerBase):
         new_relative_path: str,
         is_file: bool,
         **_kw: object,
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Rename one file or folder inside a torrent."""
         start_time = time.time()
         try:
@@ -1416,7 +1526,7 @@ class NetworkApiController(WindowControllerBase):
         incomplete_path: str,
         use_incomplete_path: bool,
         **_kw: object,
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Create a new category."""
         start_time = time.time()
         try:
@@ -1445,7 +1555,7 @@ class NetworkApiController(WindowControllerBase):
         incomplete_path: str,
         use_incomplete_path: bool,
         **_kw: object,
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Edit one existing category."""
         start_time = time.time()
         try:
@@ -1467,7 +1577,7 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_delete_category(self, name: str, **_kw: object) -> APITaskResult:
+    def _api_delete_category(self, name: str, **_kw: object) -> APITaskResult[bool]:
         """Delete one category."""
         start_time = time.time()
         try:
@@ -1481,7 +1591,7 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_create_tags(self, tags: list[str], **_kw: object) -> APITaskResult:
+    def _api_create_tags(self, tags: list[str], **_kw: object) -> APITaskResult[bool]:
         """Create one or more tags."""
         start_time = time.time()
         try:
@@ -1495,7 +1605,7 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_delete_tags(self, tags: list[str], **_kw: object) -> APITaskResult:
+    def _api_delete_tags(self, tags: list[str], **_kw: object) -> APITaskResult[bool]:
         """Delete one or more tags."""
         start_time = time.time()
         try:
@@ -1509,7 +1619,7 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_pause_session(self, **_kw: object) -> APITaskResult:
+    def _api_pause_session(self, **_kw: object) -> APITaskResult[bool]:
         """Pause all torrents in current qBittorrent session."""
         start_time = time.time()
         try:
@@ -1523,7 +1633,7 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_resume_session(self, **_kw: object) -> APITaskResult:
+    def _api_resume_session(self, **_kw: object) -> APITaskResult[bool]:
         """Resume all torrents in current qBittorrent session."""
         start_time = time.time()
         try:
@@ -1539,7 +1649,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _api_delete_torrent(
         self, torrent_hashes: list[str], delete_files: bool, **_kw: object
-    ) -> APITaskResult:
+    ) -> APITaskResult[bool]:
         """Delete one or more torrents via API."""
         start_time = time.time()
         try:
@@ -1555,7 +1665,9 @@ class NetworkApiController(WindowControllerBase):
                 data=False, elapsed=elapsed, success=False, error=str(e)
             )
 
-    def _api_ban_peers(self, peers: list[str], **_kw: object) -> APITaskResult:
+    def _api_ban_peers(
+        self, peers: list[str], **_kw: object
+    ) -> APITaskResult[dict[str, list[str]]]:
         """Ban one or more peer endpoints (IP:port) globally in qBittorrent."""
         start_time = time.time()
         try:
@@ -1569,26 +1681,28 @@ class NetworkApiController(WindowControllerBase):
             with self._create_client() as qb:
                 qb.transfer_ban_peers(peers=endpoints)
             elapsed = time.time() - start_time
-            return {"data": {"peers": endpoints}, "elapsed": elapsed, "success": True}
+            return api_task_result(
+                data={"peers": endpoints},
+                elapsed=elapsed,
+                success=True,
+            )
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             elapsed = time.time() - start_time
-            return {
-                "data": {"peers": []},
-                "elapsed": elapsed,
-                "success": False,
-                "error": str(e),
-            }
+            return api_task_result(
+                data={"peers": []},
+                elapsed=elapsed,
+                success=False,
+                error=str(e),
+            )
 
     def _set_categories_from_payload(self, payload: object) -> None:
         """Normalize categories payload and update category state/tree."""
         category_details: dict[str, dict[str, object]] = {}
-        if isinstance(payload, dict):
-            for raw_name, raw_entry in payload.items():
-                name = str(raw_name or "").strip()
-                if not name:
-                    continue
-                entry = self._entry_to_dict(raw_entry)
-                category_details[name] = entry
+        for raw_name, raw_entry in self._object_dict(payload).items():
+            name = str(raw_name or "").strip()
+            if not name:
+                continue
+            category_details[name] = self._entry_to_dict(raw_entry)
 
         self.category_details = category_details
         self.categories = sorted(category_details.keys())
@@ -1598,9 +1712,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _category_save_path_by_name(self, category_name: str) -> str:
         """Resolve default save path for one category from cached details."""
-        details = self.category_details.get(str(category_name or ""), {})
-        if not isinstance(details, dict):
-            return ""
+        details = self._category_details_map().get(str(category_name or ""), {})
         for key in ("save_path", "savePath"):
             value = str(details.get(key, "") or "").strip()
             if value:
@@ -1609,9 +1721,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _category_incomplete_path_by_name(self, category_name: str) -> str:
         """Resolve incomplete path for one category from cached details."""
-        details = self.category_details.get(str(category_name or ""), {})
-        if not isinstance(details, dict):
-            return ""
+        details = self._category_details_map().get(str(category_name or ""), {})
         for key in ("download_path", "downloadPath"):
             value = str(details.get(key, "") or "").strip()
             if value:
@@ -1620,9 +1730,7 @@ class NetworkApiController(WindowControllerBase):
 
     def _category_use_incomplete_path_by_name(self, category_name: str) -> bool:
         """Resolve whether incomplete path is enabled for one category."""
-        details = self.category_details.get(str(category_name or ""), {})
-        if not isinstance(details, dict):
-            return False
+        details = self._category_details_map().get(str(category_name or ""), {})
         for key in (
             "enable_download_path",
             "enableDownloadPath",
@@ -1641,7 +1749,7 @@ class NetworkApiController(WindowControllerBase):
                 "incomplete_path": self._category_incomplete_path_by_name(name),
                 "use_incomplete_path": self._category_use_incomplete_path_by_name(name),
             }
-            for name in self.categories
+            for name in self._category_names()
         }
 
     def _sync_taxonomy_dialog_data(self) -> None:
@@ -1651,9 +1759,9 @@ class NetworkApiController(WindowControllerBase):
             return
         if not dialog.isVisible():
             return
-        dialog.set_taxonomy_data(self._taxonomy_category_data(), list(self.tags))
+        dialog.set_taxonomy_data(self._taxonomy_category_data(), self._tag_names())
 
-    def _on_categories_loaded(self, result: dict) -> None:
+    def _on_categories_loaded(self, result: APITaskResult[object]) -> None:
         """Handle categories loaded."""
         try:
             if not result.get("success", False):
@@ -1684,7 +1792,7 @@ class NetworkApiController(WindowControllerBase):
             self._set_categories_from_payload(result.get("data", {}))
             self._log(
                 "INFO",
-                f"Loaded {len(self.categories)} categories",
+                f"Loaded {len(self._category_names())} categories",
                 result.get("elapsed", 0),
             )
 
@@ -1696,7 +1804,7 @@ class NetworkApiController(WindowControllerBase):
             self._hide_progress()
             self._set_status(f"Error loading categories: {e}")
 
-    def _on_tags_loaded(self, result: dict) -> None:
+    def _on_tags_loaded(self, result: APITaskResult[list[str]]) -> None:
         """Handle tags loaded."""
         try:
             if not result.get("success", False):
@@ -1715,10 +1823,14 @@ class NetworkApiController(WindowControllerBase):
                 )
                 return
 
-            self.tags = result.get("data", [])
+            self.tags = list(result.get("data", []))
             self._update_tag_tree()
             self._sync_taxonomy_dialog_data()
-            self._log("INFO", f"Loaded {len(self.tags)} tags", result.get("elapsed", 0))
+            self._log(
+                "INFO",
+                f"Loaded {len(self._tag_names())} tags",
+                result.get("elapsed", 0),
+            )
 
             # Load torrents next
             self._show_progress("Loading torrents...")
@@ -1730,7 +1842,7 @@ class NetworkApiController(WindowControllerBase):
             self._hide_progress()
             self._set_status(f"Error loading tags: {e}")
 
-    def _on_torrents_loaded(self, result: dict) -> None:
+    def _on_torrents_loaded(self, result: APITaskResult[list[object]]) -> None:
         """Handle torrents loaded."""
         try:
             if not result.get("success", False):
@@ -1758,7 +1870,7 @@ class NetworkApiController(WindowControllerBase):
             self._latest_torrent_fetch_remote_filtered = bool(
                 result.get("remote_filtered", False)
             )
-            self.all_torrents = result.get("data", [])
+            self.all_torrents = list(result.get("data", []))
             self._invalidate_filter_count_cache()
             self._update_filter_tree_count_labels()
             if "alt_speed_mode" in result:
@@ -1781,7 +1893,7 @@ class NetworkApiController(WindowControllerBase):
             self._record_session_timeline_sample(self._last_alt_speed_mode)
             self._log(
                 "INFO",
-                f"Loaded {len(self.all_torrents)} torrents",
+                f"Loaded {len(self._all_torrents_list())} torrents",
                 result.get("elapsed", 0),
             )
             self._update_window_title_speeds()
@@ -1874,7 +1986,9 @@ class NetworkApiController(WindowControllerBase):
         self.tbl_torrents.clearSelection()
         self.tbl_torrents.selectRow(previous_row)
 
-    def _on_content_cache_refreshed(self, result: dict[str, object]) -> None:
+    def _on_content_cache_refreshed(
+        self, result: APITaskResult[dict[str, TorrentCacheEntry]]
+    ) -> None:
         """Handle background refresh of cached torrent content trees."""
         try:
             if not result.get("success", False):
@@ -1886,11 +2000,9 @@ class NetworkApiController(WindowControllerBase):
                 )
                 return
 
-            updates = result.get("data", {})
-            if not isinstance(updates, dict):
-                updates = {}
-            if updates:
-                self.content_cache.update(updates)
+            cache_updates = result.get("data", {})
+            if cache_updates:
+                self._content_cache_map().update(cache_updates)
                 if self._suppress_next_cache_save:
                     self._suppress_next_cache_save = False
                     self._log(
@@ -1900,39 +2012,37 @@ class NetworkApiController(WindowControllerBase):
                     self._save_content_cache()
                 self._log(
                     "INFO",
-                    f"Content cache refreshed for {len(updates)} torrents",
+                    f"Content cache refreshed for {len(cache_updates)} torrents",
                     result.get("elapsed", 0),
                 )
 
                 # Re-apply current filters to include newly-cached file matches
-                if self.current_file_filter:
+                if self._file_filter_value():
                     self._apply_filters()
 
                 # If selected torrent cache got updated, refresh content tab from cache
                 selected = getattr(self, "_selected_torrent", None)
                 selected_hash = getattr(selected, "hash", "") if selected else ""
-                if selected_hash and selected_hash in updates:
+                if selected_hash and selected_hash in cache_updates:
                     self._show_cached_torrent_content(selected_hash)
 
-            errors = result.get("errors", {})
-            if isinstance(errors, dict) and errors:
+            errors = self._object_dict(result.get("errors", {}))
+            if errors:
                 self._log(
                     "ERROR", f"Content cache refresh errors for {len(errors)} torrents"
                 )
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Exception in _on_content_cache_refreshed: {e}")
 
-    def _on_add_torrent_complete(self, result: dict[str, object]) -> None:
+    def _on_add_torrent_complete(self, result: APITaskResult[bool]) -> None:
         """Handle torrent add completion."""
-        details = result.get("details", {}) if isinstance(result, dict) else {}
-        if isinstance(details, dict):
+        details = self._object_dict(result.get("details", {}))
+        if details:
             added_count = self._safe_int(
                 details.get("added_urls", 0), 0
             ) + self._safe_int(details.get("added_files", 0), 0)
-            failed_sources = details.get("failed_sources", [])
-            failed_count = (
-                len(failed_sources) if isinstance(failed_sources, list) else 0
-            )
+            failed_sources = self._object_list(details.get("failed_sources", []))
+            failed_count = len(failed_sources)
         else:
             added_count = 0
             failed_count = 0
@@ -1965,7 +2075,9 @@ class NetworkApiController(WindowControllerBase):
         if final_status_text:
             self._set_status(final_status_text)
 
-    def _on_apply_selected_torrent_edits_done(self, result: dict) -> None:
+    def _on_apply_selected_torrent_edits_done(
+        self, result: APITaskResult[bool]
+    ) -> None:
         """Handle completion of selected torrent edit apply action."""
         if result.get("success"):
             self._log("INFO", "Torrent edits applied", result.get("elapsed", 0))
@@ -1981,7 +2093,7 @@ class NetworkApiController(WindowControllerBase):
             self._set_status(f"Failed to apply torrent edits: {error}")
         self._hide_progress()
 
-    def _on_task_completed(self, task_name: str, result: APITaskResult) -> None:
+    def _on_task_completed(self, task_name: str, result: APITaskResult[object]) -> None:
         """Handle task completion."""
         self._maybe_bump_auto_refresh_interval_from_api_elapsed(task_name, result)
         self._log("DEBUG", f"Task completed: {task_name}")
@@ -2023,11 +2135,9 @@ class NetworkApiController(WindowControllerBase):
         )
 
     def _maybe_bump_auto_refresh_interval_from_api_elapsed(
-        self, task_name: str, result: object
+        self, task_name: str, result: APITaskResult[object]
     ) -> None:
         """Increase auto-refresh interval when one API task exceeds current interval."""
-        if not isinstance(result, dict):
-            return
         elapsed_seconds = self._safe_float(result.get("elapsed", 0.0), 0.0)
         self._maybe_bump_auto_refresh_interval_for_elapsed(
             source="api_task",
@@ -2060,11 +2170,12 @@ class NetworkApiController(WindowControllerBase):
             getattr(self.api_queue, "current_task_name", "") or ""
         ).strip()
         pending_task = getattr(self.api_queue, "pending_task", None)
-        pending_name = (
-            str(pending_task[0]).strip()
-            if isinstance(pending_task, tuple) and pending_task
-            else ""
+        pending_task_tuple = (
+            cast("tuple[object, ...]", pending_task)
+            if isinstance(pending_task, tuple)
+            else ()
         )
+        pending_name = str(pending_task_tuple[0]).strip() if pending_task_tuple else ""
         queue_busy_with_non_refresh = bool(
             getattr(self.api_queue, "current_worker", None)
         ) and (
