@@ -295,23 +295,23 @@ class AddTorrentDialog(QDialog):
     def _append_multiline_entries(self, editor: QTextEdit, entries: list[str]) -> None:
         """Append unique lines to one multiline editor while preserving order."""
         existing = self._split_multiline(editor.toPlainText())
-        combined = existing + [
+        combined: list[str] = existing + [
             str(entry).strip() for entry in (entries or []) if str(entry).strip()
         ]
         # Preserve order while removing duplicates.
-        deduped = list(dict.fromkeys(combined))
+        deduped: list[str] = list(dict.fromkeys(combined))
         editor.setPlainText("\n".join(deduped))
 
     def _get_selected_tags(self) -> str:
         """Return comma-separated string of checked tags."""
-        selected = []
+        selected: list[str] = []
         for i in range(self.lst_tags.count()):
             item = self.lst_tags.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 selected.append(item.text())
         selected.extend(self._split_csv(self.txt_tags_extra.text()))
         # preserve order but remove duplicates
-        deduped = list(dict.fromkeys(selected))
+        deduped: list[str] = list(dict.fromkeys(selected))
         return ",".join(deduped)
 
     @staticmethod
@@ -638,7 +638,7 @@ class TaxonomyManagerDialog(QDialog):
         self.btn_category_new.setEnabled(enabled)
         self.btn_category_apply.setEnabled(enabled)
         self.btn_category_delete.setEnabled(
-            enabled and self.lst_categories.currentItem() is not None
+            enabled and self.lst_categories.currentRow() >= 0
         )
         self.chk_category_use_incomplete.setEnabled(enabled)
         self.txt_category_incomplete_path.setEnabled(
@@ -671,7 +671,7 @@ class TaxonomyManagerDialog(QDialog):
                 self.lst_categories.setCurrentItem(matches[0])
             else:
                 self._set_category_create_mode()
-        elif self.lst_categories.currentItem() is None:
+        elif self.lst_categories.currentRow() < 0:
             self._set_category_create_mode()
 
         self.lst_tags_manage.clear()
@@ -696,11 +696,7 @@ class TaxonomyManagerDialog(QDialog):
             return
 
         name = current.text().strip()
-        details = (
-            self._category_data.get(name, {})
-            if isinstance(self._category_data, dict)
-            else {}
-        )
+        details = self._category_data.get(name, {})
         self.txt_category_name.setReadOnly(True)
         self.txt_category_name.setText(name)
         self.txt_category_save_path.setText(str(details.get("save_path", "") or ""))
@@ -715,7 +711,7 @@ class TaxonomyManagerDialog(QDialog):
 
     def _set_category_create_mode(self) -> None:
         """Prepare editor for creating a new category."""
-        if self.lst_categories.currentItem() is not None:
+        if self.lst_categories.currentRow() >= 0:
             prev = self.lst_categories.blockSignals(True)
             self.lst_categories.clearSelection()
             self.lst_categories.setCurrentRow(-1)
@@ -765,7 +761,7 @@ class TaxonomyManagerDialog(QDialog):
     def _parse_csv_entries(raw_text: str) -> list[str]:
         """Parse comma-separated text into unique ordered tag values."""
         values: list[str] = []
-        seen = set()
+        seen: set[str] = set()
         for part in str(raw_text or "").split(","):
             value = part.strip()
             if value and value not in seen:
@@ -961,7 +957,7 @@ class AppPreferencesDialog(QDialog):
         """Load preferences into editable tree and reset change tracking."""
         self._updating_tree = True
         try:
-            source = dict(preferences or {}) if isinstance(preferences, dict) else {}
+            source = dict(preferences)
             self._original_preferences = copy.deepcopy(source)
             self._edited_preferences = copy.deepcopy(source)
             self._path_items.clear()
@@ -991,6 +987,23 @@ class AppPreferencesDialog(QDialog):
         return isinstance(value, (dict, list))
 
     @staticmethod
+    def _as_object_dict(value: object) -> dict[str, object]:
+        """Normalize one object to a plain string-key dict when possible."""
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(key): entry
+            for key, entry in cast("dict[object, object]", value).items()
+        }
+
+    @staticmethod
+    def _as_object_list(value: object) -> list[object]:
+        """Normalize one object to a plain list when possible."""
+        if not isinstance(value, list):
+            return []
+        return list(cast("list[object]", value))
+
+    @staticmethod
     def _value_type_name(value: object) -> str:
         """Return a human-readable type name for one preference value."""
         if value is None:
@@ -1016,22 +1029,27 @@ class AppPreferencesDialog(QDialog):
             return "null"
         if isinstance(value, bool):
             return "true" if value else "false"
-        if isinstance(value, (dict, list)):
+        object_dict = AppPreferencesDialog._as_object_dict(value)
+        object_list = AppPreferencesDialog._as_object_list(value)
+        if object_dict or object_list:
+            payload: object = object_dict if object_dict else object_list
             try:
-                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+                return json.dumps(payload, ensure_ascii=False, sort_keys=True)
             except (TypeError, ValueError):
-                return str(value)
+                return str(payload)
         return str(value)
 
     @staticmethod
     def _container_summary(value: object) -> str:
         """Return compact summary label for dict/list containers."""
-        if isinstance(value, dict):
-            count = len(value)
+        object_dict = AppPreferencesDialog._as_object_dict(value)
+        if object_dict:
+            count = len(object_dict)
             suffix = "key" if count == 1 else "keys"
             return f"{{{count} {suffix}}}"
-        if isinstance(value, list):
-            count = len(value)
+        object_list = AppPreferencesDialog._as_object_list(value)
+        if object_list:
+            count = len(object_list)
             suffix = "item" if count == 1 else "items"
             return f"[{count} {suffix}]"
         return AppPreferencesDialog._value_to_text(value)
@@ -1053,18 +1071,20 @@ class AppPreferencesDialog(QDialog):
             parent_item.addChild(item)
         self._path_items[path] = item
 
-        if isinstance(value, dict) and value:
-            item.setText(1, self._container_summary(value))
-            for child_key in sorted(value.keys(), key=lambda v: str(v)):
+        dict_value = self._as_object_dict(value)
+        if dict_value:
+            item.setText(1, self._container_summary(dict_value))
+            for child_key in sorted(dict_value.keys(), key=str):
                 child_path = (*path, child_key)
                 self._add_pref_item(
-                    item, child_path, str(child_key), value.get(child_key)
+                    item, child_path, str(child_key), dict_value.get(child_key)
                 )
             return
 
-        if isinstance(value, list) and value:
-            item.setText(1, self._container_summary(value))
-            for index, child_value in enumerate(value):
+        list_value = self._as_object_list(value)
+        if list_value:
+            item.setText(1, self._container_summary(list_value))
+            for index, child_value in enumerate(list_value):
                 child_path = (*path, index)
                 self._add_pref_item(item, child_path, f"[{index}]", child_value)
             return
@@ -1080,9 +1100,9 @@ class AppPreferencesDialog(QDialog):
     def _normalize_item_path(path_data: object) -> tuple[object, ...]:
         """Normalize serialized path metadata to tuple form."""
         if isinstance(path_data, tuple):
-            return path_data
+            return cast("tuple[object, ...]", path_data)
         if isinstance(path_data, list):
-            return tuple(path_data)
+            return tuple(cast("list[object]", path_data))
         return ()
 
     @staticmethod
@@ -1133,6 +1153,8 @@ class AppPreferencesDialog(QDialog):
         """Parse editor text using original value type as parsing guide."""
         raw = str(text or "")
         stripped = raw.strip()
+        example_dict = AppPreferencesDialog._as_object_dict(example)
+        example_list = AppPreferencesDialog._as_object_list(example)
 
         if isinstance(example, bool):
             return AppPreferencesDialog._parse_bool(stripped)
@@ -1144,20 +1166,22 @@ class AppPreferencesDialog(QDialog):
             if not stripped:
                 raise ValueError("expected float")
             return float(stripped)
-        if isinstance(example, dict):
+        if example_dict:
             if not stripped:
                 return {}
             parsed = json.loads(stripped)
-            if not isinstance(parsed, dict):
+            parsed_dict = AppPreferencesDialog._as_object_dict(parsed)
+            if not parsed_dict:
                 raise ValueError("expected JSON object")
-            return parsed
-        if isinstance(example, list):
+            return parsed_dict
+        if example_list:
             if not stripped:
                 return []
             parsed = json.loads(stripped)
-            if not isinstance(parsed, list):
+            parsed_list = AppPreferencesDialog._as_object_list(parsed)
+            if not parsed_list:
                 raise ValueError("expected JSON array")
-            return parsed
+            return parsed_list
         if example is None:
             if stripped.lower() in {"", "null", "none"}:
                 return None
@@ -1496,7 +1520,7 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     def _collect_values(self) -> dict[str, object]:
         """Collect current friendly form state into preference payload dict."""
-        values = {
+        values: dict[str, object] = {
             "save_path": str(self.txt_save_path.text() or "").strip(),
             "temp_path_enabled": bool(self.chk_temp_path_enabled.isChecked()),
             "temp_path": str(self.txt_temp_path.text() or "").strip(),
@@ -1530,7 +1554,7 @@ class FriendlyAddPreferencesDialog(QDialog):
 
     def set_preferences(self, preferences: dict[str, object]) -> None:
         """Load selected friendly fields from raw app preferences payload."""
-        prefs = dict(preferences or {}) if isinstance(preferences, dict) else {}
+        prefs = dict(preferences)
 
         self.txt_save_path.setText(str(prefs.get("save_path", "") or ""))
         self.chk_temp_path_enabled.setChecked(

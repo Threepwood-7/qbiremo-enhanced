@@ -2,7 +2,8 @@
 
 import html
 import json
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import (
@@ -34,17 +35,22 @@ from ..helpers import (
     parse_tags,
 )
 from ..models.torrent import (
+    PeerRow,
     TorrentFileEntry,
+    TrackerRow,
 )
 from ..widgets import NumericTableWidgetItem
 from .base import RECOVERABLE_CONTROLLER_EXCEPTIONS, WindowControllerBase
 
-if TYPE_CHECKING:
-    from PySide6.QtGui import QAction
-
 
 class DetailsContentController(WindowControllerBase):
     """Render selected torrent details, peers/trackers, and content tree."""
+
+    @staticmethod
+    def _result_error(result: dict[str, object]) -> str:
+        """Extract a human-readable error string from one API-task result dict."""
+        value = result.get("error", "Unknown error")
+        return str(value or "Unknown error")
 
     def _populate_content_tree(self, files: list[TorrentFileEntry]) -> None:
         """Populate the content tab from cached/serialized file entries."""
@@ -56,16 +62,10 @@ class DetailsContentController(WindowControllerBase):
             # Build a nested dict for directory structure
             dir_nodes: dict[str, QTreeWidgetItem] = {}
             for f in files:
-                if isinstance(f, dict):
-                    name = str(f.get("name", "") or "")
-                    size = self._safe_int(f.get("size", 0), 0)
-                    progress = self._safe_float(f.get("progress", 0.0), 0.0)
-                    priority = self._safe_int(f.get("priority", 1), 1)
-                else:
-                    name = getattr(f, "name", "") or ""
-                    size = getattr(f, "size", 0)
-                    progress = getattr(f, "progress", 0)
-                    priority = getattr(f, "priority", 1)
+                name = str(f.get("name", "") or "")
+                size = self._safe_int(f.get("size", 0), 0)
+                progress = self._safe_float(f.get("progress", 0.0), 0.0)
+                priority = self._safe_int(f.get("priority", 1), 1)
 
                 if not name:
                     continue
@@ -118,7 +118,12 @@ class DetailsContentController(WindowControllerBase):
     def _apply_content_filter(self) -> None:
         """Apply content-file filter to currently loaded selected torrent files."""
         try:
-            files = self.current_content_files or []
+            raw_content_files = getattr(self, "current_content_files", [])
+            files = (
+                cast("list[TorrentFileEntry]", raw_content_files)
+                if isinstance(raw_content_files, list)
+                else []
+            )
             pattern = self.current_content_filter
 
             if not files:
@@ -129,7 +134,7 @@ class DetailsContentController(WindowControllerBase):
                 return
 
             if pattern:
-                filtered_files = []
+                filtered_files: list[TorrentFileEntry] = []
                 for entry in files:
                     name = str(entry.get("name", "") or "")
                     normalized = name.replace("\\", "/")
@@ -320,7 +325,7 @@ class DetailsContentController(WindowControllerBase):
 
     def _build_peers_context_menu(self) -> QMenu:
         """Build context menu for peers table."""
-        menu = QMenu(self)
+        menu = QMenu(cast("Any", self.window))
         has_data = self._details_table_has_data_rows(self.tbl_peers)
         has_selection = (
             has_data and self._selected_table_row(self.tbl_peers) is not None
@@ -328,21 +333,21 @@ class DetailsContentController(WindowControllerBase):
         endpoint = self._selected_peer_endpoint()
         has_endpoint = bool(endpoint)
 
-        action_copy_all = cast("QAction", menu.addAction("Copy All Peers Info"))
+        action_copy_all = menu.addAction("Copy All Peers Info")
         action_copy_all.triggered.connect(self._copy_all_peers_info)
         action_copy_all.setEnabled(has_data)
 
-        action_copy_peer = cast("QAction", menu.addAction("Copy Peer Info"))
+        action_copy_peer = menu.addAction("Copy Peer Info")
         action_copy_peer.triggered.connect(self._copy_selected_peer_info)
         action_copy_peer.setEnabled(has_selection)
 
-        action_copy_ip_port = cast("QAction", menu.addAction("Copy Peer IP:port"))
+        action_copy_ip_port = menu.addAction("Copy Peer IP:port")
         action_copy_ip_port.triggered.connect(self._copy_selected_peer_ip_port)
         action_copy_ip_port.setEnabled(has_endpoint)
 
         menu.addSeparator()
 
-        action_ban = cast("QAction", menu.addAction("Ban Peer"))
+        action_ban = menu.addAction("Ban Peer")
         action_ban.triggered.connect(self._ban_selected_peer)
         action_ban.setEnabled(has_endpoint)
         return menu
@@ -363,7 +368,7 @@ class DetailsContentController(WindowControllerBase):
             return
 
         reply = QMessageBox.question(
-            self,
+            cast("Any", self.window),
             "Ban Peer",
             f"Ban peer {endpoint}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -373,11 +378,15 @@ class DetailsContentController(WindowControllerBase):
             return
 
         self._show_progress("Banning peer...")
+
+        def _on_ban_done(
+            result: dict[str, object],
+            peer: str = endpoint,
+        ) -> None:
+            self._on_ban_peer_done(peer, result)
+
         self.api_queue.add_task(
-            "ban_peer",
-            self._api_ban_peers,
-            lambda r, peer=endpoint: self._on_ban_peer_done(peer, r),
-            [endpoint],
+            "ban_peer", self._api_ban_peers, _on_ban_done, [endpoint]
         )
 
     @staticmethod
@@ -555,7 +564,7 @@ class DetailsContentController(WindowControllerBase):
         self, available_tags: list[str], selected_tags: list[str]
     ) -> list[str] | None:
         """Show multi-select picker for known tags and return selected values."""
-        dialog = QDialog(self)
+        dialog = QDialog(cast("Any", self.window))
         dialog.setWindowTitle("Add Tags")
         parent_rect = self.frameGeometry()
         parent_width = (
@@ -641,10 +650,20 @@ class DetailsContentController(WindowControllerBase):
         if value is None:
             return ""
         if isinstance(value, (dict, list, tuple, set)):
+            payload = (
+                {
+                    str(key): entry
+                    for key, entry in cast("dict[object, object]", value).items()
+                }
+                if isinstance(value, dict)
+                else list(cast("list[object] | tuple[object, ...]", value))
+                if isinstance(value, (list, tuple))
+                else sorted(str(entry) for entry in cast("set[object]", value))
+            )
             try:
-                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+                return json.dumps(payload, ensure_ascii=False, sort_keys=True)
             except (TypeError, ValueError, OverflowError, RecursionError):
-                return str(value)
+                return str(payload)
         return str(value)
 
     @staticmethod
@@ -666,15 +685,15 @@ class DetailsContentController(WindowControllerBase):
 
     @staticmethod
     def _build_details_columns(
-        rows: list[dict[str, object]], preferred: list[str]
+        rows: Sequence[Mapping[str, object]], preferred: list[str]
     ) -> list[str]:
         """Build ordered column list with preferred first, then remaining keys."""
-        key_set = set()
+        key_set: set[str] = set()
         for row in rows:
             key_set.update(str(k) for k in row)
 
         ordered = [k for k in preferred if k in key_set]
-        remainder = sorted(k for k in key_set if k not in ordered)
+        remainder: list[str] = sorted(k for k in key_set if k not in ordered)
         return ordered + remainder
 
     def _set_details_table_message(self, table: QTableWidget, message: str) -> None:
@@ -694,7 +713,7 @@ class DetailsContentController(WindowControllerBase):
     def _populate_details_table(
         self,
         table: QTableWidget,
-        rows: list[dict[str, object]],
+        rows: Sequence[Mapping[str, object]],
         preferred_columns: list[str],
     ) -> None:
         """Populate one details table (trackers/peers) with dynamic columns."""
@@ -739,20 +758,31 @@ class DetailsContentController(WindowControllerBase):
         self._set_details_table_message(self.tbl_trackers, "Loading trackers...")
         self._set_details_table_message(self.tbl_peers, "Loading peers...")
 
+        def _on_trackers_loaded(
+            result: object,
+            h: str = torrent_hash,
+        ) -> None:
+            self._on_selected_trackers_loaded(h, cast("dict[str, object]", result))
+
         self.details_api_queue.add_task(
             "load_selected_trackers",
             self._fetch_selected_torrent_trackers,
-            lambda r, h=torrent_hash: self._on_selected_trackers_loaded(h, r),
+            _on_trackers_loaded,
             torrent_hash,
         )
 
-    def _on_selected_trackers_loaded(self, torrent_hash: str, result: dict) -> None:
+    def _on_selected_trackers_loaded(
+        self,
+        torrent_hash: str,
+        result: dict[str, object],
+    ) -> None:
         """Populate Trackers table and then load Peers for same selection."""
         if self._selected_torrent_hash() != torrent_hash:
             return
 
         if result.get("success"):
-            rows = result.get("data", []) or []
+            data = result.get("data", [])
+            rows = cast("list[TrackerRow]", data) if isinstance(data, list) else []
             self._populate_details_table(
                 self.tbl_trackers,
                 rows,
@@ -768,25 +798,36 @@ class DetailsContentController(WindowControllerBase):
                 ],
             )
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(result)
             self._set_details_table_message(
                 self.tbl_trackers, f"Failed to load trackers: {error}"
             )
 
+        def _on_peers_loaded(
+            next_result: object,
+            h: str = torrent_hash,
+        ) -> None:
+            self._on_selected_peers_loaded(h, cast("dict[str, object]", next_result))
+
         self.details_api_queue.add_task(
             "load_selected_peers",
             self._fetch_selected_torrent_peers,
-            lambda r, h=torrent_hash: self._on_selected_peers_loaded(h, r),
+            _on_peers_loaded,
             torrent_hash,
         )
 
-    def _on_selected_peers_loaded(self, torrent_hash: str, result: dict) -> None:
+    def _on_selected_peers_loaded(
+        self,
+        torrent_hash: str,
+        result: dict[str, object],
+    ) -> None:
         """Populate Peers table for currently selected torrent."""
         if self._selected_torrent_hash() != torrent_hash:
             return
 
         if result.get("success"):
-            rows = result.get("data", []) or []
+            data = result.get("data", [])
+            rows = cast("list[PeerRow]", data) if isinstance(data, list) else []
             self._populate_details_table(
                 self.tbl_peers,
                 rows,
@@ -810,7 +851,7 @@ class DetailsContentController(WindowControllerBase):
                 ],
             )
         else:
-            error = result.get("error", "Unknown error")
+            error = self._result_error(result)
             self._set_details_table_message(
                 self.tbl_peers, f"Failed to load peers: {error}"
             )
@@ -1013,7 +1054,11 @@ class DetailsContentController(WindowControllerBase):
     def _browse_torrent_edit_save_path(self) -> None:
         """Browse for a new torrent save path."""
         initial = self.txt_torrent_edit_save_path.text().strip()
-        selected = QFileDialog.getExistingDirectory(self, "Select Save Path", initial)
+        selected = QFileDialog.getExistingDirectory(
+            cast("Any", self.window),
+            "Select Save Path",
+            initial,
+        )
         if selected:
             self.txt_torrent_edit_save_path.setText(selected)
 
@@ -1021,7 +1066,9 @@ class DetailsContentController(WindowControllerBase):
         """Browse for a new torrent incomplete save path."""
         initial = self.txt_torrent_edit_incomplete_path.text().strip()
         selected = QFileDialog.getExistingDirectory(
-            self, "Select Incomplete Save Path", initial
+            cast("Any", self.window),
+            "Select Incomplete Save Path",
+            initial,
         )
         if selected:
             self.txt_torrent_edit_incomplete_path.setText(selected)

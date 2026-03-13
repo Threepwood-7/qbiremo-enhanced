@@ -1,7 +1,7 @@
 """Feature controllers for MainWindow composition."""
 
 import json
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt
@@ -46,7 +46,7 @@ class _StayOpenOnToggleMenu(QMenu):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         action = self.actionAt(event.position().toPoint())
-        if action is not None and action.isCheckable() and action.isEnabled():
+        if action.isCheckable() and action.isEnabled():
             action.setChecked(not action.isChecked())
             event.accept()
             return
@@ -55,7 +55,7 @@ class _StayOpenOnToggleMenu(QMenu):
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
             action = self.activeAction()
-            if action is not None and action.isCheckable() and action.isEnabled():
+            if action.isCheckable() and action.isEnabled():
                 action.setChecked(not action.isChecked())
                 event.accept()
                 return
@@ -65,9 +65,60 @@ class _StayOpenOnToggleMenu(QMenu):
 class FilterTableController(WindowControllerBase):
     """Manage filter tree state and torrent table rendering."""
 
+    def _all_torrents_list(self) -> list[object]:
+        """Return current torrent snapshot as a plain object list."""
+        torrents = getattr(self, "all_torrents", [])
+        return (
+            list(cast("list[object]", torrents)) if isinstance(torrents, list) else []
+        )
+
+    @staticmethod
+    def _filter_item_payload(item: QTreeWidgetItem) -> tuple[str, object] | None:
+        """Extract normalized filter-kind/value payload from one tree item."""
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(data, tuple):
+            return None
+        raw_data = cast("tuple[object, ...]", data)
+        if len(raw_data) != 2:
+            return None
+        kind, value = raw_data
+        return (str(kind), value)
+
+    def _status_filter_value(self) -> str:
+        """Return active status filter as normalized text."""
+        return str(getattr(self, "current_status_filter", "all") or "all")
+
+    def _category_filter_value(self) -> object:
+        """Return active category filter value."""
+        return getattr(self, "current_category_filter", None)
+
+    def _tag_filter_value(self) -> object:
+        """Return active tag filter value."""
+        return getattr(self, "current_tag_filter", None)
+
+    def _size_bucket_value(self) -> tuple[int, int] | None:
+        """Return active size bucket when set."""
+        bucket = getattr(self, "current_size_bucket", None)
+        return (
+            cast("tuple[int, int] | None", bucket)
+            if isinstance(bucket, tuple)
+            else None
+        )
+
+    def _tracker_filter_value(self) -> object:
+        """Return active tracker filter value."""
+        return getattr(self, "current_tracker_filter", None)
+
+    def _tracker_list(self) -> list[str]:
+        """Return extracted tracker hostnames as plain text."""
+        trackers = getattr(self, "trackers", [])
+        if not isinstance(trackers, list):
+            return []
+        return [str(tracker) for tracker in cast("list[object]", trackers)]
+
     def _filter_count_snapshot_signature(self) -> tuple[int, int]:
         """Return lightweight signature for current torrent snapshot."""
-        torrents = self.all_torrents if isinstance(self.all_torrents, list) else []
+        torrents = self._all_torrents_list()
         return (id(torrents), len(torrents))
 
     def _invalidate_filter_count_cache(self) -> None:
@@ -85,7 +136,7 @@ class FilterTableController(WindowControllerBase):
         ):
             return
 
-        torrents = self.all_torrents if isinstance(self.all_torrents, list) else []
+        torrents = self._all_torrents_list()
         status_counts = dict.fromkeys(STATUS_FILTERS, 0)
         status_counts["all"] = len(torrents)
         category_counts: dict[object, int] = {None: len(torrents)}
@@ -115,15 +166,15 @@ class FilterTableController(WindowControllerBase):
     def _is_filter_item_active(self, kind: str, value: object) -> bool:
         """Return whether a filter tree item is currently active."""
         if kind == "status":
-            return value == self.current_status_filter
+            return value == self._status_filter_value()
         if kind == "category":
-            return value == self.current_category_filter
+            return value == self._category_filter_value()
         if kind == "tag":
-            return value == self.current_tag_filter
+            return value == self._tag_filter_value()
         if kind == "size":
-            return value == self.current_size_bucket
+            return value == self._size_bucket_value()
         if kind == "tracker":
-            return value == self.current_tracker_filter
+            return value == self._tracker_filter_value()
         return False
 
     def _refresh_filter_tree_highlights(self) -> None:
@@ -148,10 +199,10 @@ class FilterTableController(WindowControllerBase):
                 item = section.child(j)
                 if item is None:
                     continue
-                data = item.data(0, Qt.ItemDataRole.UserRole)
-                if not isinstance(data, tuple) or len(data) != 2:
+                payload = self._filter_item_payload(item)
+                if payload is None:
                     continue
-                kind, value = data
+                kind, value = payload
                 is_active = self._is_filter_item_active(kind, value)
 
                 item.setBackground(0, active_brush if is_active else clear_brush)
@@ -161,43 +212,44 @@ class FilterTableController(WindowControllerBase):
 
     def _create_torrent_columns_menu(self, parent_menu: QMenu) -> None:
         """Create View -> Torrent Columns submenu with per-column visibility toggles."""
-        columns_menu = _StayOpenOnToggleMenu("Torrent Colu&mns", self)
+        columns_menu = _StayOpenOnToggleMenu(
+            "Torrent Colu&mns", cast("Any", self.window)
+        )
         parent_menu.addMenu(columns_menu)
-        action_basic_view = QAction("&Basic View", self)
+        action_basic_view = columns_menu.addAction("&Basic View")
         action_basic_view.triggered.connect(self._apply_basic_torrent_view)
-        columns_menu.addAction(action_basic_view)
 
-        action_medium_view = QAction("&Medium View", self)
+        action_medium_view = columns_menu.addAction("&Medium View")
         action_medium_view.triggered.connect(self._apply_medium_torrent_view)
-        columns_menu.addAction(action_medium_view)
 
-        action_save_current = QAction("&Save Current View..", self)
+        action_save_current = columns_menu.addAction("&Save Current View..")
         action_save_current.triggered.connect(self._save_current_torrent_view)
-        columns_menu.addAction(action_save_current)
 
         self.saved_torrent_views_menu = columns_menu.addMenu("Sa&ved Views")
         self._refresh_saved_torrent_views_menu()
 
         columns_menu.addSeparator()
-        self.column_visibility_actions = {}
+        column_visibility_actions: dict[str, QAction] = {}
 
         for idx, column in enumerate(self.torrent_columns):
             key = column["key"]
-            action = QAction(column["label"], self)
+            action = columns_menu.addAction(str(column["label"]))
             action.setCheckable(True)
             action.setChecked(not self.tbl_torrents.isColumnHidden(idx))
-            action.toggled.connect(
-                lambda checked, column_key=key: self._set_torrent_column_visible(
-                    column_key, checked
-                )
-            )
-            columns_menu.addAction(action)
-            self.column_visibility_actions[key] = action
+
+            def _on_toggled(
+                checked: bool,
+                column_key: str = str(key),
+            ) -> None:
+                self._set_torrent_column_visible(column_key, checked)
+
+            action.toggled.connect(_on_toggled)
+            column_visibility_actions[str(key)] = action
 
         columns_menu.addSeparator()
-        action_show_all = QAction("Show &All Columns", self)
+        action_show_all = columns_menu.addAction("Show &All Columns")
         action_show_all.triggered.connect(self._show_all_torrent_columns)
-        columns_menu.addAction(action_show_all)
+        self.column_visibility_actions = column_visibility_actions
 
     def _set_torrent_column_visible(self, column_key: str, visible: bool) -> None:
         """Show or hide one torrent-table column by stable column key."""
@@ -217,9 +269,12 @@ class FilterTableController(WindowControllerBase):
 
     def _sync_torrent_column_actions(self) -> None:
         """Refresh column visibility action checked states from current table state."""
-        if not getattr(self, "column_visibility_actions", None):
+        actions = cast(
+            "dict[str, QAction]", getattr(self, "column_visibility_actions", {})
+        )
+        if not actions:
             return
-        for key, action in self.column_visibility_actions.items():
+        for key, action in actions.items():
             idx = self.torrent_column_index.get(key)
             if idx is None:
                 continue
@@ -297,25 +352,33 @@ class FilterTableController(WindowControllerBase):
 
         known_keys = set(self.torrent_column_index.keys())
         cleaned: dict[str, dict[str, object]] = {}
-        for raw_name, payload in parsed.items():
+        for raw_name, payload in cast("dict[object, object]", parsed).items():
             view_name = str(raw_name or "").strip()
             if not view_name or not isinstance(payload, dict):
                 continue
+            payload_map = cast("dict[object, object]", payload)
 
-            raw_visible = payload.get("visible_columns", [])
+            raw_visible = payload_map.get("visible_columns", [])
             visible_columns: list[str] = []
             if isinstance(raw_visible, str):
-                raw_visible = [raw_visible]
-            if isinstance(raw_visible, (list, tuple, set)):
-                for raw_key in raw_visible:
-                    key = str(raw_key or "").strip()
-                    if key in known_keys:
-                        visible_columns.append(key)
+                visible_values: list[object] = [raw_visible]
+            elif isinstance(raw_visible, (list, tuple, set)):
+                visible_values = list(
+                    cast("list[object] | tuple[object, ...] | set[object]", raw_visible)
+                )
+            else:
+                visible_values = []
+            for raw_key in visible_values:
+                key = str(raw_key).strip()
+                if key in known_keys:
+                    visible_columns.append(key)
 
-            raw_widths = payload.get("widths", {})
+            raw_widths = payload_map.get("widths", {})
             widths: dict[str, int] = {}
             if isinstance(raw_widths, dict):
-                for raw_key, raw_width in raw_widths.items():
+                for raw_key, raw_width in cast(
+                    "dict[object, object]", raw_widths
+                ).items():
                     key = str(raw_key or "").strip()
                     if key not in known_keys:
                         continue
@@ -333,10 +396,9 @@ class FilterTableController(WindowControllerBase):
     def _store_saved_torrent_views(self, views: dict[str, dict[str, object]]) -> None:
         """Store named torrent-table views into the settings store."""
         settings = self._new_settings()
-        payload = views if isinstance(views, dict) else {}
         settings.set_value(
             "torrentColumnNamedViewsJson",
-            json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+            json.dumps(views, ensure_ascii=True, separators=(",", ":")),
         )
         settings.sync()
 
@@ -349,19 +411,20 @@ class FilterTableController(WindowControllerBase):
         menu.clear()
         views = self._saved_torrent_views()
         if not views:
-            empty_action = QAction("(No saved views)", self)
+            empty_action = menu.addAction("(No saved views)")
             empty_action.setEnabled(False)
-            menu.addAction(empty_action)
             return
 
         for view_name in sorted(views.keys(), key=lambda name: name.lower()):
-            action = QAction(view_name, self)
-            action.triggered.connect(
-                lambda _checked=False, name=view_name: self._apply_saved_torrent_view(
-                    name
-                )
-            )
-            menu.addAction(action)
+            action = menu.addAction(view_name)
+
+            def _on_apply_saved_view(
+                _checked: bool = False,
+                name: str = view_name,
+            ) -> None:
+                self._apply_saved_torrent_view(name)
+
+            action.triggered.connect(_on_apply_saved_view)
 
     def _apply_saved_torrent_view(self, view_name: str) -> None:
         """Apply one named saved torrent-table view."""
@@ -370,22 +433,30 @@ class FilterTableController(WindowControllerBase):
             return
         views = self._saved_torrent_views()
         payload = views.get(name, {})
-        visible_columns = (
-            payload.get("visible_columns", []) if isinstance(payload, dict) else []
-        )
-        widths = payload.get("widths", {}) if isinstance(payload, dict) else {}
-        if not isinstance(visible_columns, list):
+        visible_columns_raw = payload.get("visible_columns", [])
+        widths_raw = payload.get("widths", {})
+        if not isinstance(visible_columns_raw, list):
             self._set_status(f"Saved view is invalid: {name}")
             return
+        visible_columns = [
+            str(column_key).strip()
+            for column_key in cast("list[object]", visible_columns_raw)
+        ]
+        widths = (
+            cast("dict[str, object]", widths_raw)
+            if isinstance(widths_raw, dict)
+            else {}
+        )
         self._apply_torrent_view(
-            visible_columns, widths=widths if isinstance(widths, dict) else {}
+            visible_columns,
+            widths=widths,
         )
         self._set_status(f"Applied view: {name}")
 
     def _save_current_torrent_view(self) -> None:
         """Prompt for a name and save current column visibility/widths as a named view."""
         name, ok = QInputDialog.getText(
-            self,
+            cast("Any", self.window),
             "Save Torrent View",
             "View name:",
         )
@@ -485,10 +556,10 @@ class FilterTableController(WindowControllerBase):
                     item = section.child(child_idx)
                     if item is None:
                         continue
-                    data = item.data(0, Qt.ItemDataRole.UserRole)
-                    if not isinstance(data, tuple) or len(data) != 2:
+                    payload = self._filter_item_payload(item)
+                    if payload is None:
                         continue
-                    kind, value = data
+                    kind, value = payload
                     if kind == "status":
                         item.setText(
                             0, self._status_filter_item_text(str(value or "all"))
@@ -601,13 +672,13 @@ class FilterTableController(WindowControllerBase):
     def _extract_trackers(self) -> None:
         """Extract unique tracker hostnames from loaded torrents."""
         try:
-            tracker_set = set()
-            for t in self.all_torrents:
-                tracker_url = getattr(t, "tracker", "") or ""
+            tracker_set: set[str] = set()
+            for t in self._all_torrents_list():
+                tracker_url = str(getattr(t, "tracker", "") or "")
                 if tracker_url:
                     try:
                         parsed = urlparse(tracker_url)
-                        hostname = parsed.hostname or tracker_url
+                        hostname = str(parsed.hostname or tracker_url)
                         tracker_set.add(hostname)
                     except ValueError:
                         tracker_set.add(tracker_url)
@@ -626,8 +697,8 @@ class FilterTableController(WindowControllerBase):
             all_item.setData(0, Qt.ItemDataRole.UserRole, ("tracker", None))
             self._section_tracker.addChild(all_item)
 
-            for tracker in self.trackers:
-                item = QTreeWidgetItem([str(tracker)])
+            for tracker in self._tracker_list():
+                item = QTreeWidgetItem([tracker])
                 item.setData(0, Qt.ItemDataRole.UserRole, ("tracker", tracker))
                 self._section_tracker.addChild(item)
 
@@ -657,27 +728,26 @@ class FilterTableController(WindowControllerBase):
     def _apply_sync_local_filters(self, torrents: list[object]) -> list[object]:
         """Apply local status/category/tag filters when sync data is unfiltered remotely."""
         filtered = torrents
-        if self.current_status_filter and self.current_status_filter != "all":
+        status_filter = self._status_filter_value()
+        if status_filter != "all":
             filtered = [
                 torrent
                 for torrent in filtered
-                if self._torrent_matches_status_filter(
-                    torrent, self.current_status_filter
-                )
+                if self._torrent_matches_status_filter(torrent, status_filter)
             ]
-        if self.current_category_filter is not None:
+        category_filter = self._category_filter_value()
+        if category_filter is not None:
             filtered = [
                 torrent
                 for torrent in filtered
-                if self._torrent_matches_category_filter(
-                    torrent, self.current_category_filter
-                )
+                if self._torrent_matches_category_filter(torrent, category_filter)
             ]
-        if self.current_tag_filter is not None:
+        tag_filter = self._tag_filter_value()
+        if tag_filter is not None:
             filtered = [
                 torrent
                 for torrent in filtered
-                if self._torrent_matches_tag_filter(torrent, self.current_tag_filter)
+                if self._torrent_matches_tag_filter(torrent, tag_filter)
             ]
         return filtered
 
@@ -714,13 +784,15 @@ class FilterTableController(WindowControllerBase):
 
     def _apply_tracker_filter_to_torrents(self, torrents: list[object]) -> list[object]:
         """Apply tracker filter to torrent list."""
-        if self.current_tracker_filter is None:
+        tracker_filter = self._tracker_filter_value()
+        if tracker_filter is None:
             return torrents
+        tracker_name = str(tracker_filter or "")
         try:
             return [
                 torrent
                 for torrent in torrents
-                if self._torrent_matches_tracker(torrent, self.current_tracker_filter)
+                if self._torrent_matches_tracker(torrent, tracker_name)
             ]
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
             self._log("ERROR", f"Error applying tracker filter: {e}")
@@ -728,10 +800,11 @@ class FilterTableController(WindowControllerBase):
 
     def _apply_size_filter_to_torrents(self, torrents: list[object]) -> list[object]:
         """Apply selected size bucket filter to torrent list."""
-        if not self.current_size_bucket:
+        size_bucket = self._size_bucket_value()
+        if size_bucket is None:
             return torrents
         try:
-            start, end = self.current_size_bucket
+            start, end = size_bucket
             return [
                 torrent
                 for torrent in torrents
@@ -913,17 +986,18 @@ class FilterTableController(WindowControllerBase):
 
     def _on_filter_tree_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         """Handle click on the unified filter tree."""
-        data = item.data(0, Qt.ItemDataRole.UserRole)
-        if data is None and item.childCount() > 0:
+        payload = self._filter_item_payload(item)
+        if payload is None and item.childCount() > 0:
             # Section header clicked: just toggle expand/collapse.
             return
         try:
-            if not isinstance(data, tuple):
+            if payload is None:
                 return
-            kind, value = data
+            kind, value = payload
             if kind == "status":
-                self.current_status_filter = value
-                self._log("INFO", f"Status filter changed to: {value}")
+                status_filter = str(value or "all")
+                self.current_status_filter = status_filter
+                self._log("INFO", f"Status filter changed to: {status_filter}")
                 self._refresh_filter_tree_highlights()
                 self._refresh_torrents()
             elif kind == "category":
@@ -937,13 +1011,19 @@ class FilterTableController(WindowControllerBase):
                 self._refresh_filter_tree_highlights()
                 self._refresh_torrents()
             elif kind == "size":
-                self.current_size_bucket = value
+                if not isinstance(value, tuple):
+                    return
+                size_bucket = cast("tuple[object, ...]", value)
+                if len(size_bucket) != 2:
+                    return
+                self.current_size_bucket = cast("tuple[int, int]", size_bucket)
                 self._log("INFO", "Size filter changed")
                 self._refresh_filter_tree_highlights()
                 self._apply_filters()
             elif kind == "tracker":
-                self.current_tracker_filter = value
-                self._log("INFO", f"Tracker filter selected: {value}")
+                tracker_filter = str(value or "")
+                self.current_tracker_filter = tracker_filter
+                self._log("INFO", f"Tracker filter selected: {tracker_filter}")
                 self._refresh_filter_tree_highlights()
                 self._apply_filters()
         except RECOVERABLE_CONTROLLER_EXCEPTIONS as e:
